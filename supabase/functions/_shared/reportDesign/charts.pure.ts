@@ -666,6 +666,22 @@ export function renderHeatmap(
   // does not exist.
   const rowLabels = (opts.rowLabels ?? []).slice(0, rows);
   const colLabels = (opts.colLabels ?? []).slice(0, cols);
+
+  // And the converse, which is the worse one: a FIGURE with no label over it.
+  //
+  // Page 23 of the 9 Hollow Street Compass (20 Sep 2026) drew one row of
+  // SEVEN cells — `3 3 3 4 4 4 5` — under the single column label
+  // `Exposure level`, because the model wrote seven risks separated by
+  // commas where this grammar wants `/`, so the grid transposed. Six of the
+  // seven figures described something no reader could name, and the chart
+  // read as complete because it carried a label at all.
+  //
+  // A PARTIAL label set is worse than none, so this is asked of a partial
+  // set alone: a grid that names nothing on an axis is a grid whose caption
+  // has to carry it, and several in production legitimately do.
+  const rowLabelsPartial = (opts.rowLabels?.length ?? 0) > 0 && opts.rowLabels!.length < rows;
+  const colLabelsPartial = (opts.colLabels?.length ?? 0) > 0 && opts.colLabels!.length < cols;
+  if (rowLabelsPartial || colLabelsPartial) return '';
   const flat = grid.flat();
   const lo = Math.min(...flat), hi = Math.max(...flat);
   const span = (hi - lo) || 1;

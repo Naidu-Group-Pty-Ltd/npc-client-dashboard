@@ -311,6 +311,11 @@ verify_jwt = true
 [functions.estimate-capital-growth]
 verify_jwt = true
 
+[functions.urban-centre-register-ingest]
+# The register load runs on a schedule and from an operator's hand, never from
+# a browser: the gateway checks a Supabase JWT in front of it.
+verify_jwt = true
+
 [functions.amenity-register-ingest]
 verify_jwt = true
 

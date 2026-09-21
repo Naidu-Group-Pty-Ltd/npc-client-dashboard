@@ -91,7 +91,10 @@ describe('F-02 — the operator backfills require a JWT', () => {
   it('every function still declares verify_jwt explicitly', () => {
     const declared = [...CONFIG.matchAll(
       /\[functions\.([A-Za-z0-9_-]+)\][^[]*?verify_jwt\s*=\s*(true|false)/gs)];
-    // 413 since mission-control-announcements (the platform-notice broker);
+    // 414 since urban-centre-register-ingest (the ABS Significant Urban Area
+    // loader, which is what stops a regional property's commute being
+    // measured to the state capital); 413 since mission-control-announcements
+    // (the platform-notice broker);
     // 412 since amenity-register-ingest (the OSM amenity register loader);
     // 411 since estimate-capital-growth (Estimate CGR) was declared; 410 with
     // market-sales-ingest (the open-data sales-register loader); 409 after
@@ -99,7 +102,7 @@ describe('F-02 — the operator backfills require a JWT', () => {
     // functions with their config blocks (436 before). The count is a ratchet
     // against a function slipping in undeclared; check-verify-jwt-declared.mjs
     // enforces the rule itself.
-    expect(declared.length).toBe(413);
+    expect(declared.length).toBe(414);
   });
 });
 

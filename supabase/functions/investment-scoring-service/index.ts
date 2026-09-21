@@ -233,6 +233,22 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
     location: {
       walkScore: locationIntelligence.walkScore ?? null,
       commuteTimeCBD: locationIntelligence.commute?.durationMinutes ?? null,
+      /*
+       * Where that commute was measured TO, as `location-intelligence-service`
+       * recorded it. An enrichment written before the destination was stored
+       * carries none, and `scoreLocation` then behaves exactly as it did.
+       *
+       * `urbanCentre.pure.ts` has the reason: Golden Square's commute was
+       * measured to Melbourne at 114 minutes and scored 0 of 100 on a
+       * property five minutes from Bendigo's CBD.
+       */
+      commuteDestination: locationIntelligence.commute?.destination
+        ? {
+          label: locationIntelligence.commute.destination as string,
+          ownCentre: (locationIntelligence.commute.destinationOwnCentre ?? 'unknown') as
+            'yes' | 'no' | 'unknown',
+        }
+        : null,
       schoolsNearby: locationIntelligence.schools?.schoolsWithin3km ?? null,
       /*
        * The per-category counts and distances the enrichment already

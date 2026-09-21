@@ -2165,7 +2165,10 @@ the scoring service stores is a placeholder no surface draws.
 
 Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
 touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
-`chartUnits.pure.ts`, `directiveKey`, `foldConstantTableColumns` or
+`chartUnits.pure.ts`, `ratedAbsence.pure.ts`, `pseudoTables.pure.ts`,
+`riskRegisterInstruction`, `strategySectionRules`,
+`dropComposedSectionReproductions`, `scoreAssessmentReading.pure.ts`,
+`assessmentPrecisionNote`, `directiveKey`, `foldConstantTableColumns` or
 `demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
 the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
 the FILE rather than the source that made it, which is what turned "too much
@@ -2216,6 +2219,119 @@ register should have emitted thirteen rows is a separate, open question** —
 `readResidentialStanding` says it should, the page says five, and the scrub,
 the renderer and the packer were each excluded by execution; §9 of the same
 doc records the evidence rather than a guess.
+
+**An absence may not be rated — on a chart either** (§13–15 of the same doc,
+measured on three regenerated Compass reports rather than one). Page 23 of the
+9 Hollow Street document drew `Risk exposure index (1=Low, 5=High, Not
+assessed shown as 5)` over a crime risk the register three lines below
+correctly reports as **Not assessed**. `PLANNING_CONTROLS_IN_THE_REPORT.md` §9
+closed that rule as a STATEMENT; a picture has no sentence for a rule about
+sentences to catch. `withholdRatedAbsenceCharts` withholds a chart whose own
+text declares an absence-to-value convention, **whole rather than by the cells
+at that value** — once 5 means both "high" and "we did not look", a chart with
+its 5s removed reads as a property with no high risks. It fires on a
+CONFESSION and never a guess, so `Risks not assessed: 3` is left alone. The
+same drawing was wrong twice: seven cells under one column label, because the
+model wrote seven risks with commas where `{{heatmap}}` separates rows with
+`/`, so `renderHeatmap` now refuses a PARTIAL label set — a grid that names
+nothing on an axis is one whose caption carries it, and both shapes are in
+production.
+
+**The Risk Dashboard had no shape, and the instruction was written three
+times.** Nought of three documents produced the declared register; two carry no
+exposure level and no evidence reading anywhere, so their risk sections read as
+confident assessments of the area. `riskRegisterInstruction()` — whose own
+header called itself "one declaration" — had **zero production call sites**,
+because both registries carried a verbatim copy of its output as a literal and
+the three had already diverged by four paragraphs. Both compose it now. The
+likely cause of the 1-of-3 is that it asked for "a SUMMARY REGISTER — Risk |
+Exposure | Evidence" and never said the word **table**: it shows the markup
+now, and `promotePipedPseudoTables` is the guarantee behind it, FIRST on the
+read path so the four passes that understand tables then see it. QA reports
+`risk-register-not-marked-up` and `risk-register-missing` as two findings and
+never one, because repairable and unrepairable send an operator to different
+remedies. And **the units were in the labels**: a zone code, 450 m² and 10 m on
+one axis walked past `tabulateMixedUnitCharts` because every display was a bare
+integer, so a label is now read for a unit — bounded by the label having to
+restate the item's OWN value, which also settles `10 m` against ten million.
+
+**Four sections the Compass should not have had** (§16 of the same doc). The
+97 Poole Road Compass carried `Suitability Profile` and `Holding Strategy` on
+pages 19-20 — both `financial:required` in `sectionRegistry.pure.ts` and
+declared for no other tier — beside `Exit Outlook` and `Monitoring Plan`, which
+are the same subjects as the composed `Resale Liquidity & Exit Outlook` (p34)
+and `Monitoring & Review Plan` (p38). **The copies contradict each other**: the
+composed one opens "Neither answers how easily this sells … no figure below
+should be read as standing in for them", the model's says "the cleanest exit
+path is to sell into the owner-occupier market". The cause was
+`strategySectionRules`, which named FIVE composed sections from a literal of
+its own while the Compass composes three — so the model was told two sections
+existed, was shown neither, and wrote them; the composed set is a parameter
+now. **Nothing could see the duplication** because `Exit Outlook` and
+`Monitoring Plan` resolved to NOTHING — neither was an alias, which also made
+`fork-investment-report` drop them from both children silently. The rule is
+`dedupeRegisterTables`' one, applied to a section: **where two sections resolve
+to one the platform composes WHOLE, the copy under the canonical label is the
+composed one and the other is a reproduction** — bounded to the five
+`STRATEGY_SECTION_IDS`, because `tenYear` is `computed` too and its aliases are
+sub-heading names a Financial report legitimately writes. The two foreign
+sections are not duplicates, so QA reports them instead
+(`section-belongs-to-another-report`), **above `if (!def) continue;`** — every
+per-section rule sits below that guard, so a section the tier does not declare
+was invisible to all of them.
+
+**The Method page printed a different grade from the cover** (§17-18 of the
+same doc). The 97 Poole Road Compass states its composite four times — cover,
+verdict, risk page, assessment table — and each says **54**; page 38 says
+**"Composite score 51"**, directly above the line *"No figure in this table is
+re-derived by this report; the arithmetic above restates the engine's own."*
+It was re-derived. `scoreAssessmentReading` computed `adjustedWeight` as
+`nominal ÷ Σ nominal(measured)` under a comment calling the record's stored
+figure "this rounded to a whole percent" — but the engine renormalises the
+**evidence** weights (`proportionalWeighting.effectiveWeights`, nominal scaled
+by how much of each dimension's own method ran), so the record holds 47/30/18/5
+where the reconstruction produces 42/26/16/16. Both tables footed internally,
+which is why neither looked wrong alone. **`storedTotal` was computed on that
+reading and read by NOTHING**, and so was `assessmentPrecisionNote` — the
+exported sentence explaining the arithmetic, while the scorecard wrote its own
+copy. Three rules now. **The composite is the record's own figure**, with the
+reconstruction only for a row holding none, and never overriding the
+publication policy. **The weights are whichever of the two describes THIS
+grade**: where the stored whole percentages round to the reconstruction the two
+are one weighting and the exact fractions express it better (18 Annabelle's
+57/21/21 reproduces its stored 40 as 39.71 where the rounded ones give 39.48);
+where they do not, the record's own stand. And **a rounding is never asserted
+where it does not happen** — `contributionsFoot` is a property of the reading.
+On the same page-4 table, the heading **"Five dimensions, weighted"** drew three
+rows on one report and four on two others (the projection publishes nothing
+bindable for an unscored dimension), and its `Weight` column was the ADJUSTED
+weight unlabelled — `Demand 27 · 5%` against a published 15%. Seed **v18**
+plus the active-master refresh.
+
+**Why only three dimensions scored** (§19 of the same doc, and the answer to
+"can we reach a higher score"). Two of the three reasons were defects of ours
+and one was not, and **completing the dimensions is as likely to LOWER a grade
+as to raise it** — on 9 Hollow Street, Demand scored at the 27 its two NSW
+siblings recorded takes the composite from 65 to **59**. **Demand was
+structurally unmeasurable in Victoria and South Australia**: their sheets print
+ONE `No. of Sales` column, so their parsers emit `salesCount: null` on every
+other row, and `market-sales-ingest` sent `sales_count` for every record — which
+PostgREST writes into `ON CONFLICT DO UPDATE SET`, so every daily run rewrote
+every historical count back to null. `scoreTransactionVolume` needs four
+periods carrying one, and transaction volume is the only PRIMARY demand measure
+this deployment is entitled to. A record with no count is now written WITHOUT
+the column; the two shapes cannot share a batch. Its remedy also named the ABS
+population series, which the report already cited three times and which could
+not have restored the dimension (a driver may not carry one) — `riskRemedyFor`'s
+rule applied to Demand. **Risk is not ours and is worth ±1 point**: its nominal
+weight is 5%, and `propertyRiskSchema.pure.ts`'s own header forbids
+manufacturing it. And **the largest legitimate lever on a regional property's
+grade is the CBD destination** — Golden Square's commute is measured to
+Melbourne at 114 minutes, which scores 0 of 100 on `COMMUTE_ANCHORS` while the
+same document's prose describes its access to Bendigo. That is deliberately not
+taken: choosing the right centre needs a published register of urban centres,
+and re-anchoring a calibrated scale to raise a number is the one thing this
+programme must not do.
 
 **And a footnote marker with nothing it can refer to.** Five sentences
 ended in a bare digit glued to the full stop (`…do not capture.12 Median house
@@ -2731,6 +2847,70 @@ stays declared-but-unloaded (PTV nests deflated per-mode archives) rather than
 vanishing. And **nothing returns a score or a mode**: the invented
 `qualityScore` is what corrupted the walk score, and mode lives behind a 399 MB
 member, so both are named as not measured on every answer.
+
+**A commute to the wrong city scored zero, and it was the right number for
+the wrong journey.** Read §20 of
+[`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before touching
+`_shared/reports/location/urbanCentre.pure.ts`, `urbanCentreIngest.pure.ts`,
+`urban-centre-register-ingest` or the commute block in
+`location-intelligence-service`. `resolveCbdDestination` returns the STATE
+CAPITAL, so Golden Square — a suburb of Bendigo, twelve minutes from the centre
+it belongs to — was measured **114 minutes to Melbourne**, and `COMMUTE_ANCHORS`
+ends `[110, 0]`, so the reading scored **0 of 100** and Location came out at 49
+against 69 and 74 for two metropolitan properties. `cbdDestination.pure.ts`'s
+own header had named the gap since ME-5 and the methodology doc had promised
+polycentric selection since audit §58; neither was implemented.
+
+Two rules close it, and **the second works before any register exists**. A
+commute is measured to the property's own urban centre where
+`urban_centre_register` names one — the ABS Significant Urban Area at the
+verified coordinate, resolved from the same ASGS service the geography
+resolver already asks. And **a commute to somewhere that is not this
+property's centre is recorded but not scored**: `ownCentre` is `yes` / `no` /
+`unknown`, and `no` is answered by the SUA NAME alone (Golden Square's SUA is
+`Bendigo`, which is not the capital), so the zero stops being spent on the
+very first deployment, with no register loaded. `unknown` scores exactly as it
+always did, so an unreachable geoserver or an empty register leaves today's
+behaviour standing, and `commuteExcluded` names which of the two it was.
+Measured on the module against readings that reproduce Hollow's delivered
+figure (walk 96, 7 schools): **49 rated → 81 excluded → 89** once the register
+names Bendigo. The middle number is what every deployment gets before any
+ingest has run.
+
+**It is loaded: 102 centres, 20 Sep 2026**, and every assumption made before
+the first live call was wrong. The ABS **publishes no point** — the layer
+ignores `returnCentroid`, advertises no `supportsReturningGeometryCentroid`,
+and its fields carry no latitude or longitude — so the register derives one
+from the publisher's own generalised boundary and stores it as
+**`sua_boundary_centroid`**, never `sua_centroid`, which would claim a
+provenance that does not exist. And the layer's FIRST feature is `1000` /
+*"Not in any Significant Urban Area (NSW)"*: the classification is exhaustive,
+so one pseudo-area per state carries everywhere that is **not** a town.
+Writing those would have been the worst failure available — a rural property
+resolves to exactly that bucket, so the commute would have been SCORED against
+the centre of "everywhere in NSW that is not a town". The capital is wrong in
+a way a reader can see; that would have been wrong in a way nobody could.
+
+Five rules bite. **The register is seeded by nothing** — the migration creates
+the table empty and `urban-centre-register-ingest` fills it, because the rows
+a migration INSERTs do not travel to a clone; it refreshes **monthly**, which
+is clone self-healing rather than polling, since the ASGS release is a
+constant in code the ABS reissues about every five years. **A load is judged
+by its effect**: the count is asked in its own request and the walk must
+account for every declared feature, kept or refused for a named reason
+(102 + 9 + 1 = 112), because this load PRUNES and a short walk is a truncated
+download by another route. **A hedge can be fatal** — `returnGeometry: 'true'`
+sat beside `returnCentroid: 'true'` to insure against a missing field, which
+asked for a hundred full-resolution polygons and killed the worker at HTTP 546
+with nothing logged; the boundary is now generalised and paged ten at a time,
+and `maxRecordCount` (2000) is not why. **An instrument that can fail the way
+its subject fails is not an instrument** — the probe committed that same fault
+and told us nothing, so it now asks bounded questions only. And **the register
+is read back rather than believed**: `stage: 'status'` reports what the table
+holds and whether any row is a pseudo-area, asserted against what was WRITTEN
+rather than against the parser that was supposed to refuse it. Also measured:
+**`Number('')` is 0**, which is why a feature with no point parsed as `(0, 0)`
+and was stopped only by the continent bounds.
 
 **Recorded crime now covers four states, and the fourth one changed its
 classification mid-series.** Read

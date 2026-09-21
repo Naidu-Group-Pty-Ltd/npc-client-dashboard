@@ -46,7 +46,9 @@
  * a no-op — which is what makes it safe on the read path, where it repairs
  * every document already stored rather than only the next one.
  */
+import { STRATEGY_SECTION_IDS } from './strategyPositions.pure.ts';
 import {
+  SECTION_REGISTRY,
   detectSectionLevel,
   isSubHeadingByNumbering,
   sectionIdForHeading,
@@ -341,4 +343,151 @@ export function foldStraySections(markdown: string): SectionFoldResult {
   }
 
   return { markdown: out.join('\n').replace(/\n{4,}/g, '\n\n\n').trimEnd(), folded };
+}
+
+/* ─── A composed section, written again by the model ──────────────────────── */
+
+/**
+ * The composed copy is the one that stands.
+ *
+ * ## What the reader got
+ *
+ * Measured on the 97 Poole Road Compass of 20 Sep 2026, read as a delivered
+ * PDF. The document carries `Exit Outlook` on page 20 and `Resale Liquidity &
+ * Exit Outlook` on page 34; `Monitoring Plan` on page 20 and `Monitoring &
+ * Review Plan` on page 38. Two subjects, each covered twice, fourteen and
+ * eighteen pages apart — and **the copies contradict each other.** The
+ * composed Resale Liquidity opens:
+ *
+ * > Neither answers *how easily this sells*. Days on market, time to sell and
+ * > buyer depth are not measured anywhere in this report, and no figure below
+ * > should be read as standing in for them.
+ *
+ * The model's Exit Outlook, fourteen pages earlier, says "the cleanest exit
+ * path is to sell into the owner-occupier market … the strongest exit result
+ * usually comes from a well-presented, well-timed launch into a buyer pool
+ * that already understands the locality." That is the claim the composed
+ * section exists to refuse.
+ *
+ * ## The rule
+ *
+ * **Where a document carries two sections that resolve to one `computed`
+ * registry entry, the copy under the entry's CANONICAL LABEL is the composed
+ * one, and the other is a reproduction.** The reproduction goes.
+ *
+ * It is the rule `dedupeRegisterTables` already states for a table — *the
+ * register's copy is the one that stands; it is the retrieval, every other
+ * copy is a reproduction* — applied to a section, and it is stated the same
+ * way for the same reason: the two disagreed, so keeping the longer or the
+ * first would keep a model's expansion over the record.
+ *
+ * ## Why it could not fire before
+ *
+ * `Exit Outlook` and `Monitoring Plan` resolved to NOTHING —
+ * `sectionIdForHeading` returned null, because neither was an alias. So the
+ * document had one section the registry knew and one it did not, and no rule
+ * anywhere could see they were the same subject. They are aliases now, which
+ * is what an alias list is for, and that also stops `fork-investment-report`
+ * dropping those headings from both children without saying so.
+ *
+ * ## Four bounds
+ *
+ * **Only a section `composeStrategySections` builds WHOLE** — the five in
+ * `STRATEGY_SECTION_IDS`, read from that module rather than restated. Every
+ * `computed` section in the registry would be too wide: `tenYear` is computed
+ * too, and its aliases carry sub-heading names (`Property Value Projections`,
+ * `Cumulative Cashflow Projections`) that a Financial report legitimately
+ * writes as sections of their own beside the canonical one, so a wider rule
+ * would delete real content. A `measured` or `authored` section has no
+ * composed copy to prefer at all, so two of them is a plain repeat and
+ * belongs to `foldStraySections` or to QA's `duplicate-h2`.
+ *
+ * **Exactly one of the copies must carry the canonical label.** If neither
+ * does, or both do, nothing here can say which is the retrieval, and a rule
+ * that cannot say that is not entitled to destroy a copy.
+ *
+ * **The canonical copy is kept wherever it sits**, first or last. Position is
+ * what `dedupeChartDirectives` keys on and it is the wrong key here: the
+ * composed section is appended after the model's prose, so "keep the first"
+ * would keep the reproduction every time.
+ *
+ * **It is a no-op on a document that carries each section once**, which is
+ * every document that was already right — byte for byte.
+ */
+const COMPOSED_WHOLE = new Set<string>(STRATEGY_SECTION_IDS);
+
+const COMPUTED_SECTIONS = new Map<SectionId, string>(
+  SECTION_REGISTRY
+    .filter((e) => e.provenance === 'computed' && COMPOSED_WHOLE.has(e.id))
+    .map((e) => [e.id, e.canonicalLabel]),
+);
+
+export interface DroppedReproduction {
+  /** The registry section the document wrote twice. */
+  readonly id: SectionId;
+  /** The heading the reproduction carried. */
+  readonly heading: string;
+  /** The canonical heading that stands. */
+  readonly kept: string;
+  /** How many blocks went with it. */
+  readonly blocks: number;
+}
+
+export interface ReproductionFoldResult {
+  readonly markdown: string;
+  readonly dropped: readonly DroppedReproduction[];
+}
+
+const headingTextOf = (line: string | null): string =>
+  (line ?? '').replace(/^#{1,6}[ \t]+/, '').trim();
+
+/** Drop every model-written copy of a section the platform composes. */
+export function dropComposedSectionReproductions(markdown: string): ReproductionFoldResult {
+  if (!markdown || !markdown.includes('#')) return { markdown: markdown ?? '', dropped: [] };
+  const level = detectSectionLevel(markdown).level;
+  const regions = toRegions(markdown, level);
+
+  const byId = new Map<SectionId, number[]>();
+  regions.forEach((r, i) => {
+    if (!r.id || !COMPUTED_SECTIONS.has(r.id)) return;
+    const at = byId.get(r.id) ?? [];
+    at.push(i);
+    byId.set(r.id, at);
+  });
+
+  const drop = new Set<number>();
+  const dropped: DroppedReproduction[] = [];
+  for (const [id, at] of byId) {
+    if (at.length < 2) continue;
+    const canonical = COMPUTED_SECTIONS.get(id)!;
+    const isCanonical = (i: number) =>
+      headingTextOf(regions[i].heading).toLowerCase() === canonical.toLowerCase();
+    const keep = at.filter(isCanonical);
+    // Neither copy is the composed one, or both claim to be: nothing here can
+    // say which is the retrieval.
+    if (keep.length !== 1) continue;
+    for (const i of at) {
+      if (i === keep[0]) continue;
+      drop.add(i);
+      dropped.push({
+        id,
+        heading: headingTextOf(regions[i].heading),
+        kept: canonical,
+        blocks: toBlocks(regions[i].lines.join('\n')).length,
+      });
+    }
+  }
+
+  if (!dropped.length) return { markdown, dropped: [] };
+
+  const out: string[] = [];
+  regions.forEach((r, i) => {
+    if (drop.has(i)) return;
+    if (r.heading) out.push(r.heading);
+    out.push(...r.lines);
+  });
+  return {
+    markdown: out.join('\n').replace(/[ \t]*\n(?:[ \t]*\n){2,}/g, '\n\n'),
+    dropped,
+  };
 }

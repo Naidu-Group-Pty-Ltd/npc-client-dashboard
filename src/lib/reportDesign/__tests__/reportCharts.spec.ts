@@ -271,6 +271,31 @@ describe('output safety', () => {
     expect(renderHeatmap(ctx, [[1, 2], [3]])).toBe('');
   });
 
+  it('refuses a heatmap whose labels cover only part of an axis', () => {
+    /*
+     * Page 23 of the 9 Hollow Street Compass (20 Sep 2026) drew one row of
+     * SEVEN cells under a single column label: the model wrote seven risks
+     * separated by commas where the grammar wants `/`, so the grid
+     * transposed and six of the seven figures named nothing. A partial label
+     * set is worse than none, because it reads as complete.
+     */
+    expect(renderHeatmap(ctx, [[3, 3, 3, 4, 4, 4, 5]], {
+      rowLabels: ['Crime'], colLabels: ['Exposure level'],
+    })).toBe('');
+    expect(renderHeatmap(ctx, [[1, 2], [3, 4]], { rowLabels: ['A'] })).toBe('');
+
+    // …and draws, unchanged, when an axis is fully labelled or not labelled
+    // at all. Both shapes are in production: the Hollow planning check names
+    // all four of its columns, the Crestview growth grid names none of its
+    // rows.
+    expect(renderHeatmap(ctx, [[1, 0, 0, 0]], {
+      rowLabels: ['Controls'], colLabels: ['Zone', 'Overlays', 'Min lot', 'Height'],
+    })).not.toBe('');
+    expect(renderHeatmap(ctx, [[6.3, 4.4, 6.2], [11, 7, 7.6]], {
+      colLabels: ['1-year', '3-year', '5-year'],
+    })).not.toBe('');
+  });
+
   it('returns empty rather than a broken drawing for empty data', () => {
     expect(renderBars(ctx, [])).toBe('');
     expect(renderTiles(ctx, [])).toBe('');

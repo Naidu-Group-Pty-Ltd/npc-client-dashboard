@@ -25,12 +25,14 @@ import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 import { limitEmphasis } from './emphasisDensity.pure.ts';
 import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
+import { promotePipedPseudoTables } from './pseudoTables.pure.ts';
+import { withholdRatedAbsenceCharts } from './ratedAbsence.pure.ts';
 import {
   PLANNING_REGISTER_SECTION,
   dedupeRegisterTables,
   stripHeadingScaffolding,
 } from './registerTables.pure.ts';
-import { foldStraySections } from './sectionFolding.pure.ts';
+import { dropComposedSectionReproductions, foldStraySections } from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -611,8 +613,21 @@ export function presentStoredMarkdown(
   evidence?: EvidenceInventory | null,
 ): string {
   if (!markdown) return '';
-  const r = stripPlaceholderRows(markdown);
-  const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? markdown : r.markdown;
+  /*
+   * A row of pipes is a table the model did not mark up.
+   *
+   * Page 23 of the 9 Hollow Street Compass set the Risk Dashboard's summary
+   * register — the artefact the section is built around — as two lines of
+   * body copy with a list bullet in front of the only row. FIRST in this
+   * chain, and deliberately: promoting text into a table is worth doing only
+   * if every pass below that understands tables then sees it, and four of
+   * them do. See `promotePipedPseudoTables` for the bounds that keep it off
+   * a sentence that happens to carry a pipe.
+   */
+  const gridded = promotePipedPseudoTables(markdown);
+  const source = gridded.promoted.length ? gridded.markdown : markdown;
+  const r = stripPlaceholderRows(source);
+  const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? source : r.markdown;
   // A gap cell inside an at-a-glance strip is the same defect one layer down,
   // and `stripPlaceholderRows` cannot see it — it is neither a row nor a
   // bullet. Found on two issued documents in the S6 acceptance run.
@@ -683,7 +698,21 @@ export function presentStoredMarkdown(
    * What a reader is shown is this module's business; what is kept is not.
    */
   const one = foldStraySections(sourced);
-  const onceEach = one.folded.length ? one.markdown : sourced;
+  const nested = one.folded.length ? one.markdown : sourced;
+  /*
+   * …and a section the PLATFORM composes, written again by the model.
+   *
+   * The 97 Poole Road Compass carried `Exit Outlook` on page 20 and the
+   * composed `Resale Liquidity & Exit Outlook` on page 34, `Monitoring Plan`
+   * on page 20 and `Monitoring & Review Plan` on page 38 — and the copies
+   * CONTRADICT each other, the composed one refusing exactly the claim the
+   * model's one makes. Directly after `foldStraySections` because it answers
+   * the neighbouring question with the opposite rule: that one MERGES, because
+   * it cannot say which copy is sound; this one can, because one of the two
+   * is the record's own.
+   */
+  const composed = dropComposedSectionReproductions(nested);
+  const onceEach = composed.dropped.length ? composed.markdown : nested;
   /*
    * The same chart, drawn five times.
    *
@@ -701,6 +730,25 @@ export function presentStoredMarkdown(
   const deduped = dedupeChartDirectives(onceEach);
   const single = deduped.removed ? deduped.markdown : onceEach;
   /*
+   * An absence may not be rated.
+   *
+   * Page 23 of the 9 Hollow Street Compass drew `Risk exposure index (1=Low,
+   * 5=High, Not assessed shown as 5)` over a crime risk the register three
+   * lines below correctly reports as **Not assessed** — an unmeasured risk
+   * plotted at the top of the scale it shares with the measured ones.
+   * `PLANNING_CONTROLS_IN_THE_REPORT.md` §9 closed that as a STATEMENT; this
+   * closes it as a DRAWING, where the same conclusion is reached with no
+   * sentence to catch it.
+   *
+   * Before `tabulateMixedUnitCharts` below, which would otherwise set the
+   * same rating as a table and carry it to the page in a different shape.
+   * See `withholdRatedAbsenceCharts` for why the whole series goes rather
+   * than the cells at the rated value, and why nothing is worded in its
+   * place.
+   */
+  const rated = withholdRatedAbsenceCharts(single);
+  const unrated = rated.withheld.length ? rated.markdown : single;
+  /*
    * A shared axis is a claim that the quantities on it are comparable.
    *
    * Page 13 of the 97 Poole Road Compass plotted `99.1%`, `100%` and
@@ -714,8 +762,8 @@ export function presentStoredMarkdown(
    * dropped: every label, value and their order survive as the table the
    * data already was.
    */
-  const mixed = tabulateMixedUnitCharts(single);
-  const commensurable = mixed.tabulated.length ? mixed.markdown : single;
+  const mixed = tabulateMixedUnitCharts(unrated);
+  const commensurable = mixed.tabulated.length ? mixed.markdown : unrated;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.
@@ -737,8 +785,32 @@ export function presentStoredMarkdown(
    * over all 38 pages of that document: 5 matches, 5 markers, 0 false
    * positives.
    */
-  const debris = stripFootnoteDebris(levelled);
-  const unmarked = debris.removed.length ? debris.markdown : levelled;
+  /*
+   * The placeholder scrub runs AGAIN, because the chart passes make tables.
+   *
+   * Page 20 of the 9 Hollow Street Compass printed
+   * `| Victoria dwellings benchmark | n/a |` beside a subject price and a
+   * suburb median — a mixed-unit bar chart `tabulateMixedUnitCharts`
+   * correctly set as a table, carrying an item the directive parser refused
+   * because the model wrote `n/a` where a figure belonged.
+   * `stripPlaceholderRows` is the FIRST pass in this chain and the
+   * tabulations are five passes below it, so the row it exists to remove is
+   * created after it has run. The owner's rule is "N/A or unavailable,
+   * never".
+   *
+   * Idempotent by construction — the same pure function over the same
+   * markdown — so on a document whose charts produced no placeholder row it
+   * is a no-op, byte for byte. The first pass stays: it has to run before
+   * `dedupeRegisterTables` and `dropEmptyTableColumns`, which read the tables
+   * the model itself wrote.
+   */
+  const lateGaps = stripPlaceholderRows(levelled);
+  const noGaps = lateGaps.removedRows + lateGaps.removedTables
+    + lateGaps.removedLines + lateGaps.blankedCells === 0
+    ? levelled
+    : lateGaps.markdown;
+  const debris = stripFootnoteDebris(noGaps);
+  const unmarked = debris.removed.length ? debris.markdown : noGaps;
   /*
    * Emphasis is a signal, and a signal that fires on one word in five is noise.
    *

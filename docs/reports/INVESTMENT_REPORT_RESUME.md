@@ -356,3 +356,56 @@ two unrelated reasons; the third time it will not be able to.**
 lesson, paid again. Thirty seconds of `function_logs` showed the 14 → 8 rewind
 and the shrinking character count. No amount of reading the client could have
 proved two pumps were running, because each one is correct on its own.
+
+## §10 The watchdog was not broken, and the measurement that says so
+
+On 20 Sep 2026 this document's own rule — *read the production logs before
+modelling the production behaviour* — was paid for a third time, and the
+mistake was mine in the other direction: I reported the watchdog as dead.
+
+**What was observed.** `resume-investment-reports` answered
+`internal_timestamp_skew` on one scheduled invocation at 16:03:45, during a
+regeneration of report `5f7fb137` (9 Hollow Street) whose four hand-offs I had
+each continued by hand. From one refusal and four unresumed hand-offs I
+concluded the watchdog was refusing every tick and that a Compass only
+finished with a browser tab open.
+
+**What the invocation record actually says.** The function runs every two
+minutes and answered **200 on 24 of 25 ticks** — exactly one 401. It was
+working. The reason it resumed none of my hand-offs is that
+`claim_stalled_investment_reports` requires `updated_at < now() - interval '2
+minutes'`, and I fired each continuation inside that window. **I was the thing
+preventing it**, not the skew.
+
+**Verified by effect.** A regeneration was started and then deliberately left
+alone:
+
+```
+16:27:57  handed off after 7/14 sections — nothing else touched the report
+16:29:57  the report becomes claimable (updated_at two minutes stale)
+16:30:01  [resume-investment-reports] claimed 1 stalled report(s) as cron-mua1853n
+16:30:05  sections 1-7 skipped as complete, section 8 generated
+16:32:06  [resume-investment-reports] 9 Hollow Street: 7 -> 10
+```
+
+It claimed on the **first tick after the report became eligible**, four seconds
+past the threshold. The watchdog carries a report unaided.
+
+**What the skew refusal is worth, stated correctly.** It is real and
+intermittent — 19 refusals in 24 hours across `resume-investment-reports`,
+`migration-dispatcher` and `conversation-sync-cron`, arriving in batch-flush
+clusters (four inside 27 ms, three inside 47 ms). Each costs its job one tick.
+For this watchdog that is a two-minute delay, **not a stuck report**, because
+the next tick claims what the last one missed. The fix in `auth_v2.ts` stands
+on its own reasoning rather than on that symptom: the signature is stamped at
+ENQUEUE by `cron_signed_internal_headers` and checked after an unbounded
+`pg_net` queue wait, so a symmetric ±90 s window is the wrong shape whatever it
+happens to be costing today.
+
+Two rules from it. **A single refusal is not a rate** — one 401 was read as a
+dead worker, and the invocation record was one query away. And **a refusal that
+carries no measurement cannot be sized**: the log said
+`internal_timestamp_skew` and nothing else, so queue latency, a drifting clock
+and a wrong unit were the same word, and the severity had to be guessed. It
+logs the delta, the direction, the caller and both bounds now, which is what
+turns the next occurrence into a reading instead of an inference.

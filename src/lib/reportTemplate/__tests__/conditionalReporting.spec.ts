@@ -15,7 +15,28 @@
  * "Rejected expression referencing unbound name" warnings — which is the noise a
  * genuine typo would hide in, and the typo is the case the check exists for.
  *
- * The rejection is unchanged. Only the reporting is.
+ * **This file used to end "The rejection is unchanged. Only the reporting
+ * is."** That was true of the change it was written for and stopped being
+ * true on 20 Sep 2026, because rejecting a guarded absent namespace cost more
+ * than a warning. A rejection is `false`, so `name && name.x` and
+ * `!(name && name.x)` were BOTH false when `name` was absent — and the second
+ * is how a page in this catalogue renders its own absence:
+ *
+ *     { ...risks(…),   conditional: 'risks && risks[0] && risks[0].risk' }
+ *     { ...callout(…), conditional: '!(risks && risks[0] && risks[0].risk)' }
+ *
+ * Three masters pair them that way and all three fallbacks were dead. Measured
+ * on three delivered Investment Compass PDFs (9 Hollow Street, 1 Crestview
+ * Avenue, 97 Poole Road, all 20 Sep 2026): page 5 printed the eyebrow "RISK
+ * REGISTER" and the heading "Manageable with verification, not without it"
+ * over NOTHING, then the recommendation — on every one.
+ *
+ * A guarded absent namespace is now BOUND as `undefined` instead, which is
+ * what the author's own `name &&` asks for. Every assertion below is unchanged
+ * and still passes: `undefined && …` is still falsy, and an unbound name still
+ * cannot reach the global scope, because a parameter bound to `undefined` is
+ * not a global lookup. What changed is only that the author's negated form now
+ * means what it says.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { evalConditional } from '../bindingResolver';
@@ -42,11 +63,60 @@ describe('conditional gating is unchanged', () => {
     )).toBe(true);
   });
 
+  it('lets the author\'s NEGATED guard mean what it says', () => {
+    /*
+     * The pair a master actually writes. Both halves are asserted together,
+     * because the defect was that they agreed: an absent namespace made the
+     * section false AND its fallback false, so neither drew.
+     */
+    const POS = 'risks && risks[0] && risks[0].risk';
+    const NEG = `!(${POS})`;
+    const absent = ctx({ report: {} });
+    expect(evalConditional(POS, absent), 'the section must not draw').toBe(false);
+    expect(evalConditional(NEG, absent), 'its fallback must').toBe(true);
+
+    // …and the other way round when the namespace IS there.
+    const present = ctx({ risks: [{ risk: 'Flood overlay' }] });
+    expect(evalConditional(POS, present)).toBe(true);
+    expect(evalConditional(NEG, present)).toBe(false);
+
+    // An empty array and an empty object are absences of a RISK, not of the
+    // namespace: the fallback draws for those too, which it always did.
+    expect(evalConditional(NEG, ctx({ risks: [] }))).toBe(true);
+    expect(evalConditional(NEG, ctx({ risks: [{}] }))).toBe(true);
+  });
+
+  it('holds for the other two masters that pair a fallback the same way', () => {
+    // `cashFlowComparison.ts` and `clientDetails.ts`. Asserted by expression
+    // rather than by rendering, because the point is the evaluator.
+    for (const pos of [
+      'cashFlowComparison && cashFlowComparison.hasAnalysis',
+      'clientDetails && clientDetails.hasFinancials',
+    ]) {
+      expect(evalConditional(pos, ctx({ report: {} }))).toBe(false);
+      expect(evalConditional(`!(${pos})`, ctx({ report: {} }))).toBe(true);
+    }
+  });
+
   it('still refuses a name that would reach the global scope', () => {
     // The security case. `window` is all word characters and passes the
     // character whitelist; only the name allow-list stops it.
     expect(evalConditional('window && window.location', ctx({}))).toBe(false);
     expect(evalConditional('globalThis', ctx({}))).toBe(false);
+  });
+
+  it('binds a guarded global to undefined rather than reading the real one', () => {
+    /*
+     * The case the change has to earn. `window` matches the `name &&` guard
+     * pattern, so it is now bound as a parameter instead of being refused
+     * outright — and a parameter bound to `undefined` shadows the global. The
+     * sharp assertion is the NEGATED form: this suite runs in jsdom, where a
+     * real `window.location` exists, so a leak would make it false.
+     */
+    expect(typeof globalThis.window, 'the test needs a real global to shadow')
+      .not.toBe('undefined');
+    expect(evalConditional('!(window && window.location)', ctx({}))).toBe(true);
+    expect(evalConditional('window && window.location', ctx({}))).toBe(false);
   });
 });
 

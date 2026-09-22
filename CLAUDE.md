@@ -349,6 +349,35 @@ comment naming a catcher Mission Control never wrote. So before concluding a
 deployment is missing something, check whether the thing is present anywhere:
 a feature absent on every deployment is unbuilt, not unprovisioned.
 
+## A migration that has already run must not change here
+Read [`docs/security/APPLIED_MIGRATION_BODIES.md`](./docs/security/APPLIED_MIGRATION_BODIES.md)
+before touching `scripts/security/appliedBodyIdentity.mjs`,
+`applied-body-digests.txt`, its baseline, or the `--verify` step in
+`apply-migration.yml`. **The guard is keyed on the BYTES, not the version** —
+measured 22 Sep 2026, 1,002 files against 1,019 ledger rows and only **176
+versions in common**, because Lovable stamps the ledger with the moment it
+APPLIED a file rather than the version in the filename (the repo's
+`20250831091525` is the ledger's `…091523`, two seconds apart, byte-identical).
+A version key could speak about 83 files; the byte key speaks about **690**.
+
+Three rungs — the file, `.trimEnd()`, then a leading comment block dropped —
+and **the index of a match IS the rung**, which is why identical rungs are kept
+rather than deduped: deduping made a leading-comment match in a file with no
+trailing whitespace report itself as a whitespace match (0 instances here, and
+removed rather than relied on). Each rung removes only bytes that cannot
+execute, so two bodies colliding anywhere on the ladder have identical
+executable bytes — 9 shared digests, 0 differing.
+
+Three rules bite. **Editing an applied migration does not change this
+database** — it already ran what it ran — it removes the file from what any
+clone can be shown to have run, and `partitionByDependency` treats a withheld
+version as a barrier, so one hole orphans everything behind it. **The manifest
+never shrinks by itself**: a file that stops matching keeps its line and fails
+the check, because a guard you can clear by regenerating is not a guard. And
+**an empty body is never evidence** — a ledger row with no SQL and a file that
+is nothing but comments hash to the same thing, so both sides are excluded by
+name.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's
@@ -433,7 +462,7 @@ because the enforcement that protects revenue is Mission Control's own 402 on
 forwarded vendor keys), while the failure this screen could cause is locking
 out somebody who has paid. And **a top-up does not activate a workspace** —
 `seat_plan` and `setup_package` settle the gate, so a $50 credit pack cannot
-open a $2,015/month plan.
+open a $2,549/month plan.
 
 **The pay button is decided by what is OWED, never by a reason word.** An
 operator locked a clone by hand and asked where its Stripe button had gone; it
@@ -453,8 +482,8 @@ module's own comment calls it "always a real URL when gated … because a locked
 screen with no way out is worse than no screen". And **paying twice was one
 click away**, because the only guard is Mission Control's `paid_at` and the
 Stripe webhook writes it after the redirect. On Mission Control's side the gate
-quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,015
-against Scale's $2,210 headline — which `seatPlanForTier` refuses as a
+quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,549
+against Scale's $2,699 headline — which `seatPlanForTier` refuses as a
 `price_mismatch`, so every newly armed gate's button would have died; the
 checkout route did not refuse an `operator_locked` gate; and the operator page
 had no way to send a customer to Stripe at all. **Payment Gates offers a
@@ -2100,6 +2129,271 @@ the merge**, so Domain's suburb series outranks the register the day its
 package is attached, with no code change. And **a suppressed median is
 null, never zero** — DCJ prints `-` where thirty or fewer sold.
 
+**Supply had no register, and three prompts asked for it by name.** Read
+[`SUPPLY_EVIDENCE.md`](./docs/reports/SUPPLY_EVIDENCE.md) before touching
+`_shared/reports/market/openData/absBuildingApprovals.pure.ts`,
+`absDataStructure.pure.ts`, `approvalsFactBlocks.pure.ts`,
+`approvalsRegisterRead.ts`, the `approvals` stage in `market-sales-ingest` or
+`scripts/market/abs-approvals-liveness.ts`. The statewide report carried
+`**Supply Pipeline Risk:** [New housing supply vs demand balance]` — a
+bracketed slot with no register behind it, which is the shape that put
+`450 m²` and `8.5 m` into a Queensland document under NSW instrument names.
+ABS Building Approvals is the one free, keyless, national, sub-state, monthly
+measure of approved supply. **Nothing about it is guessed**: the dataflow
+comes from the ABS's own catalogue, the edition from the catalogue's names,
+and the query KEY from the flow's own data structure — an SDMX key is
+POSITIONAL, so one typed against the wrong positions returns a plausible,
+wrong slice under an HTTP 200. Four rules bite. **An approval is not a
+completion.** **A region download is a HIERARCHY, so the grain is the ROW's**
+— *"by SA2 and above"* means what it says, and a ceiling written for a council
+area refused the Bureau's own download over `Australia 2026-07 reads
+$22,314,955,000`; worse than the refusal, stamping every row with the
+REQUESTED grain files the national total as a council area, which the read
+path would then serve as one suburb's supply. **A total summed from part of a
+register is a FLOOR** and a year-on-year change is computed only between two
+COMPLETE windows. And **the four absences are four different sentences** —
+`not_loaded` is about this deployment, `none_for_area` about the area,
+`unavailable` about us, `no_area_resolved` about the subject. The check that
+found all of it (`abs-register-liveness`) runs on every build, writes nothing
+anywhere, and **exits 0 when the ABS is unreachable and 1 when the ABS
+answered and this reader refused** — its first version printed "THE ABS DID
+NOT ANSWER" and exited 0 over an HTTP 200, which is a size problem on our
+side reported as an outage on theirs.
+
+**The national pipeline was asked for, and the answer is a measurement.**
+Read [`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
+before touching `_shared/planning/nationalPipeline.pure.ts`,
+`national-pipeline-liveness.ts`, `OVERLAY_COVERAGE`, `NO_STATE_LAYER_NOTE` or
+the empty branch of `renderConstraintRegister`.
+`INFRASTRUCTURE_COVERAGE_LIMITS` has named the Infrastructure Australia
+Priority List as a standing limit since it was written, and W3.2's acceptance
+is two-branched — named entries, **or** a coverage statement naming the
+register asked. The statement shipped first; what had never been done is the
+part that decides which branch is honest, which is **asking the publisher**.
+Measured 22 Sep 2026 from CI: Infrastructure Australia **is** a publisher on
+the Commonwealth catalogue and holds **50 packages, walked complete, of which
+0 are the Priority List** — all fifty are Australian Infrastructure Audit 2019
+and Outer Urban PT spatial layers (congestion, crowding, travel time to
+hospital and school, jobs reachable in thirty minutes) in SHP/WFS/GEOJSON.
+Real, national, machine-readable, and **not** named projects with a status
+word, so they are recorded as a finding and deliberately not built on: using
+the thing that answered because it answered is what a coverage statement
+exists to prevent. Reading: `not_in_catalogue` — the statement is the honest
+branch, and it is a measurement now rather than a literal. The probe stands as
+the instrument that flips it, and **no per-report call is made**, because a
+live lookup would spend a round trip to learn a fact that changes on the scale
+of months (`amenity_register`'s rule).
+
+Nothing in it is an identifier anybody typed — no organisation slug, no package
+id, no resource id; a resource id is what the module OUTPUTS. Four rules: **a
+document is not a register** (a PDF is refused for this purpose and the formats
+offered are carried back, because "published, but not as a feed" is a different
+sentence from "not published"); **the edition is the one that ANSWERS** (QTRIP's
+own current edition is `datastore_active` and holds zero rows); a queryable
+resource outranks a download; and a refusal names the size and the first bytes.
+Five readings write five sentences, and `publisher_absent` is read BEFORE the
+packages — it sends a person to the publisher's own site where
+`not_in_catalogue` sends them to another name in the same catalogue.
+
+**And the same fault was committed three times in one sitting, each time one
+endpoint further along.** A relevance query is not a filter: the first probe
+read "no match" over **53 packages and 0 survivors** (NESP marine park
+projects, the *Rail Infrastructure Corporation Annual Report 2003-04*) and
+reported an absence — the `layers=all` defect, one publisher along. The rewrite
+then reported `publisher_absent` over **25 organisations, 1 page read**, while
+its own supplementary search declared 1,769 packages in the same run:
+twenty-five is CKAN's default page size, `limit=1000` was silently ignored, and
+a page was read as a list — inside the commit that fixed it. So the enumeration
+is **corroborated from two endpoints that fail differently** (the plain slug
+list and the package index's own organisation facet), an absence needs both to
+answer AND to agree, a facet bucket outside the list refuses, and a matched
+slug that cannot be resolved is a refusal rather than an absence. **That
+corroboration did not merely harden the method — it CHANGED the answer**, from
+`publisher_absent` to `not_in_catalogue`, which are two different remedies
+(the publisher's own site versus another name in the same catalogue): the
+truncation had not weakened a claim, it had produced the wrong one. The reader
+for the endpoint that lied is **deleted** rather than left unused, and the
+inverse guard refuses organisation OBJECTS from the slug endpoint. One rule
+also only ever half worked: `/infrastructure\s+australia/i` matches the TITLE
+and can never match the slug `infrastructure-australia`.
+
+**And the acceptance criterion is about the PAGE.** The assertion that
+existed was that `coverageLimitsFor` CONTAINS the named limit — a fact about an
+array, and an array a renderer drops is a guarantee nobody reads
+(`verdict.pricingUrl`'s defect). It is asserted through
+`renderInfrastructureOutlook` now, in BOTH branches, which immediately found
+the register spelled **twice**: the coverage list carried its own literal
+*"Infrastructure Australia Priority List"* while the module named it
+*"Infrastructure Priority List"*. `NATIONAL_PIPELINE_COVERAGE_PHRASE` is the
+one spelling, a separate constant rather than `${PUBLISHER} ${REGISTER}`
+(which composes to "Infrastructure Australia Infrastructure Priority List"),
+with a source scan refusing the literal elsewhere. One guard was renegotiated
+for the second time in this work: a bare-word rating scan reads the
+paragraph's own *"it is not a basis for rating infrastructure risk as low"* as
+the thing it prohibits, so the guard is written as ASSERTED forms — a sentence
+forbidding a rating is the guarantee working, and rewording it to satisfy a
+regex would delete the guarantee to keep the guard.
+
+**Forward demand is a different claim from measured growth, and the premise
+was wrong.** Read
+[`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
+before touching `_shared/reports/market/openData/absPopulationProjections.pure.ts`,
+`forwardDemand.pure.ts`, `regionalPromptBlocks.pure.ts` or
+`abs-projection-liveness.ts`. W3.3 is written as *"ABS population projections
+**by SA2**"*, and that premise had never been checked — the fourth in this
+programme to be wrong for that reason, and the first caught before anything
+was built on it. Measured 22 Sep 2026 from CI: four projection flows, each
+one `REGION` dimension of **23 codes — 8 states, 1 national, 14 unplaced,
+ZERO SA2** — including the flow titled *"Population Projections by Region"*.
+So the national floor can only be a fact about a region the property sits IN,
+and forward demand at its own area is a per-jurisdiction register (W3.4).
+
+**The assumption set is a CROSS-PRODUCT, not a series**: no series dimension
+at all, and instead `FERTILITY 3 · MORTALITY 2 · NOM 4 · NIM 3` — **72
+combinations**. So a reading names EVERY assumption it rests on (a figure
+under medium fertility and NOM 3 is a different figure), there is no central
+combination to default to, and `choices[0]` / `centralSeries` are forbidden by
+a source scan. `assumptions` is DERIVED — anything that is not the geography,
+time or a slice — so a fifth cannot silently fall out of a reading's
+provenance. Five specs that pinned the old series model were renegotiated:
+they were pinning MY shape rather than the publisher's.
+
+Three rules stop a forecast becoming a fact. **A projection is not an
+`EvidencePoint`**, asserted by source scan — that type's own documentation is
+"the measurement", every consumer feeds the scorer, and so **nothing here
+scores**: a projection is weaker than `populationDriver`, which
+`demandScoring` already caps as unable to carry the dimension. **An estimate
+is refused and NAMED** — this platform already holds 61,335 rows of ABS
+resident population and turns it into a CAGR called "Population growth", so
+printing that under a forward heading is the worst available failure and an
+allow-list omission would do it silently. And **a region is not an area**:
+only SA2 and SA3 describe the property's own.
+
+**And the 14 unplaced codes were the most valuable line in the log.**
+`11, 12, 21, 22 …` looked like a capital-city and rest-of-state split — a
+grain FINER than state, refused and therefore understating the answer. Looked
+like is not a measurement, so `unplaced` was changed to carry each code's
+published NAME and the next run answered `61 Hobart · 62 Rest of Tas ·
+71 Darwin · 72 Rest of NT`: seven states split two ways plus an unsplit ACT
+is exactly 14. The rule is `^[1-8][12]$`, the finest published grain is
+**capital city or rest of state**, and the label stopped saying "a whole
+metropolitan area" because `Rest of Tas` is not one. Printing the ids made
+the gap visible; printing the names closed it — and the conclusion is
+unchanged, since neither a capital nor everything outside it is this
+property's area. Also measured: NOM's four choices include **`Zero NOM`**, so
+`choices[0]` from each dimension would have printed the maximum-growth corner
+of a 72-cell space as "the projection".
+
+**The probe shipped with the defect it exists to catch.** Its first run sent
+the XML structure media type with no wildcard fallback, took **HTTP 406** on
+every flow, and printed "THE PREMISE DOES NOT HOLD" over `flows read 0`. A
+406 is the server saying it cannot serve what we ASKED FOR, so
+`isOurRequestFault` names 406/415 as ours and the probe FAILS on them; and a
+verdict is now impossible to print over zero measurements. The working header
+was already a literal in the approvals probe **twice**, so it was typed twice
+then a third time wrong — `ABS_SDMX_STRUCTURE_ACCEPT` is named once and a spec
+forbids retyping it.
+
+**The half worth the most needed no register at all.**
+`regionalPromptBlocks` already forbade the model to state "a population
+projection" while the section validator REQUIRES the words population, income
+and employment — so the model was obliged to write about demand, told one
+thing it may not say, and offered nothing to say instead. *A prohibition with
+no demonstration of the permitted form is one a model routes around*, and the
+planning block's own bracketed-pointer prohibition was ignored by nine of ten
+delivered documents. The absence gets a sentence now, naming a publisher a
+reader can reach, plus an explicit statement that the measured table is
+**BACKWARD-looking** — a five-year CAGR labelled "Population growth" beside a
+demand discussion is read forward by a reader never told otherwise. Two
+bounds: the model may not present that publisher as a source this report
+consulted, and the default availability is `not_loaded`, because any other
+default announces a reading nobody has. `FORWARD_DEMAND_PUBLISHERS` names all
+eight jurisdictions with `ingested: false` truthfully, because "everywhere" is
+what makes loading one state wrong; the table states **no grain**, since
+nothing here can reach those publishers to check one. And the state it names
+is the TRUSTED geography's — the generator's own `state` is
+`detectedState || 'NSW'`, so reading it would name the NSW publisher on every
+unresolved property. The regeneration path names NO publisher, a recorded
+asymmetry asserted by a test rather than an oversight.
+
+**A jurisdiction's registers are asked behind a declared order, and the
+licences were never read.** Read
+[`JURISDICTION_PLANNING_COVERAGE.md`](./docs/reports/JURISDICTION_PLANNING_COVERAGE.md)
+before touching `_shared/planning/planningProviders.pure.ts`,
+`jurisdictionLayerProbe.pure.ts`, `SA_NOTE` / `NT_NOTE` / `WA_LICENCE_NOTE`,
+`instrumentCurrencyLine` or the `providers` block in
+`planning-data-service`. `PLANNING_PROVIDERS` / `DEVELOPMENT_PROVIDERS`
+mirror `AMENITY_PROVIDERS`' SHAPE and deliberately not its semantics: those
+are first-that-answers chains where the second answer REPLACES the first,
+while a state overlay layer and a council amendment register are different
+facts about the same lot — so these are **floor plus refinements**, the floor
+is PREPENDED wherever configuration omits it (else
+`PLANNING_PROVIDERS=amendment_register` prints a draft control as the control
+in force), and the operator override is deliberately NOT a provider because a
+variable able to drop it would silently overrule a recorded correction. The
+order is a configuration; **what a report may state turns on what ANSWERED**,
+so `refinementsThatAnswered` returns nothing where the floor did not.
+**The amendment was being read and thrown away**: `parseNswInstrument` reads
+the LEP's amendment number and commencement date off layer 8 of the SAME
+Identify the height and minimum lot size come from and handed both to
+`console.log`, while `parseNswZoning` publishes `EPI_NAME` and carries no
+amendment at all — so the register said *"The Hills Local Environmental Plan
+2019"* over a record that knew it was Amendment 12. Four premises were then
+asked of the publishers from CI (22 Sep 2026) and four came back wrong.
+**`SA_NT_NOTE` was false for South Australia** — its *"every candidate host
+refused this platform's scripted egress"* was measured on the DEVELOPMENT
+egress, and `dpti.geohub.sa.gov.au` answers 200 with 131 services across 30
+folders, two named `PlanSA` and `ePlanning`; it is two notes now and the old
+constant is DELETED rather than aliased, because an alias serves SA's
+sentence to the NT. **A bot-protection challenge is not a refusal** — NTLIS
+answered 403 with Cloudflare's interstitial and the note sent an operator to
+write to the Territory about a decision nobody there made, so `challenged` is
+its own failure, recognised by the PAGE and never the digit (the same
+challenge arrives under 403, 429 and 503), and `bad_request` covers WA's 400
+`ArcGIS Server Error`, which is our parameters. **A catalogue outranks an
+unstated licence** — the ACT's verified organisation lists 391 services while
+its Territory Plan service answers a `copyrightText` of `"TP"`, and ranked
+the other way the note read *"nothing from it is republished here"* about the
+jurisdiction whose zone this product publishes on every ACT report; the
+principle is that a licence read from ONE service does not describe a
+catalogue of 391, while a stated RESTRICTION stays above it. And **a
+directory listing folders and no services has not answered** — the probe
+walks the publisher's own folder names now, to a ceiling that clears SA's
+thirty and reports PARTIAL past it. **Five jurisdictions' layers are already
+republished into commercial client PDFs under a licence typed into a source
+file and none had ever been read from the publisher**: the verdict is
+three-valued and `silent` is load-bearing, because a three-character
+`copyrightText` is silence about terms rather than a denial of them, and
+nothing here rewrites a constant either way. **All five answered `silent`
+and none contradicted** — Queensland's *"this is an open data map service"*
+describes a service rather than granting terms, and Tasmania names the
+statute the mapping was made under — so nothing is wrong, and what five
+silences together say is that every one of those claims rests on something
+this repository does not record.
+
+**W3.6 — an absence belongs to a jurisdiction, and one had been forgotten.**
+The five absences and the per-jurisdiction sentences already existed; what did
+not exist was anything that could tell you a jurisdiction was MISSING.
+`NO_STATE_LAYER_NOTE` is a `Partial` record, correctly — a jurisdiction read in
+full needs no note — and a `Partial` record is exactly the shape that lets one
+go missing. The **Australian Capital Territory** did: its zone IS read, so it
+never looked unserved, while its overlay registers have no branch at all, so
+the page fell through to the generic sentence naming neither the territory nor
+the remedy. `OVERLAY_COVERAGE` declares all eight (`state_layers_read` for
+NSW/VIC/TAS, `partial` for QLD, `not_read` for WA/SA/NT/ACT) and the invariant
+is asserted both ways — anything not read in full owes a note, and anything
+read in full must not carry one, because a false limitation teaches a reader to
+discount the true ones. It **decides something**: `overlayCoverage` rides
+`PlanningFacts` so the page can separate a register never integrated
+(permanent, with a remedy) from one that is read and answered nothing
+(*unchecked rather than clear*, worth a retry) — a distinction the note map
+alone could not draw. The spec drives the REAL composer over all eight, and one
+of its bounds was found by execution: the rating guard is scoped to the
+**absence statement**, because Queensland's remedy says *"a limited certificate
+states the zone and the overlays"* and that is the certificate's statutory
+name — the rule forbids rating an absence, not a jurisdiction's legal
+vocabulary.
+
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
 Australia's quarterly suburb workbooks are walled at their publishers and
@@ -2123,6 +2417,53 @@ nulled and named, never a reason to refuse a series** (one $7,000 cell
 refused 444 localities), and **a file is anchored on the newest capture
 that LOADS**, because the archive's index can list a capture its store
 answers 404 for.
+
+**Demand cannot score in four jurisdictions, and two of them publish
+nothing to score it with.** Read
+[`SALES_VOLUME_COVERAGE.md`](./docs/reports/SALES_VOLUME_COVERAGE.md) before
+touching `_shared/reports/market/openData/salesVolumePublishers.pure.ts`,
+`sales-volume-liveness.ts` or the demand branch of `describeGaps`.
+`scoreTransactionVolume` is the only PRIMARY demand measure this deployment
+is entitled to and it needs **four** periods carrying a count; NSW and QLD
+pair one with every period, SA publishes two counted quarters a release and
+VIC's four are recovered from the archive, while ACT/NT/TAS/WA reach the
+register only through `absResDwell` — state grain, `salesCount: null`.
+**The trap is the easy success**: all four already hold a price at state
+grain and every one publishes something called "property sales", so finding a
+sales dataset and reporting the gap closed changes nothing while looking
+exactly like a fix — `COUNT_PATTERN` asks whether the PUBLISHER says a count
+is in it, and `medians_only` / `state_grain_only` are readings rather than
+finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets, 203
+matched and attributed, and not one carries a count**; the NT's index holds
+1,075 and matched none of five phrasings; the ACT's holds **378 read through
+SOCRATA** and matched none; only `data.tas.gov.au` does not resolve. **Three
+of the four are settled and the answer is that no sub-state count of
+residential sales is published**; one is OURS, and keeping them apart is the
+point. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
+rather than replaced with another guess — that 404's own body
+(`{"code":"not_found"}`, a JSON API that does not speak CKAN) is what bought
+the Socrata reader, which projects onto the same `VolumeDataset` shape so one
+judgement serves both dialects. **Corroboration gates an ABSENCE, not a
+FIND**: the first cut gated both and discarded Tasmania's one attributed
+dataset because a second index had not answered — requiring a second witness
+to a thing you are holding is discarding evidence. And
+`VOLUME_READING_IS_CURRENT` declares which readings the CURRENT instrument
+took, because the ACT's moved the moment the instrument changed and a reading
+stored against a replaced one is the *asserted by configuration rather than
+by effect* trap. Three rules were each paid for again here.
+**A harvest hit is not a statement about a jurisdiction** — the probe's own
+first run read `countable` for the NT over "datasets examined 0" and named a
+VICTORIAN department, because the harvest catalogue's datasets were merged in
+and ranked; `attributableTo` judges the publishing ORGANISATION, by full name
+and never by abbreviation (`ACT` is inside "Climate Action", the very name
+that caused it) and never by the title. **`200 · 0 declared` is not an
+answer** until the catalogue is asked its own SIZE — 3,000 datasets matching
+none of five phrasings has answered, an index that says it holds none has
+not. And **an absence carries the size of the question that found it**: the
+sentence read *"0 datasets examined"* over a five-query search of a populated
+index, because it carried what survived attribution rather than what was
+searched. Nothing is loaded, no migration is requested, and a source scan
+asserts the probe names no table, client or credential.
 
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
@@ -3314,6 +3655,25 @@ The seeded PDF catalogue is **generated**, not hand-edited. Never hand-edit the
 generated migration — edit the source and run `npm run templates:library:seed`,
 which revalidates every schema against the live Zod contract, the production
 renderer allow-list and the publish gate before writing anything.
+
+**And nothing compared the seed to what generates it.** The generator could be
+run or not run and the tree looked identical either way — so seed v19 was
+written, four commits changed what the definitions produce, and the migration
+still carried the old geometry for **301 of its 543 templates**: a bound KPI
+note that sets two lines where one was budgeted (142 dashboard grids, 8–21pt)
+and the cover facts coming off a density literal (140 at 11→9pt, 80 at
+14→13pt). The migration is what a deployment applies, so a fix that reaches
+only the definitions reaches **no document at all** — the way seed v18 merged
+without landing. `npm run templates:library:seed:check` re-derives the SQL and
+compares the **bytes**, naming the templates that drifted rather than an
+offset, and `ci.yml`'s `template-geometry` job runs it beside the render gate
+under `always()` so a stale seed and a geometry failure are both reported by
+one run. Two rules: **the comparison is the artefact, never a count** (a count
+absorbs one change arriving as another leaves — `check-edge-functions.mjs`'
+lesson), and **a migration that was never written is drift, not a pass**. It is
+`investmentCompassSource.spec.ts`' rule one layer out, and it was measured both
+ways before it was trusted — exit 1 on the stale file, exit 0 on the fresh
+one.
 
 It carries **two authoring systems over one renderer**. The 43 *voice* templates
 come from `scripts/template-library/designSystem.ts` — five voices keyed to the

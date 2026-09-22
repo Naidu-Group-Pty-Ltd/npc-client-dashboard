@@ -158,6 +158,28 @@ jobs:
       - name: Report asset drift check
         run: npm run reportkit:assets:check
 
+      # Three more generated artefacts that had a `:check` mode and no runner.
+      #
+      # Found 21 Sep 2026 while looking for what seed v19 might have left
+      # stale: `migrations:index:check` caught that one in CI, and a sweep of
+      # every `*:check` script against every workflow found three more that
+      # nothing invoked. `mobile:api:check` was FAILING at the time, on the PR
+      # base as well as the branch, so `mobile/api-surface.json` had drifted
+      # from the security registry with nothing to say so -- for however long.
+      #
+      # `CLAUDE.md` says both mobile artefacts "must never be hand-edited" and
+      # that "both have `:check` drift modes", so being checked is the stated
+      # intent. This is the same defect as a component nothing renders and a
+      # test nothing invokes, one level up: a gate nothing runs.
+      - name: Brand icon drift check
+        run: npm run brand:icons:check
+
+      - name: Mobile design-token drift check
+        run: npm run mobile:tokens:check
+
+      - name: Mobile API-surface drift check
+        run: npm run mobile:api:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
@@ -551,6 +573,13 @@ jobs:
       # from the prime while the ledger said their version had run.
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
+      # A migration this deployment has already RUN must not change here. Mission
+      # Control decides what a clone may be sent by asking whether the prime's
+      # ledger holds the file's BYTES — 690 of 1,002 files clear that way against
+      # 83 a version key reaches — so editing an applied migration withholds it
+      # from the whole fleet, and everything the dependency order puts behind it.
+      - name: An applied migration still carries the SQL that ran
+        run: node scripts/security/check-applied-body-digests.mjs
       # A version is the order a migration RUNS in, and this tree's versions run
       # months ahead of the wall clock — so today's timestamp lands in the middle
       # of applied history. A file numbered 20260917110000 altered a table created
@@ -980,6 +1009,179 @@ jobs:
           pdfinfo /tmp/cc.pdf | grep -E '^Pages: +17$' || {
             echo "unexpected page count:"; pdfinfo /tmp/cc.pdf | grep Pages; exit 1;
           }
+  # The geometry gate, which nothing ran.
+  #
+  # `templates:compass:qa` renders all 500 masters as real documents in a real
+  # Chromium and measures every block against the page that contains it, and
+  # every text node against every other. `CLAUDE.md` names it for the class it
+  # catches: "a declared block height is a promise the renderer keeps only if
+  # the text is as short as the author assumed, and a block that sets taller
+  # does not overflow the page, it prints over the next one ... `npm run
+  # templates:compass:qa` fails on the class."
+  #
+  # That class has reached a client. The verdict heading printed THROUGH the
+  # KPI band, over `$1,975,000` and `$850`, on a delivered Compass. Until this
+  # job existed the gate that catches it ran when somebody remembered to run
+  # it -- no workflow invoked any `templates:*` script at all, checked across
+  # every file in this directory. The catalogue SCHEMA was covered by vitest in
+  # `verify`; the rendered GEOMETRY was covered by nothing.
+  #
+  # It is its own job rather than a step in `verify` because it is ~15 minutes
+  # of browser against that job's few, and jobs run in parallel: as a step it
+  # would put every other check behind it.
+  #
+  # It runs unconditionally rather than behind a path filter. The surface it
+  # depends on is wide -- the masters, the block builders, the resolvers, the
+  # HTML renderer, the design tokens, the binding projection, the section
+  # registry -- and this repository has already paid for a guess at that kind
+  # of list once: the deploy workflow built its changed-function set from
+  # `supabase/functions/**` alone, so a config-only edit deployed nothing and
+  # a `verify_jwt` declaration and production came to disagree.
+  # Does the ABS answer, and does our reader accept what it actually sends?
+  #
+  # `absBuildingApprovals.pure.ts` is verified against the SDMX-CSV FORMAT --
+  # every test behind it runs on synthetic bodies -- because the development
+  # egress cannot reach the Bureau: the gateway answers 403 to CONNECT for
+  # `data.api.abs.gov.au`, a policy denial in the network allowlist. So the
+  # reader has never seen the publisher's own bytes, and "verified against the
+  # format" is not "verified". A runner has open internet and closes that gap
+  # here, before anything is merged, deployed or scheduled.
+  #
+  # It writes nothing anywhere: no database, no Supabase, no credential.
+  #
+  # It runs on EVERY CI run, and the first version did not -- it was gated on
+  # `github.event.head_commit.message`, which does not exist on a
+  # `pull_request` event (that is a push-event field), and on an `ABS` in the
+  # PR title, which was not there. It reported `skipped`. A check written to
+  # verify a register against reality, gated on a condition that is false, is
+  # this repository's own recurring defect committed by the person cataloguing
+  # it.
+  #
+  # Unconditional is also the better design on its merits. Running only when
+  # OUR files change could never catch a change on THEIRS -- the ABS can
+  # reissue a dataflow version, rename a flow or restructure a column at any
+  # time, and the first symptom would be a 404 at 03:45 that reads like an
+  # outage. Asserted by effect, never by configuration.
+  #
+  # The exit code is the design. The ABS being unreachable REPORTS and passes
+  # -- a compliance product must not have its build decided by another party's
+  # uptime, which is this repository's own rule. What fails is the case that is
+  # ours: the ABS answered and our discovery or parser refused what it sent.
+  abs-register-liveness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Ask the ABS what it publishes, and read it
+        run: npx tsx scripts/market/abs-approvals-liveness.ts
+
+      # `always()` so the two registers are independent signals sharing one
+      # install. Without it, a reader bug against the ABS would hide the
+      # national pipeline's measurement entirely, and a skipped probe reads in
+      # the log exactly like a probe that reached nothing.
+      - name: Ask the Commonwealth catalogue for the national pipeline, and read it
+        if: always()
+        run: npx tsx scripts/market/national-pipeline-liveness.ts
+
+      - name: Ask the ABS what it projects, and at what grain
+        if: always()
+        run: npx tsx scripts/market/abs-projection-liveness.ts
+
+      - name: Ask SA, WA, NT and ACT what they publish, and under what licence
+        if: always()
+        run: npx tsx scripts/market/jurisdiction-layer-liveness.ts
+
+      - name: Ask ACT, NT, TAS and WA whether they count residential sales
+        if: always()
+        run: npx tsx scripts/market/sales-volume-liveness.ts
+
+  template-geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # The faces the render container sets type in, installed the same two
+      # ways it installs them: the Debian packages the Dockerfile names, and
+      # the files this repository ships. Without them Chromium falls back to
+      # whatever fontconfig picks and the geometry measured is a document
+      # nobody receives -- which is exactly what happened on the machine this
+      # gate was written on, where the Google Fonts stylesheet the masters
+      # declare fails behind an intercepting proxy and `document.fonts` stays
+      # empty. `assertDeclaredFacesResolve` refuses such a run; this step is
+      # what makes CI able to pass it without reaching the network at all,
+      # which is also the rule `RENDER_BOUNDARY.md` holds for print.
+      - name: Install the render container's typefaces
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            fonts-inter fonts-roboto fonts-lato fonts-noto-core
+          mkdir -p ~/.local/share/fonts
+          cp weasyprint-service/fonts/*.ttf ~/.local/share/fonts/
+          fc-cache -f
+
+      # Fails on three things: a block whose bottom is past its page box, a
+      # text node that overlaps another, and -- since 21 Sep 2026 -- debris in
+      # the rendered TEXT: an unresolved binding, a label clipped to an
+      # ellipsis, a placeholder word, or a database identifier. The first two
+      # ask where ink SITS; the third asks what it SAYS, and three of its four
+      # classes have reached a client document.
+      - name: Every master renders as a document (geometry and content)
+        run: npm run templates:compass:qa
+
+      # The gate above renders the template DEFINITIONS. What a deployment
+      # applies is the seed migration, and nothing compared the two -- so the
+      # generator could be run or not run and the repository looked identical
+      # either way. Measured on this branch: seed v19 was written, then four
+      # commits changed what the definitions produce, and the migration still
+      # carried the old geometry for 301 of 543 templates. A fix that reaches
+      # only the definitions reaches no document at all, which is how seed v18
+      # came to merge without landing.
+      #
+      # `always()` so a stale seed and a geometry failure are both reported by
+      # one run rather than the first hiding the second.
+      - name: The seed migration is what the template definitions produce
+        if: always()
+        run: npm run templates:library:seed:check
+
+      # The renders themselves, when it fails: a reviewer should be able to
+      # look at the page rather than read a coordinate.
+      - name: Upload the renders
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: template-geometry-renders
+          path: audit-output/investment-compass/
+          retention-days: 7
+          if-no-files-found: ignore
+
+
 
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a

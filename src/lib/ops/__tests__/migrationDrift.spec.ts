@@ -9,6 +9,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs, no types; this is a script module by design.
 import { assessMigrationDrift, probeIsReadOnly } from '../../../../scripts/ops/migrationDrift.pure.mjs';
+import { migrationText, migrationsContaining } from '../../testSupport/migrationCorpus';
 
 const MIGRATIONS = 'supabase/migrations';
 
@@ -137,9 +138,13 @@ describe('probeIsReadOnly — a probe is read from the repo and run against a wr
 });
 
 describe('the probes this repository actually declares', () => {
-  const declared = readdirSync(MIGRATIONS)
+  // Byte-gated: `supabase/migrations` is 620 MB and all but ~14 MB of it is
+  // the generated template library, so decoding every file to find a comment
+  // header costs seconds per suite. The gate carries both casings because the
+  // match below is `/i` -- see `testSupport/migrationCorpus`.
+  const declared = migrationsContaining(['@effect', '@EFFECT'])
     .filter((f) => /^\d{14}_.*\.sql$/.test(f))
-    .map((f) => ({ f, src: readFileSync(join(MIGRATIONS, f), 'utf8') }))
+    .map((f) => ({ f, src: migrationText(f) }))
     .map(({ f, src }) => ({ f, probe: src.match(/^\s*--\s*@effect:\s*(.+?)\s*$/mi)?.[1] ?? null }))
     .filter((x) => x.probe);
 

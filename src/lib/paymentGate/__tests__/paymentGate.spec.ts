@@ -30,7 +30,7 @@ const LOCKED_BODY = {
   locks_at: '2026-08-30T00:00:00.000Z',
   ms_remaining: 0,
   counting: false,
-  plan: { slug: 'growth', name: 'Growth', amount_due_cents: 86000, currency: 'AUD' },
+  plan: { slug: 'growth', name: 'Growth', amount_due_cents: 139900, currency: 'AUD' },
   clone: { id: 'c1', name: 'Acme Property', slug: 'acme' },
   checkout: { start_path: '/api/public/clones/gate/checkout', pricing_url: 'https://pay.example' },
 };
@@ -170,7 +170,7 @@ describe('formatting', () => {
   });
 
   it('formats money in the workspace currency', () => {
-    expect(formatMoney(86000, 'AUD')).toContain('860');
+    expect(formatMoney(139900, 'AUD')).toContain('1,399');
     expect(formatMoney(null)).toBeNull();
   });
 });
@@ -184,7 +184,7 @@ describe('whether paying is what lifts this', () => {
       reason: 'grace_expired',
       locked: true,
       paid: false,
-      plan: { slug: 'scale', name: 'Scale', amount_due_cents: 221000, currency: 'AUD' },
+      plan: { slug: 'scale', name: 'Scale', amount_due_cents: 269900, currency: 'AUD' },
       checkout: { pricing_url: 'https://pay.example/' },
       ...over,
     });

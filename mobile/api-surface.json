@@ -5,9 +5,9 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 237,
+    "staff": 239,
     "public": 37,
-    "server-only": 76,
+    "server-only": 79,
     "portal": 59
   },
   "functions": [
@@ -100,6 +100,12 @@
       "exposure_class": "authenticated-staff",
       "mobileScope": "staff",
       "verify_jwt": false
+    },
+    {
+      "name": "amenity-register-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
     },
     {
       "name": "aml-access",
@@ -632,6 +638,12 @@
     {
       "name": "enrich-lead-attributions",
       "exposure_class": "authenticated-or-service",
+      "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
+      "name": "estimate-capital-growth",
+      "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": true
     },
@@ -1602,6 +1614,12 @@
       "verify_jwt": false
     },
     {
+      "name": "market-sales-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
+    },
+    {
       "name": "market-source-probe",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
@@ -1717,6 +1735,12 @@
     },
     {
       "name": "migration-upload-source",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
+      "name": "mission-control-announcements",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": false
@@ -2445,6 +2469,12 @@
       "name": "update-stamp-duty-rates",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
+      "name": "urban-centre-register-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
       "verify_jwt": true
     },
     {

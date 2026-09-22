@@ -117,19 +117,44 @@ describe("module inclusion by tier", () => {
 
 describe("GST is contained in the price, not added to it", () => {
   it("splits a tax-inclusive total", () => {
-    expect(gstComponentCents(69900)).toBe(6355);
-    expect(exGstCents(69900)).toBe(63545);
+    // Launch's with-AML headline under the 2026 Final Review. The workbook
+    // publishes the split itself — $999 / $908.18 / $90.82 — so this is a
+    // check against the signed-off sheet rather than against our own
+    // arithmetic restated.
+    expect(gstComponentCents(99900)).toBe(9082);
+    expect(exGstCents(99900)).toBe(90818);
+  });
+
+  it("reproduces every published tier split to the cent", () => {
+    // All six figures on TIER PRICING, with and without AML. If the ÷11 were
+    // ever turned into a ×0.1 added on top, five of these six would move.
+    const published: [number, number, number][] = [
+      [99900, 90818, 9082], // Launch  with AML
+      [84900, 77182, 7718], // Launch  without
+      [139900, 127182, 12718], // Growth  with AML
+      [124900, 113545, 11355], // Growth  without
+      [269900, 245364, 24536], // Scale   with AML
+      [254900, 231727, 23173], // Scale   without
+    ];
+    for (const [incl, exGst, gst] of published) {
+      expect(exGstCents(incl)).toBe(exGst);
+      expect(gstComponentCents(incl)).toBe(gst);
+    }
   });
 
   it("always reconciles", () => {
-    for (const cents of [4900, 5900, 50400, 86000, 201500, 1, 0]) {
+    for (const cents of [4900, 7900, 15000, 84900, 124900, 254900, 1, 0]) {
       expect(exGstCents(cents) + gstComponentCents(cents)).toBe(cents);
     }
   });
 
   it("discounts twelve months by 10% for annual", () => {
-    expect(annualCents(50400)).toBe(544320);
-    expect(annualCents(201500)).toBe(2176200);
+    // The 10% is the offer the product already ran and already charges; the
+    // 2026 workbook does not set an annual price at all and leaves the
+    // discount open under D03, so this pins what we do rather than claiming
+    // the sheet authorised it.
+    expect(annualCents(84900)).toBe(916920);
+    expect(annualCents(254900)).toBe(2752920);
   });
 });
 

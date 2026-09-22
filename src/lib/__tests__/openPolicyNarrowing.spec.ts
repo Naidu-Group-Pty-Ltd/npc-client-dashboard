@@ -22,6 +22,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { migrationText, migrationsContaining } from '../testSupport/migrationCorpus';
 
 const MIGRATIONS = 'supabase/migrations';
 const FILE = '20261119160000_narrow_four_open_public_policies.sql';
@@ -121,12 +122,20 @@ describe('and nothing later reopens them', () => {
     // A ratchet over four named tables rather than a rule over every one:
     // `check-policy-predicates.mjs` records why a check that is mostly false
     // positives is worse than no check at all.
-    const later = readdirSync(join(process.cwd(), MIGRATIONS))
-      .filter((f) => f.endsWith('.sql') && /^\d{14}_/.test(f) && f.slice(0, 14) > VERSION);
+    /*
+     * Gated on the PHRASE, never on the word. Measured over all 1,014
+     * migrations: `POLICY`/`policy`/`Policy` selects 425 files and 590 MB,
+     * because the word appears in the generated template library's seeded
+     * prose; `CREATE POLICY` selects 371 files and 2 MB, and misses none of
+     * the 344 the regex below matches. A one-word gate on a 620 MB corpus is
+     * no gate at all.
+     */
+    const later = migrationsContaining(['CREATE POLICY', 'create policy', 'Create policy'])
+      .filter((f) => /^\d{14}_/.test(f) && f.slice(0, 14) > VERSION);
 
     const offending: string[] = [];
     for (const file of later) {
-      const text = readFileSync(join(process.cwd(), MIGRATIONS, file), 'utf8');
+      const text = migrationText(file);
       for (const statement of statements(text)) {
         if (!/^CREATE\s+POLICY/i.test(statement)) continue;
         if (!NARROWED_TABLES.includes(tableOf(statement))) continue;

@@ -1806,6 +1806,40 @@ which was true when written and was then fixed upstream; the strategic tier
 keeps `producer: null` because a Due Diligence planning section also needs
 title and easements, which no register here reads.
 
+**v4.1 gave the same treatment to Infrastructure and to Supply, and the
+acceptance criteria for it could have been met without the generator writing
+a word.** Read `compassUnmergedSections.spec.ts`' header before touching
+`_shared/compassSectionRegistry.ts`, its frontend mirror, or a `compass:`
+placement in `sectionRegistry.pure.ts`. `Infrastructure and Growth Context` is
+ordinal 5 and `Competitive Landscape and Supply Pipeline` ordinal 12 — the
+second had no existence in this product beyond the statewide prompt's
+`**Supply Pipeline Risk:** [New housing supply vs demand balance]`, a
+bracketed slot with no register behind it, and W3.1's
+`market_building_approvals` is what ended that. **The generator reads
+`compassSectionRegistry.ts` and not the constitution**: W2.2's stated
+acceptance — `sectionsForTier('compass')` returns both, the contents page
+lists them, `documentPlacement` seats them — is three statements about
+`sectionRegistry.pure.ts`, and the one pin joining the two registries asserts
+only `compassSections() ⊆ sectionsForTier('compass')`. Changing the
+constitution alone would have listed two sections nothing authors, with every
+criterion green. The converse is pinned now, on the SET and on the ORDER.
+Three rules follow. **A carrier must stop asking for what it gave up** — Why
+This Location Matters and Demand Drivers and Market Positioning each name the
+section that took the subject and say it is not written here, because a prompt
+that still asks for it is how `Exit Outlook` and `Monitoring Plan` were
+written twice and contradicted each other on one delivered document; the guard
+is written as ABSENT literals rather than a bare-word scan, since both
+carriers now mention the subject in order to hand it over. **A heading is
+claimed once** — `Supply & Development Pipeline` was a sourceHeading of Demand
+Drivers and an alias of `infrastructure` at the same time, and
+`buildRoutingTable` upserts, so the last writer wins silently; the two
+collisions that predate this are frozen as a ratchet, not banned. And
+**`PROTECTED_SECTION_IDS` is DERIVED from `sectionPriority`**, which found
+four sections declaring `Protected` while the list `compassPostProcessor`
+reads omitted them — `compass.planningConstraints` among them, so
+`capListsToTop5` could cut an eleven-row overlay register to five bullets on
+the section that exists to explain it.
+
 ## What a report may state about planning, and what it may not
 Read [`docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
 before touching `_shared/planning/planningFacts.pure.ts`,

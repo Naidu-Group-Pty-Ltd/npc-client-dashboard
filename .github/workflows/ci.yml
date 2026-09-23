@@ -1069,7 +1069,14 @@ jobs:
   # ours: the ABS answered and our discovery or parser refused what it sent.
   abs-register-liveness:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Seven probes share this ceiling. The two that describe files and walk
+    # directories — state projections and SA/WA/NT zones — each spend a
+    # wall-clock budget of their own (11 and 6 minutes) and NAME what they did
+    # not reach, so the ceiling is sized to their budgets plus the other five
+    # (about 3 minutes measured) rather than to a hope. A job killed by its
+    # timeout is red for a reason that is ours, and the probes after the cut
+    # never run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1087,25 +1094,46 @@ jobs:
       - name: Ask the ABS what it publishes, and read it
         run: npx tsx scripts/market/abs-approvals-liveness.ts
 
-      # `always()` so the two registers are independent signals sharing one
+      # `!cancelled()` so the registers are independent signals sharing one
       # install. Without it, a reader bug against the ABS would hide the
       # national pipeline's measurement entirely, and a skipped probe reads in
       # the log exactly like a probe that reached nothing.
+      #
+      # Never `always()`. An `always()` step is not interrupted when the run is
+      # cancelled, so a push that superseded this run left the probes running
+      # to the end of their budgets (about fifteen minutes) while the next run
+      # waited behind them in the concurrency group — and the header's promise
+      # that the probes after a timeout never run was false. `!cancelled()`
+      # keeps the first property and restores the second.
       - name: Ask the Commonwealth catalogue for the national pipeline, and read it
-        if: always()
+        if: ${{ !cancelled() }}
         run: npx tsx scripts/market/national-pipeline-liveness.ts
 
       - name: Ask the ABS what it projects, and at what grain
-        if: always()
+        if: ${{ !cancelled() }}
         run: npx tsx scripts/market/abs-projection-liveness.ts
 
       - name: Ask SA, WA, NT and ACT what they publish, and under what licence
-        if: always()
+        if: ${{ !cancelled() }}
         run: npx tsx scripts/market/jurisdiction-layer-liveness.ts
 
       - name: Ask ACT, NT, TAS and WA whether they count residential sales
-        if: always()
+        if: ${{ !cancelled() }}
         run: npx tsx scripts/market/sales-volume-liveness.ts
+
+      # The per-jurisdiction projection registers forward demand needs: what
+      # each state publishes, and what its files hold, before a loader is
+      # written against them. Writes nothing.
+      - name: Ask each state what it publishes as its own population projection
+        if: ${{ !cancelled() }}
+        run: npx tsx scripts/market/state-projection-liveness.ts
+
+      # The zone layer for SA, WA and the NT: which layer, its fields and terms,
+      # and one point question per capital, so a parser is verified against a
+      # real answer. Writes nothing.
+      - name: Ask SA, WA and NT which layer is the zone, and what it says at a point
+        if: ${{ !cancelled() }}
+        run: npx tsx scripts/market/planning-zone-liveness.ts
 
   template-geometry:
     runs-on: ubuntu-latest

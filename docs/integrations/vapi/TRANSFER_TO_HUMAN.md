@@ -107,57 +107,120 @@ goodbye, a hold — that assumption is false and the instruction never runs.
 ## Scope
 
 Fixed in the Aurixa Systems org (`453f00c2-cb26-43f0-8da3-2eb13b578e15`), which
-is where the live line answers:
+is where the live line answers. **All twelve NPC assistants that carry a
+transfer protocol** now place the call in the same turn as the sentence:
 
 | assistant | id | what was fixed |
 |---|---|---|
 | NPC Inbound Agent (Angela) | `b834610e` | defects 1 and 2 |
 | NPC IFC Inbound | `ed0aa90f` | defect 2 |
 | NPC Strategy Session Inbound | `f958ec93` | defect 2 |
+| **NPC Opt In Follow Up Inbound (Monica)** | `fdb1ecde` | defect 2 |
 | NPC Discovery Call No Show Follow Up | `9013efd8` | defect 2 |
+| NPC Active Nurturing | `66d3e994` | defect 2 |
+| NPC Discovery Call Follow Up Test | `6930782c` | defect 2 |
+| NPC IFC Follow Up | `55685df0` | defect 2 |
+| NPC IFC No Show Follow Up | `209964e0` | defect 2 |
+| NPC Strategy Session (Phone) Follow Up | `f8abe39e` | defect 2 |
+| NPC Strategy Session (Phone) No Show | `5aa70a8e` | defect 2 |
+| NPC Quiz Follow Up | `044329e5` | defect 2 |
 
-The middle two are squad members a caller reaches **after** Angela routes them,
-so the same request to them hit the same wall. All three carried prompts
-byte-identical to their snapshots beforehand and took the identical rule edit;
-their behaviour is asserted from the ablation above rather than re-tested per
-assistant.
+The first four are the inbound squad — a caller reaches them through Angela, so
+the same request hit the same wall there. The other eight are outbound
+follow-ups.
 
-## Defect 2 is estate-wide, and the first count of it was wrong
+Every one carried a prompt byte-identical to its `snapshot/` copy beforehand,
+verified by length and MD5 before anything was written.
 
-The detector that produced the original scope matched only the long-form
-wording, `the assistant's next turn MUST be tool-only`. A case-sensitive
-lowercase variant — `next turn must be tool-only` — appears in **twelve NPC
-assistants, 39 times**, and **every one of the twelve that has a transfer
-protocol defers its transfer call this way**. Six assistants that the first
-sweep reported clean are not.
+## Two scope claims were wrong, and both were mine
 
-Two rules for reading that number, both measured rather than assumed:
+**The first count matched only the long-form wording**, `the assistant's next
+turn MUST be tool-only`. A lowercase variant — `next turn must be tool-only` —
+appears in twelve NPC assistants, and every one of the twelve with a transfer
+protocol deferred its transfer call that way. Six assistants the first sweep
+reported clean were not.
 
-**Not every deferral is a defect.** A deferral is only broken when the sentence
-before it gives the caller no reason to speak. *"Would it help if I briefly
-explain what NPC Services does?"* → *"If the caller says yes, the next turn must
-be tool-only"* is **correct**: the caller answers, so the turn exists. A
-transfer confirmation, and a spoken goodbye before `end_call_tool`, are the two
-shapes where it is not.
+**The second said all four members of the inbound squad were fixed. Three
+were.** `NPC Opt In Follow Up Inbound` — Monica — is the fourth member and
+still carried the defect, and *both* detectors missed her for the same reason:
+her rule reads *"**Monica's** next turn must be tool-only"*, naming the
+assistant where the others say "the assistant's", and her confirmation script
+says "After saying this, stop speaking" rather than the phrasing the other scan
+keyed on. She is reachable on the live inbound line — Angela routes a
+discovery-call caller to her — so "can I speak to a human" put to Monica hit
+exactly the wall this work exists to remove.
 
-**So the remaining exposure is `end_call_tool`, not the transfer.** After the
-four fixes above, no transfer-related deferral remains in any of them — verified
-by a case-insensitive scan of each committed prompt. What is left in those four
-is three to six `end_call_tool` and mid-flow tool steps apiece, untouched
-because they were outside what was asked and because a mid-flow step is the case
-where the caller usually does speak again.
+The lesson is the one this repository keeps paying for: **a detector written
+around the instance you have in front of you measures that instance.** Both
+sweeps were scans for a remembered string rather than for the shape of the
+defect, and each found precisely what it was written from.
 
-**Still carrying a deferred transfer call:** the eight remaining NPC assistants
-with a transfer protocol — Active Nurturing, Discovery Call Follow Up Test, IFC
-Follow Up, IFC No Show Follow Up, Opt In Follow Up Inbound (twice), Quiz Follow
-Up, Strategy Session (Phone) Follow Up, Strategy Session (Phone) No Show. All
-are outbound follow-up assistants, none is on the inbound path, and none was
-touched.
+## Not every deferral is a defect
+
+A deferral is only broken when the sentence before it gives the caller no
+reason to speak. *"Would it help if I briefly explain what NPC Services
+does?"* → *"If the caller says yes, the next turn must be tool-only"* is
+**correct**: the caller answers, so the turn exists. A transfer confirmation,
+and a spoken goodbye before `end_call_tool`, are the two shapes where it is
+not.
+
+**Twenty-eight deferrals remain across the twelve committed prompts and none is
+transfer-related** — asserted over the files in [`aurixa-org/`](./aurixa-org) by
+a case-insensitive scan that also reads fourteen lines back and eight forward
+for any mention of transferring, and finds none. What is left is
+`end_call_tool` and mid-flow tool steps, untouched because they were outside
+what was asked and because a mid-flow step is the case where the caller usually
+does speak again. `end_call` hangs up a call that is already finished; a lost
+transfer loses a caller.
+
+## Monica was tested live, and she is the one who needed it
+
+The other eleven are asserted from the three-call ablation above: the rule text
+they now carry is the text that ablation proved. Monica is on the inbound path,
+so she was driven for real.
+
+A temporary vapi-provider SIP endpoint was created bound to her assistant alone,
+**deliberately with no `fallbackDestination`**, so that nothing on the call could
+reach a human except the transfer itself. One call, one sentence:
+
+```
+ROLES  system, bot, user, tool_calls, tool_call_result, bot
+bot    "Hi. I'm Monica from Naidu Property Consulting Services. How can I help you today?"
+user   "Hi there. Can I please speak to a human?"
+→      tool_calls  ·  tool_call_result
+bot    "Absolutely. I'll try to get you through to someone from the team now.
+        I'm sorry. I'm having trouble getting someone through right now..."
+```
+
+She said the confirmation script **and placed the call**. Before the fix this
+call ends `silence-timed-out` with no `tool_calls` at all — that is the whole
+defect, and it is gone.
+
+The transfer then failed, correctly: a direct SIP probe does not run the
+scenario that writes the caller's context, so the transfer scenario had no
+Twilio parent call to redirect, and Monica read her own failure script. The
+downstream chain is proven separately and end to end, including a live leg to
+the escalation mobile. What could only be proven here is the *decision*, and the
+probe was built so that nothing else could be mistaken for it.
+
+The endpoint was deleted in the same sitting; the org's five phone records are
+unchanged.
+
+## How every change was made, and how it was checked
 
 Every change was a `PATCH` of the whole `model` object — Vapi replaces a
-top-level key wholesale, so `toolIds`, `knowledgeBase`, provider and model were
-re-sent with it and verified on read-back, along with the resulting prompt's
-length and MD5 against a locally composed target.
+top-level key wholesale, so `toolIds`, `knowledgeBase`, `provider`, `model`,
+`temperature`, `maxTokens`, `promptCacheKey`, `promptCacheRetention` and
+`server.url` were re-sent with it and verified unchanged on read-back, along
+with the resulting prompt's length and MD5 against a locally composed target.
+
+The prompt itself never left Vapi: the edit travelled as a Make expression that
+reads the live prompt, escapes it, applies the replacement and sends it back in
+the same run. A prompt carries 5–56 `{{firstName}}`-style tokens, several inside
+the sentences forbidding the assistant to say a raw variable aloud, so carrying
+one through a mapper as a literal would silently delete them.
 
 The prompts as they now stand are in [`aurixa-org/`](./aurixa-org), which is the
-rollback artefact.
+rollback artefact. Each was rebuilt locally from its snapshot and kept only
+because its MD5 equalled what Vapi returned — so the committed bytes are the
+live bytes by proof rather than by transcription.

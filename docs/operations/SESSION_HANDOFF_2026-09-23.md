@@ -16,28 +16,32 @@ already merged. It carries:
   and nothing needs to ship from it separately;
 - this session's completion of the approvals-stall fix, and this document.
 
-**Nothing on the branch is merged or deployed.** A pull request is open for
-it, under the owner's revised rule in §1. It merges, and anything it ships is
-published, only on the owner's confirmation.
+**Update, 07:30 UTC.** That first pull request (#2736) **merged, deployed and
+had its migration applied** on the owner's confirmation, and the fix is proved
+by effect (§0). The branch now carries the owner's items 4–6 in a second pull
+request (#2737), which merges, and whose migrations are dispatched, only on the
+owner's confirmation (§1, §13).
 
 ---
 
 ## 0 · If you read one thing
 
-**The national supply register has been stalled since 12:20 UTC on 22 Sep.**
-Seventeen hourly runs, one identical refusal, nothing written. The fix on this
-branch is complete and has been run against a real PostgreSQL, but **it is
-not live**. Shipping it takes two acts, which can happen **in either order**,
-and **each waits for the owner's confirmation** (§1):
+**The national supply register is unstuck, and walking down one window an
+hour.** #2736 merged and deployed, `20261217000000` was applied, and the
+hourly ticks read back from production say so:
 
-1. merge this branch's pull request (the deploy workflow then redeploys every
-   function, because shared code changed), and
-2. dispatch **`apply-migration.yml`** once with
-   `supabase/migrations/20261217000000_approvals_admit_net_amendments.sql`.
+| tick (UTC) | window asked | answer |
+| --- | --- | --- |
+| 04:20, 05:20 | the stalled window | 422, the refusal §2 describes |
+| 06:20 | 2025-07 → 2025-09 | POST 200, no refusal |
+| 07:20 | 2025-04 → 2025-06 | POST 200 in 11,169 ms, no refusal |
 
-Then verify it by effect, as §5 describes. Until both have happened, every
-hourly run spends one ABS request and writes nothing. Meanwhile every report
-that draws the Supply section prints a sentence that is false (§2).
+These ticks prove **#2736's fix** — the one production runs. Item 4 (the
+walk's lower edge derived from windows the ledger vouches for, rather than
+`min(period)`, §6's remedy) is on the SECOND pull request, #2737, and is not
+deployed; it changes the walk only where a window was left half-written, and
+the ticks above did not need it. #2737 carries items 4, 5 and 6; its state is
+§13.
 
 ---
 
@@ -226,7 +230,9 @@ Either way the register is never left holding part of a window.
    `APPROVALS_READBACK`. Expect `negative=` greater than zero once 2025-08 is
    in. Over its first seven months the register grew by **exactly 4,934 rows
    a month** (4,934 → 19,736 → 34,538 over one, four and seven months). A
-   window that fell short of that is the signature of §6's defect.
+   window that fell short of that is the signature of §6's defect. (That
+   check stays useful after §6's fix: a shortfall should now be repaired by
+   the next tick instead of persisting.)
 
 **What to expect, and when.** 33 months are owed below 2025-10 (floor
 `2023-01`), which is **11 windows, one per hourly tick**:
@@ -244,7 +250,23 @@ stalled.)
 
 ---
 
-## 6 · Open defect, recorded and not fixed: a transient failure mid-window still leaves a hole
+## 6 · A transient failure mid-window left a hole — fixed on the branch by remedy 1, PENDING merge
+
+**Status, later on 23 Sep.** The owner approved closing this ("items 4, 5 &
+6"), and remedy 1 is implemented on `claude/adoring-hopper-g02tdt`. It is
+**not merged or deployed**, so production still steps below `min(period)`
+until it is. The walk now steps below the oldest month the sync ledger PROVES
+was written whole (`vouchedOldest`), so a half-written window is asked for
+again. It needs no schema change and no new object. The rule for older rows
+turned out not to need `page_window`: every approvals success row since the
+stage was born (6ba3a5e, 21 Sep) carries `area_kind`, `first_period`,
+`latest_period` and a period count, and a count equal to the span is a window
+with no gap. The one thing the remedy did not anticipate is that **the ledger
+outlives the rows it describes**. `20261215030000` emptied the table on
+22 Sep, and the two success rows written before it still vouch for
+2026-05 → 2026-07. So a success row older than every stamp the table holds is
+set aside. The design, the simulation that checks it and its limits are in
+`docs/reports/SUPPLY_EVIDENCE.md` §15. The analysis below is kept as written.
 
 `approvalsWriteOrder` closes the hole for the **negative** class only. It does
 **not** make a window atomic. If a batch fails part-way through the
@@ -352,7 +374,10 @@ for these expressions in 15 and 17.
   (`A_PREMIUM_DOCUMENT.md` §9). A pending measurement with a trigger: the next
   delivered Compass for a property whose land-use table prohibits
   *Residential accommodation* as a group.
-- **W3.5, Tasmania.** `data.tas.gov.au` does not resolve from this egress.
+- ~~**W3.5, Tasmania.** `data.tas.gov.au` does not resolve from this egress.~~
+  **Closed 23 Sep** (item 5): read from the harvest's own records — 982
+  datasets across its 14 government publishers, in full, none carrying a
+  count. `SALES_VOLUME_COVERAGE.md` §4.4.
 - **Owner decisions the plan deliberately does not take:** whether the 21
   `market_sources` rows are seeded; whether the nine pre-19-Sep reports are
   regenerated (**the owner has said no**); and Risk. It needs a construction
@@ -380,6 +405,15 @@ for these expressions in 15 and 17.
   `127.0.0.1` with `unix_socket_directories=''`, keep the data directory under
   `/var/lib/postgresql`, and delete it afterwards. **It is not production**;
   label anything measured on it as such.
+- **A cancelled CI run is not a stopped one if a step says `if: always()`.**
+  GitHub does not interrupt an `always()` step on cancellation, so until
+  `4941f167f` a push that superseded a run left `abs-register-liveness`
+  probing for about fifteen minutes while the next run sat `pending` in the
+  `ci-<ref>` concurrency group. The probes now run under
+  `if: ${{ !cancelled() }}`. A run started from an OLDER commit still carries
+  the old conditions, so the first push after that commit still waits one
+  last time. Use `!cancelled()` for "run even if an earlier step failed", and
+  keep `always()` for steps that take seconds.
 
 ---
 
@@ -406,19 +440,95 @@ and a merged commit each describe what was meant to happen.
 
 ## 12 · Next steps, in order
 
-1. **Owner:** confirm the merge of this branch's pull request, then the
-   migration dispatch (§1: both are "merging and publishing"). Those two
-   confirmations are all that stands between production and the fix.
-2. **Merge, then confirm the deploy shipped `market-sales-ingest`.**
-3. **Dispatch the migration** (§5 step 3). It is independent of step 2's timing.
-4. **Prove it by effect** (§5 step 4), then leave the walk alone for about
-   eleven hours.
-5. **Read back the register and the `settled` verdict** (§5 step 5 and the
-   last row of its table).
-6. **Look at a delivered document's Supply section** after the fifth window,
-   when it first states a year-on-year change. If the property is in NSW, that
-   same document can settle §9's land-use question.
-7. **Consider §6's remedy 1 as a separate, small change.**
+1. ~~Owner: confirm the merge of #2736 and the migration dispatch.~~ **Done
+   23 Sep**: merged, deployed, `20261217000000` applied, proved by effect (§0).
+2. **Leave the approvals walk alone.** It steps one window an hour; read the
+   ledger back once it reaches the register's floor, then read a delivered
+   Supply section after the fifth window, when it first states a
+   year-on-year change.
+3. **#2737 (items 4–6)** — §13. The owner confirms the merge; then the
+   migrations `20261218000000` (the table), `20261218010000` (the monthly
+   jobs) and `20261218020000` (the first NSW, Victorian and Queensland loads,
+   fired once) are dispatched through `apply-migration.yml`, in that order and
+   only after the deploy that ships `market-sales-ingest`'s `projections`
+   stage — the approvals register's first run answered 400 because its table
+   landed before its loader did (`20261214000000`). Then prove each load through
+   `query_logs` (log inspection, permitted — no SQL): the stage prints one line
+   per file, `[market-sales-ingest] projections <file>: <n> rows for <n> areas
+   via <publisher|archive> …`, and `<n> rows` should equal the CI dry run's
+   13,482 (NSW SA2), 2,709 (NSW LGA), 320 (VIC LGA), 3,276 (QLD SA2) and
+   1,404 (QLD LGA, three series). A refusal prints `projections
+   refused/failed:` with its reason instead.
+4. **Owner: Tasmania's terms** (`FORWARD_DEMAND_EVIDENCE.md` §9.2). The
+   Treasury's quick guide grants reproduction *"in published work … provided
+   you identify and credit them as Tasmanian Treasury 2024 projections"*; the
+   Tasmanian Government's site notice (2011 archive copy — the live page
+   refuses CI) licenses *"non-commercial purposes only"* unless a site says
+   otherwise. Is a report prepared for a paying client "published work" under
+   the guide's grant? Yes → declare the licence (the parsers already pass the
+   dry run: 29 councils, 899 rows per series) and print the credit the guide
+   asks for; no → Tasmania stays refused, as now.
+
+---
+
+## 13 · Items 4–6, on #2737
+
+- **Item 4 — built and specced, not deployed.** The walk's lower edge comes
+  from windows the ledger vouches for (§6's remedy 1). Its proof by effect is
+  the first sync row after deploy carrying `oldest_vouched`,
+  `windows_vouching` and `windows_stale`; on production's timeline expect
+  `windows_stale: 2`.
+- **Item 5 — done.** Tasmania publishes no sub-state count of residential
+  sales, read from its whole list (982 datasets, 5 naming a sale, none
+  countable); WA's "204" was one dataset counted twice.
+- **Item 6a — the projection register has loaders, and every jurisdiction
+  has a measured answer.** Eight files are declared, each parsed by code
+  written against the layout CI printed for the real file, through a
+  one-sheet xlsx reader, and each file's LOADER RUNS DRY IN CI over the real
+  file on every build (from run 35831008944; Queensland's from 35836681636):
+  - **NSW loads** — 622 SA2s / 13,482 rows and 129 LGAs / 2,709 rows, under
+    CC BY 4.0 read from `planning.nsw.gov.au/copyright-and-disclaimer`.
+  - **Victoria loads** — 80 LGAs / 320 rows, read through the archive (the
+    publisher answers CI with a Cloudflare challenge), under CC BY 4.0 read
+    from the Victorian catalogue's record of the dataset.
+  - **Queensland loads** — the 2025 edition's SA2 table (546 SA2s, 3,276
+    rows, medium series) and council table (78 councils, 1,404 rows, three
+    series — adding to the publisher's own state total), under CC BY 4.0 read
+    from the Queensland catalogue and from the council workbook's own link to
+    the deed.
+  - **Tasmania is the owner's decision** (§12 step 4). Its three series pass
+    the dry run (29 LGAs / 899 rows per series) and its terms are read; the
+    loader refuses it before any fetch until the decision is made.
+  - **Four are declined for their licences**, each naming the permission that
+    would change it: WA (*Custom (Active Acceptance)*); South Australia, whose
+    January 2024 release — read through the archive, the catalogue's copy
+    being the superseded 2016-based edition — is published with a report
+    saying *"All rights reserved"*; the ACT, whose 2025–2065 workbook — the
+    catalogue's copy being the superseded 2015-based edition — says *"no part
+    may be reproduced by any process without written permission"*; and the
+    NT, whose 2024 workbook (ABS SA3 regions, 2021 base) states no terms while
+    the catalogue's CC Attribution record reaches only the superseded 2019
+    release and the NT Government's copyright statement forbids reuse without
+    an expressly provided Creative Commons licence.
+
+  A file whose licence has not been accepted is refused before any fetch, a
+  file that states terms of its own is refused at parse, and the notice a
+  file supplies is carried on every row. See `FORWARD_DEMAND_EVIDENCE.md` §9.
+- **Item 6b — South Australia's zone is read** from the Planning and Design
+  Code's own layer (`JURISDICTION_PLANNING_COVERAGE.md` §3.6); WA's is readable
+  and licence-restricted; the NT's is challenged.
+- **PENDING, and named:** the owner's merge confirmation; the migrations; the
+  first production load of each file (proved by its `market_sales_sync` row,
+  never by the cron tick); whether production's egress reaches
+  `dpti.geohub.sa.gov.au` (the first South Australian report after deploy).
+- **Found and deliberately left for a follow-up** (outside items 4–6): two
+  more reader-facing sentences print an ISO date prefix instead of going
+  through `auDate` — the archive-capture clause in an open-data sales point's
+  source note (`openDataSalesEvidence.pure.ts`, *"as the Internet Archive
+  captured it on 2025-04-03"*) and the same clause in the Estimate CGR caveat
+  (`capitalGrowthEstimate.pure.ts`). The second is CGR, which this programme
+  protects, so neither was touched here; the projection register's own date
+  was fixed on this branch because the register is new in this PR.
 
 ---
 

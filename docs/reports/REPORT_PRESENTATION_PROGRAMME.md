@@ -979,6 +979,24 @@ Replaces "no forward projection" everywhere rather than in one state.
 > validator REQUIRES it to write about population, and a prohibition with no
 > permitted form is one a model routes around. Full record:
 > `FORWARD_DEMAND_EVIDENCE.md`.
+>
+> **The per-jurisdiction register has loaders (23 Sep 2026,
+> `FORWARD_DEMAND_EVIDENCE.md` §9).** Six files are declared and every one is
+> run DRY in CI over the real file on every build, through the loader's own
+> code: NSW's 2024 projections by SA2 (622 areas) and council (129), Victoria
+> in Future 2023 by council (80), and Tasmania's three series (29 councils
+> each). NSW and Victoria load under CC BY 4.0 read from each publisher —
+> NSW's from its own copyright page, with the © notice the workbook supplies
+> carried onto every row. **Tasmania parses and is refused**: its workbook
+> says *"© Government of Tasmania"* and nothing about reuse, and a notice is
+> silence about terms. South Australia's and the ACT's catalogue editions are
+> 2016- and 2015-based and superseded, so they are declined rather than
+> printed as today's view; WA's SA2 forecasts are *Custom (Active
+> Acceptance)*; the NT's 2024 edition sits behind a challenge; Queensland's two
+> tables are being described before a parser is written. `ingested` is now
+> derived from the loader, so the flag cannot say a state is held that the
+> loader refuses. **Not yet run in production** — each file's first load is
+> proved by its own `market_sales_sync` row.
 
 **W3.4 · Per-jurisdiction refinement behind a declared order.**
 `DEVELOPMENT_PROVIDERS` / `PLANNING_PROVIDERS`, mirroring `AMENITY_PROVIDERS`
@@ -1068,6 +1086,23 @@ answer.
 > answered folders-only and softening a restriction on no evidence is the one
 > direction that could breach a licence; `amendment_register` is integrated
 > nowhere and says so rather than being omitted.
+>
+> **The third half — the ZONE layers, asked a question (23 Sep 2026,
+> [`JURISDICTION_PLANNING_COVERAGE.md`](./JURISDICTION_PLANNING_COVERAGE.md)
+> §3.5–§3.6).** Metadata settled reachability and could not say which layer
+> is the zone. A zone probe now finds it in each publisher's own catalogue and
+> directory and asks it one point in each capital. **South Australia's zone is
+> read now**: the Planning and Design Code's own layer answered *Adelaide Park
+> Lands* at Victoria Square and *Established Neighbourhood* at Prospect, each
+> in force since 19 March 2021, and `parseSaZoning` reads only the zone in
+> force (the layer is temporal) under the catalogue's Creative Commons
+> Attribution. **Western Australia's is readable and deliberately not read** —
+> its zone layers answered correctly, and every dataset carrying them is
+> "Custom (Active Acceptance)", so `WA_LICENCE_NOTE` is measured rather than
+> typed and stands. **The Northern Territory's is behind a challenge** and its
+> catalogue holds no zoning dataset; `NT_NOTE` stands. Whether production's
+> egress reaches South Australia's service is unmeasured until the first South
+> Australian report after deploy.
 
 **W3.5 · Close the Demand scoring gap.**
 Sales counts for ACT, NT, TAS and WA, so Demand can score nationally rather than
@@ -1085,16 +1120,18 @@ measure this deployment is entitled to, and it needs four counted periods.
 > datasets, 434 match "property sales" and 2,883 match "land sales" — and not
 > one of the 203 matched and attributed carries a number of sales.** The
 > Northern Territory's index holds 1,075 and matched none of five phrasings;
-> the **ACT's holds 378, read through Socrata**, and matched none. Only
-> Tasmania is unresolved, and it is OURS — `data.tas.gov.au` does not
-> resolve.
+> the **ACT's holds 378, read through Socrata**, and matched none. Tasmania
+> was unresolved on 22 Sep, and it was OURS — `data.tas.gov.au` does not
+> resolve. **Closed 23 Sep:** Tasmania runs no catalogue of its own, so the
+> probe read everything its 14 government publishers list in the Commonwealth
+> catalogue — **982 datasets, in full, 5 naming a sale and none a count**
+> (`SALES_VOLUME_COVERAGE.md` §4.4).
 >
-> **Three of the four are settled, and the answer is that no sub-state count
-> of residential sales is published.** So W3.5's original shape — load counts
-> for four jurisdictions — is answered for three of them by *there is nothing
-> to load*, and blocked for the fourth by our own host rather than by an
-> approval. **That is a better outcome than asking for a table to put nothing
-> in.**
+> **All four are settled, and the answer is that no sub-state count of
+> residential sales is published.** So W3.5's original shape — load counts
+> for four jurisdictions — is answered for every one of them by *there is
+> nothing to load*. **That is a better outcome than asking for a table to put
+> nothing in.**
 >
 > The ACT reached that answer only because its CKAN 404 was **kept and
 > printed** rather than swapped for another guess: the body
@@ -1673,8 +1710,10 @@ count of residential sales at all** — WA's catalogue holds 2,911 datasets of
 which 203 matched and attributed and none carries a count, the NT's 1,075
 matched none of five phrasings, and the ACT's 378 (read through Socrata, after
 its CKAN 404 was kept and printed rather than replaced with another guess)
-matched none either. Only Tasmania is unresolved and the reason is OURS:
-`data.tas.gov.au` does not resolve from this egress. So there is no register
+matched none either. Tasmania was unresolved for a day for a reason that
+was OURS — `data.tas.gov.au` does not resolve — and closed on 23 Sep when the
+probe read the 982 datasets its government lists in the Commonwealth
+catalogue, in full: none carries a count. So there is no register
 to create, no schedule to run and no approval to seek, and Demand's national
 gap is a fact about what Australian publishers publish rather than a fact
 about this deployment. **That is a better outcome than the approval would have

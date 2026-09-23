@@ -15,103 +15,115 @@
  * built-in pair and says so loudly, because silently mixing them produces
  * 401s that look like an auth bug rather than a configuration one.
  *
- * ── Why the fallback is THIS deployment's own project ───────────────────────
+ * ── The fallback is this deployment's own pair ───────────────────────────────
  *
- * It used to be the prime's, so that introducing this resolver was a no-op
- * upstream: a build with no Supabase variables behaved exactly as it did when
- * the values were inlined. That reasoning was right for the change and wrong
- * for this repository, and production proved it — the Vercel project never had
- * `VITE_SUPABASE_URL` set, so the deployed client dashboard fell through to
- * the prime and served the PRIME's production database. Signing in there
- * authenticated against the prime's real staff accounts.
+ * A build with no Supabase variables set — a repository checkout, a CI run, a
+ * deployment nobody has configured yet — resolves to the built-in pair, and
+ * that pair lives in `supabaseTarget.pure.ts`: the one file here that differs
+ * between deployments, and one the cascade never writes. On the prime it names
+ * the prime; on a clone, Mission Control's provisioning rewrites it to the
+ * clone's own project. Only a build that sets the variables moves. This file
+ * holds no per-deployment value at all, which is what lets the prime's copy
+ * and a clone's be the same file.
  *
- * A missing variable is the normal state of a freshly created deployment, so a
- * fallback that reaches another tenant's data is not a safety net; it is the
- * failure mode waiting to happen. **A clone must never be able to reach the
- * prime's backend, configured or not.** The built-in pair is therefore this
- * deployment's own project, and the prime's ref appears nowhere in `src/` —
- * asserted by `backendIsolation.spec.ts`, which no longer exempts this file.
+ * ── The read is STATIC, and that is the whole of it ──────────────────────────
  *
- * The pairing rule above still holds, and still matters more here: a
- * half-configured environment falls back to BOTH built-ins rather than mixing,
- * so a partially-set deployment lands on its own project rather than on a
- * URL from one tenant with a key from another.
+ * Every name below is read as the literal expression `import.meta.env.VITE_X`.
+ * Vite replaces that exact token sequence with the value at BUILD time. Put
+ * anything between `import.meta` and `.env` — an optional chain, a bracket
+ * index — and the sequence no longer matches, nothing is replaced, and the
+ * read is a property access on a browser's real `import.meta`, which has no
+ * `env`. It returns `undefined` forever, however the environment is set.
+ *
+ * This module used to read through `readEnv(key)` — `import.meta?.env?.[key]`
+ * — and it cost every clone its own backend. Measured 19 Sep 2026 on
+ * `npc-crm-independent`: Mission Control provisioned the clone its own
+ * Supabase project, wrote the admin's password into it, published all five
+ * `VITE_*` variables to the hosting project and rebuilt — and the deployed
+ * bundle carried neither the URL nor the key. The browser resolved to the
+ * fallback and authenticated against the PRIME, where that password does not
+ * exist, so the reported symptom was "I cannot log in to the new clone with
+ * the credentials Mission Control issued". Loading the live page in a real
+ * Chromium showed it opening a realtime socket to the prime's project with
+ * the prime's anon key. `preflight-property-group` does the same thing, so
+ * this was true of every clone ever provisioned.
+ *
+ * This file names no project, in code or in prose. Every deployment carries
+ * it byte for byte; the one value that differs lives next door.
+ *
+ * Two things made it invisible. The fallback was the PRIME's own pair on every
+ * clone, so the one deployment anybody tests on — the prime — was correct by
+ * accident. And `resolveSupabaseTarget` warns on a HALF-configured environment
+ * and says nothing when neither value arrives, because that is the ordinary
+ * state of an unconfigured build; a clone whose variables were dropped looks
+ * exactly like one.
+ * Nothing in the browser can tell those apart, which is why the guarantee that
+ * a clone's build carries its OWN project belongs to the provisioner, asserted
+ * against the deployed bundle rather than against the variables it set.
+ *
+ * `turnstileSiteKey.ts` fixed this same defect for its own variable and cites
+ * THIS module as the precedent for the pairing rule. It was right about the
+ * rule and wrong about the read; the read is fixed here now, and
+ * `buildTimeEnvReads.spec.ts` fails on any form a bundler cannot see through.
+ *
+ * One consequence worth naming: while this was broken `SUPABASE_PROJECT_REF`
+ * resolved to the prime on every clone, so `turnstileSiteKey`'s pairing rule
+ * — "the built-in widget is used only while the build talks to the project its
+ * secret lives in" — was being fed a lie and handed each clone the PRIME's
+ * widget. The rule was intact; its input was not.
  */
 
-/** This deployment's own project. Never the prime's — see above. */
-const FALLBACK_URL = 'https://plisdzywzleljorrphxv.supabase.co';
-const FALLBACK_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk';
+import {
+  FALLBACK_ANON_KEY,
+  FALLBACK_URL,
+  projectRefFromAnonKey,
+  projectRefFromUrl,
+  resolveSupabaseTarget,
+} from './supabaseTarget.pure';
 
-function readEnv(key: string): string | undefined {
+// Re-exported rather than re-implemented: every existing caller imports these
+// from here, and two copies of "which project is this" is how a manifest and a
+// running client come to disagree.
+export { projectRefFromAnonKey, projectRefFromUrl, resolveSupabaseTarget };
+export type { SupabaseTarget } from './supabaseTarget.pure';
+
+/**
+ * Trim to a usable value, or `undefined`. Takes the value, never the name:
+ * a helper that took the name is what made the read dynamic in the first
+ * place. Each `import.meta.env.VITE_X` below is written out in full, at the
+ * call site, because that is the only form the bundler replaces.
+ */
+function usable(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** This build's Supabase URL, inlined at build time or absent. */
+function readConfiguredUrl(): string | undefined {
   try {
-    const value = (import.meta as { env?: Record<string, string | undefined> })?.env?.[key];
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+    return usable(import.meta.env.VITE_SUPABASE_URL);
   } catch {
     return undefined;
   }
 }
 
-/** The `ref` sub-domain of a Supabase project URL, or null if it is not one. */
-export function projectRefFromUrl(url: string): string | null {
-  const match = /^https?:\/\/([a-z0-9]+)\.supabase\.(co|in|net)/i.exec(url.trim());
-  return match ? match[1] : null;
-}
-
-/** The `ref` claim of a Supabase anon JWT, or null if it cannot be read. */
-export function projectRefFromAnonKey(key: string): string | null {
-  try {
-    const payload = key.split('.')[1];
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    const ref = (JSON.parse(json) as { ref?: unknown }).ref;
-    return typeof ref === 'string' ? ref : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Resolve the pair. Exported and pure so the precedence is unit-testable
- * without stubbing `import.meta`.
+ * This build's publishable key. Two names, because the variable was renamed
+ * upstream and both are still published; the newer one wins.
  */
-export function resolveSupabaseTarget(input: {
-  url?: string;
-  anonKey?: string;
-  fallbackUrl?: string;
-  fallbackAnonKey?: string;
-}): { url: string; anonKey: string; source: 'env' | 'fallback'; warning: string | null } {
-  const fallbackUrl = input.fallbackUrl ?? FALLBACK_URL;
-  const fallbackAnonKey = input.fallbackAnonKey ?? FALLBACK_ANON_KEY;
-  const { url, anonKey } = input;
-
-  if (url && anonKey) {
-    const urlRef = projectRefFromUrl(url);
-    const keyRef = projectRefFromAnonKey(anonKey);
-    // A mismatch is always a configuration error, never a runtime one — say so
-    // here rather than letting every request fail with an opaque 401.
-    const warning =
-      urlRef && keyRef && urlRef !== keyRef
-        ? `Supabase misconfiguration: VITE_SUPABASE_URL names project "${urlRef}" but the publishable key belongs to "${keyRef}". Requests will be rejected until they match.`
-        : null;
-    return { url, anonKey, source: 'env', warning };
+function readConfiguredAnonKey(): string | undefined {
+  try {
+    return (
+      usable(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) ??
+      usable(import.meta.env.VITE_SUPABASE_ANON_KEY)
+    );
+  } catch {
+    return undefined;
   }
-
-  if (url || anonKey) {
-    return {
-      url: fallbackUrl,
-      anonKey: fallbackAnonKey,
-      source: 'fallback',
-      warning: `Supabase is half-configured: ${url ? 'VITE_SUPABASE_URL is set but no publishable key is' : 'a publishable key is set but VITE_SUPABASE_URL is not'}. The URL and key are a matched pair, so BOTH built-in defaults are being used instead of mixing them.`,
-    };
-  }
-
-  return { url: fallbackUrl, anonKey: fallbackAnonKey, source: 'fallback', warning: null };
 }
 
 const resolved = resolveSupabaseTarget({
-  url: readEnv('VITE_SUPABASE_URL'),
-  anonKey: readEnv('VITE_SUPABASE_PUBLISHABLE_KEY') ?? readEnv('VITE_SUPABASE_ANON_KEY'),
+  url: readConfiguredUrl(),
+  anonKey: readConfiguredAnonKey(),
 });
 
 if (resolved.warning) {

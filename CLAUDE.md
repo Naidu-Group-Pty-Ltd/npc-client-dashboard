@@ -2216,6 +2216,25 @@ window is never half written by a sign**: `approvalsWriteOrder` writes the
 negative-bearing rows first, so a table that still refuses them refuses before
 anything commits, and the code and the migration ship in either order.
 
+**Rows are not proof, and the walk now steps below what the ledger PROVES**
+(§15 of the same doc). A window a run died part-way through has rows and is
+not whole, so `min(period)` walked past a half-written window and left a hole
+that nothing asked for again. `vouchedOldest` takes the edge from the sync
+ledger instead: the stage inserts its success row after the last batch
+commits, and the edge is the bottom of the unbroken run, down from the
+frontier, that completed writes vouch for. The result is that a half-written
+window, or a month a slipped release skipped at the top, is **asked for
+again**. The cost of a missing proof is one re-read, never a hole. Two rules
+bite. **The ledger outlives the rows it describes**: `20261215030000` emptied
+the table on 22 Sep and two success rows still vouch for what it deleted, so
+a success row older than every `loaded_at` the table holds is set aside
+(`rows_loaded_at` names the stamp; older rows use their insert time). And
+**every read the planner uses refuses the run when it fails**, because a
+failed read taken as "no rows" re-establishes a frontier the table already
+has. A simulation of 30% part-way failures, slipped releases and table clears
+settles over no hole under the new rule and over holes on most seeds under the
+old one. The second result is how the test shows it can see the defect.
+
 **The national pipeline was asked for, and the answer is a measurement.**
 Read [`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)
 before touching `_shared/planning/nationalPipeline.pure.ts`,
@@ -2364,13 +2383,73 @@ demand discussion is read forward by a reader never told otherwise. Two
 bounds: the model may not present that publisher as a source this report
 consulted, and the default availability is `not_loaded`, because any other
 default announces a reading nobody has. `FORWARD_DEMAND_PUBLISHERS` names all
-eight jurisdictions with `ingested: false` truthfully, because "everywhere" is
-what makes loading one state wrong; the table states **no grain**, since
-nothing here can reach those publishers to check one. And the state it names
-is the TRUSTED geography's — the generator's own `state` is
+eight jurisdictions, because "everywhere" is what makes loading one state
+wrong, and its `ingested` is DERIVED from the loader below rather than typed;
+the table states **no grain**, since the grain is the file's. And the state it
+names is the TRUSTED geography's — the generator's own `state` is
 `detectedState || 'NSW'`, so reading it would name the NSW publisher on every
 unresolved property. The regeneration path names NO publisher, a recorded
 asymmetry asserted by a test rather than an oversight.
+
+**The register has loaders, and a licence is read before a byte is
+fetched.** Read §9 of
+[`FORWARD_DEMAND_EVIDENCE.md`](./docs/reports/FORWARD_DEMAND_EVIDENCE.md)
+before touching `_shared/reports/market/openData/stateProjectionFiles.pure.ts`,
+`xlsxSheet.pure.ts`, `projectionLoad.pure.ts`, the `projections` stage of
+`market-sales-ingest` or `state-projection-liveness.ts`. Eight files are declared —
+NSW's 2024 projections by SA2 and by council, Victoria in Future 2023 by
+council, Queensland's 2025 edition by SA2 and by council (all three series),
+and Tasmania's medium, high and low series — each parser written against the
+layout CI printed, and each **run dry in CI over the real file on every build**
+through the loader's own read, parse and gate, so what CI proves about a file
+is what production writes (Queensland: 546 SA2s and 78 councils, the councils
+adding to the publisher's own state total). NSW's SA2 workbook is 9.2 MB and
+VIF2023 declares a 16,307-column range over six columns of data, so
+`xlsxSheet` reads one sheet through the zip's central directory and native
+deflate-raw, holding only cells that carry a value. Four rules bite. **The base
+is the publisher's statement** — NSW's *"Historic (2001-2021) and projected
+(2022-2041)"*, VIF's stated ERP jump-off, Tasmania's first components interval
+checked against its own Totals sheet, Queensland's *"2021 data are final
+estimated resident population (ERP)"* against a header that prints the year as
+`2021 (b)` — because an estimate printed under a forward heading is this
+register's worst failure. **Readable is not republishable**: a file whose
+licence is unread, or read and not accepted, is refused BEFORE the fetch,
+and what a file says about its own terms is held against the licence read for
+it — `termsAgreeWith` refuses a restriction whatever else is said, accepts a
+statement that NAMES the declared licence (the file is the best evidence of
+its own terms), and refuses terms that name none; a cell is judged by what it
+says, not by how it starts, so a notice reading *"© … All rights reserved"* is
+a restriction — while `suppliedNotice` carries the file's own © notice, whole
+where the publisher split it over two cells, onto every row, because CC BY 4.0
+asks a reuser to keep it. **A notice is silence about terms**, so Tasmania's
+were read where its workbook points, and they are a decision rather than a
+finding: the quick guide grants reproduction *"in published work … provided
+you identify and credit them as Tasmanian Treasury 2024 projections"*, and the
+Government's site notice licenses *"non-commercial purposes only"* unless a
+site says otherwise. Whether a paid client report is published work under that
+grant is the owner's call, and Tasmania stays refused until it is made.
+**A superseded projection is not the publisher's projection** — a newer
+edition REPLACES the assumption set rather than adding
+to it, which is why this is not QTRIP's "the edition is the one that answers":
+South Australia's catalogue edition is 2016-based and the ACT's 2015-based,
+both superseded by editions their publishers print elsewhere, so both catalogue
+copies are declined rather than printed as the jurisdiction's view today — and
+their current editions, found and read (SA's January 2024 release through the
+archive, the ACT's 2025–2065 by district = SA3), are declined for their
+licences: SA's edition report says *"All rights reserved"* and the ACT's
+workbook forbids reproduction *"without written permission"*. WA's SA2
+forecasts are *Custom (Active Acceptance)*, and the NT's 2024 edition carries
+no licence while the NT Government forbids reuse *"for any purpose
+whatsoever"* without an expressly provided Creative Commons one. **A
+restriction stated for the edition outranks a licence stated for the site**,
+the same ranking the loader applies inside a file. And **a batch never splits an area** — a
+failed batch would otherwise leave an area holding half a series under a new
+edition, which the reader, preferring the edition that reaches furthest, would
+print as the projection; the prune follows every batch and keeps to its own
+edition and series. The council a report asks by is the cadastre's or, where
+no parcel layer answered, the zone layer's (`planningCouncilName`) — without
+it the Victorian and Tasmanian registers, published by council only, could
+never be reached.
 
 **A jurisdiction's registers are asked behind a declared order, and the
 licences were never read.** Read
@@ -2450,6 +2529,27 @@ states the zone and the overlays"* and that is the certificate's statutory
 name — the rule forbids rating an absence, not a jurisdiction's legal
 vocabulary.
 
+**South Australia's zone is read now, from the Planning and Design Code's own
+layer** (§3.6 of the same doc). The second zone probe ranked the state
+directory's 290 services for the question, and one layer answered both
+points: `Hosted/Code_Amendment__BaseLayers` layer 3, "Code Zones" — Victoria
+Square is *Adelaide Park Lands* (APL) and Prospect *Established
+Neighbourhood* (EN), each taking legal effect on 19 March 2021, the day the
+Code commenced in metropolitan Adelaide. `parseSaZoning` is probed beside NSW,
+VIC, TAS and the ACT. Four rules. **The layer is temporal**, so only a feature
+with no legal or system end date is the zone in force, and a point whose
+features have all ended reads nothing rather than the replaced zone. **The
+licence is the catalogue's** — the service states none, DHUD's *Planning and
+Design Code Zones* on data.sa.gov.au states Creative Commons Attribution, and a
+catalogue outranks silence while a stated restriction would outrank the
+catalogue. **Once a layer is read, a failure to read it is `unavailable`**,
+never the `not_integrated` it replaced, because the two send an operator to
+different remedies. And **`PLANNING_ANSWER_VERSION` is `c6`**: no key changed,
+but a cached `c5` row at a South Australian coordinate withholds the zone the
+layer now answers — the shape did not widen, its content did. Whether the
+PRODUCTION egress reaches `dpti.geohub.sa.gov.au` is unmeasured until the first
+South Australian report after deploy; CI reached it.
+
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South
 Australia's quarterly suburb workbooks are walled at their publishers and
@@ -2474,8 +2574,8 @@ refused 444 localities), and **a file is anchored on the newest capture
 that LOADS**, because the archive's index can list a capture its store
 answers 404 for.
 
-**Demand cannot score in four jurisdictions, and two of them publish
-nothing to score it with.** Read
+**Demand cannot score in four jurisdictions, and none of them publishes
+anything to score it with.** Read
 [`SALES_VOLUME_COVERAGE.md`](./docs/reports/SALES_VOLUME_COVERAGE.md) before
 touching `_shared/reports/market/openData/salesVolumePublishers.pure.ts`,
 `sales-volume-liveness.ts` or the demand branch of `describeGaps`.
@@ -2492,10 +2592,16 @@ is in it, and `medians_only` / `state_grain_only` are readings rather than
 finds. Measured 22 Sep 2026 from CI: **WA's catalogue holds 2,911 datasets, 203
 matched and attributed, and not one carries a count**; the NT's index holds
 1,075 and matched none of five phrasings; the ACT's holds **378 read through
-SOCRATA** and matched none; only `data.tas.gov.au` does not resolve. **Three
-of the four are settled and the answer is that no sub-state count of
-residential sales is published**; one is OURS, and keeping them apart is the
-point. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
+SOCRATA** and matched none; and on 23 Sep **Tasmania — whose typed
+`data.tas.gov.au` does not resolve — was read from the harvest's own records:
+982 datasets, every one its 14 government publishers list, read in full, 5
+naming a sale and none a count.** **All four are settled and the answer is
+that no sub-state count of residential sales is published**, and until each
+was, it read as OURS — keeping those apart is the point. The first Tasmanian
+sentence said "6 name a sale" beside the probe's own `5 of 982`, because the
+search that corroborates the list had been folded into the list's count;
+`attributedRead` counts what the sentence describes and holds each dataset
+once. The ACT got there only because its CKAN 404 was KEPT AND PRINTED
 rather than replaced with another guess — that 404's own body
 (`{"code":"not_found"}`, a JSON API that does not speak CKAN) is what bought
 the Socrata reader, which projects onto the same `VolumeDataset` shape so one

@@ -9,11 +9,11 @@ import { assessAuPoint, normaliseAuState } from '../_shared/auGeoSanity.pure.ts'
 import {
   ACT_ZONING_LICENCE, ACT_ZONING_SOURCE,
   buildActZoningQuery, buildNswDaRequest, buildNswZoningQuery,
-  buildQldInstrumentQuery, buildQldParcelQuery, buildTasZoningQuery,
+  buildQldInstrumentQuery, buildQldParcelQuery, buildSaZoningQuery, buildTasZoningQuery,
   buildVicZoningQuery,
   NSW_DA_LICENCE, NSW_DA_SOURCE,
   parseActZoning, parseNswZoning, parseQldInstrument, parseQldParcel,
-  parseTasZoning, parseVicZoning,
+  parseSaZoning, parseTasZoning, parseVicZoning,
   QLD_INSTRUMENT_LAYERS, QLD_STATE_PLANNING_SOURCE,
   NT_NOTE, SA_NOTE, VERIFICATION_INSTRUMENT, WA_LICENCE_NOTE,
   type DevelopmentInstrumentReading, type ParcelReading, type ParseOutcome,
@@ -184,16 +184,19 @@ Deno.serve(async (req) => {
 
     // ── The probes are the router ────────────────────────────────────────
     const hint = normaliseAuState(input.state ?? null);
-    const [nsw, vic, tas, act, qldParcel] = await Promise.all([
+    const [nsw, vic, tas, act, sa, qldParcel] = await Promise.all([
       probe(buildNswZoningQuery(lng, lat), parseNswZoning),
       probe(buildVicZoningQuery(lng, lat), parseVicZoning),
       probe(buildTasZoningQuery(lng, lat), parseTasZoning),
       probe(buildActZoningQuery(lng, lat), parseActZoning),
+      // South Australia's Planning and Design Code zones — found and measured
+      // from CI on 23 Sep 2026 (`parseSaZoning`'s header).
+      probe(buildSaZoningQuery(lng, lat), parseSaZoning),
       probe(buildQldParcelQuery(lng, lat), parseQldParcel),
     ]);
 
     const zoningByJurisdiction: Array<[PlanningJurisdiction, ParseOutcome<ZoningReading>]> = [
-      ['NSW', nsw], ['VIC', vic], ['TAS', tas], ['ACT', act],
+      ['NSW', nsw], ['VIC', vic], ['TAS', tas], ['ACT', act], ['SA', sa],
     ];
     const okZoning = zoningByJurisdiction.filter(([, o]) => o.kind === 'ok');
     const hinted = okZoning.find(([j]) => j === hint);
@@ -222,11 +225,24 @@ Deno.serve(async (req) => {
       };
     } else if (jurisdiction === 'WA') {
       zoningCell = { status: 'licence_restricted', note: WA_LICENCE_NOTE };
-    } else if (jurisdiction === 'SA' || jurisdiction === 'NT') {
-      // Two jurisdictions, two measured facts — SA's service answers and is
-      // unread; the NT's is behind a bot-protection challenge. One note for
-      // both is how neither got measured for a year.
-      zoningCell = { status: 'not_integrated', note: jurisdiction === 'SA' ? SA_NOTE : NT_NOTE };
+    } else if (jurisdiction === 'SA' && sa.kind === 'error') {
+      // The Code's layer is READ now, so a failure to read it is a failed
+      // retrieval — worth retrying and never cached — rather than the
+      // integration gap the old note described.
+      anyTransportFailure = true;
+      zoningCell = { status: 'unavailable', note: `the Planning and Design Code's zone layer could not be read (${sa.message})` };
+    } else if (jurisdiction === 'SA') {
+      // The layer answered and no zone in force covers this point — a
+      // coordinate off zoned land, or one whose zone has ended. A statement
+      // about the layer at this point, never "no zoning applies".
+      zoningCell = {
+        status: 'none_at_point',
+        note: 'The Planning and Design Code’s zone layer holds no zone in force at this point. Verify the zone on the PlanSA portal before relying on it.',
+      };
+    } else if (jurisdiction === 'NT') {
+      // The NT's service is behind a bot-protection challenge — a measured
+      // fact about that service, and a different one from South Australia's.
+      zoningCell = { status: 'not_integrated', note: NT_NOTE };
     } else if (zoningByJurisdiction.some(([, o]) => o.kind === 'error')) {
       anyTransportFailure = true;
       const failures = zoningByJurisdiction.filter(([, o]) => o.kind === 'error')
@@ -235,7 +251,7 @@ Deno.serve(async (req) => {
     } else {
       zoningCell = {
         status: 'not_integrated',
-        note: 'No integrated planning layer covers this point (integrated: NSW, VIC, QLD cadastre, TAS, ACT). Verify with the local planning authority.',
+        note: 'No integrated planning layer covers this point (integrated: NSW, VIC, QLD cadastre, TAS, ACT, SA). Verify with the local planning authority.',
       };
     }
 

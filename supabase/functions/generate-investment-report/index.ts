@@ -85,8 +85,9 @@ import {
   governedCategoryDirective,
   governedFaultToFlag,
 } from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
-import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
+import { forwardDemandBlocks, regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { trustedStateForForwardDemand } from '../_shared/reports/market/openData/forwardDemand.pure.ts';
+import type { ProjectionState } from '../_shared/reports/market/openData/stateProjectionPublishers.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { correctUnsupportedEvidenceClaims } from '../_shared/reports/investment/evidenceClaims.pure.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
@@ -125,6 +126,8 @@ import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichment
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
 import { readApprovalsRegister } from '../_shared/reports/market/approvalsRegisterRead.ts';
+import { readProjectionRegister } from '../_shared/reports/market/projectionRegisterRead.ts';
+import { planningCouncilName } from '../_shared/reports/market/openData/projectionRegister.pure.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
@@ -2925,6 +2928,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
        * worth having before the evidence exists rather than after.
        */
       buildingApprovals?: any;
+      /**
+       * The forward-demand register's answer for this property
+       * (`readProjectionRegister`): the jurisdiction's own population
+       * projection for the area, or which absence it was. Read on every
+       * invocation, like the approvals beside it — our own table, so a resume
+       * sees whatever the last ingest wrote.
+       */
+      forwardDemandProjection?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -3700,6 +3711,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             status: geoOutcome.row.status,
             suburb: geoOutcome.row.suburb,
             state: geoOutcome.row.state,
+            // The SA2 the verified coordinate falls in — the finest rung the
+            // forward-demand register is asked by: the code, and the ABS's own
+            // name for it, because New South Wales keys its projections by name.
+            sa2_code: geoOutcome.row.sa2_code,
+            sa2_name: geoOutcome.row.sa2_name,
           };
           console.log(
             `🗺️ Geography resolved before the gate: ${geoOutcome.status}`
@@ -4506,10 +4522,38 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           : `${approvals.absence}${approvals.askedAt ? ` (asked at ${approvals.askedAt})` : ''}`}`,
       );
 
+      /*
+       * Forward demand, from this deployment's own register of each
+       * jurisdiction's population projection. The same shape as the approvals
+       * read beside it: our own table, so no ledger, no budget and no reuse
+       * gate, and the WHOLE answer stored, absence and all — `not_loaded`,
+       * `none_for_area`, `no_area_resolved` and `unavailable` are four
+       * different sentences, and only the read knows which is true.
+       *
+       * Asked by the TRUSTED geography only: the SA2 the verified coordinate
+       * falls in, the resolved suburb and the council the cadastre returned.
+       */
+      const forwardDemandProjection = await readProjectionRegister(supabase, {
+        state: (trustedStateForForwardDemand(subjectGeography, abbreviateState) ?? null) as ProjectionState | null,
+        sa2Code: typeof subjectGeography?.sa2_code === 'string' ? subjectGeography.sa2_code : null,
+        sa2Name: typeof subjectGeography?.sa2_name === 'string' ? subjectGeography.sa2_name : null,
+        trustedSuburb: marketSuburb,
+        // The cadastre's council, or the zone layer's where no cadastre is
+        // read — Victoria and Tasmania project by council and have no parcel
+        // cell (`planningCouncilName`).
+        cadastreLga: planningCouncilName(enhancedData.planningData),
+      });
+      console.log(
+        `[forward-demand] ${forwardDemandProjection.kind === 'reading'
+          ? `${forwardDemandProjection.reading.series.length} series at ${forwardDemandProjection.askedAt} for ${forwardDemandProjection.reading.area} (${forwardDemandProjection.reading.release})`
+          : `${forwardDemandProjection.absence}${forwardDemandProjection.askedAt ? ` (asked at ${forwardDemandProjection.askedAt})` : ''}`}`,
+      );
+
       enhancedData = {
         ...enhancedData,
         marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
         buildingApprovals: approvals,
+        forwardDemandProjection,
       };
 
       // Calculate investment score - property OR area scoring
@@ -4849,7 +4893,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     if (subjectGeography === null && reportId && supabaseClient) {
       const { data: geoRow, error: geoError } = await supabaseClient
         .from('report_geography')
-        .select('postcode, status, suburb, state')
+        .select('postcode, status, suburb, state, sa2_code, sa2_name')
         .eq('report_id', reportId)
         .maybeSingle();
       if (geoError) {
@@ -6006,6 +6050,20 @@ Produce a comprehensive statewide investment analysis following the structure ab
           ? enhancedData.buildingApprovals.absence
           : 'not_loaded',
       ),
+      /*
+       * Forward demand rides the pin for the same reason: a held projection
+       * is the AUTHORITY for every projected figure the report may state, and
+       * the demographics section that discusses demand sits in the trimmed
+       * middle of the base prompt. An absence rides it too, because the rule
+       * that forbids a projected figure is only half a rule without the
+       * sentence that may be written instead. One composer
+       * (`forwardDemandBlocks`) for the section and the pin.
+       */
+      '# Forward demand — the population projection this report holds',
+      forwardDemandBlocks({
+        state: trustedStateForForwardDemand(subjectGeography, abbreviateState),
+        forwardDemandProjection: enhancedData.forwardDemandProjection ?? null,
+      }),
       // Recorded from official publications rather than retrieved from a
       // register, and pinned for the same reason everything else here is:
       // it is the AUTHORITY for a set of figures and dates, and a rule that

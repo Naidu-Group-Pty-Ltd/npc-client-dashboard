@@ -728,8 +728,10 @@ export function describeGaps(
          * the register itself was measured. `NOT_ASSESSED_REASON.demand` is
          * true everywhere and says nothing about WHY this area in
          * particular; where a publisher has actually been asked, the reader
-         * is told whether no count is published (WA, NT — established) or
-         * whether this platform could not establish it (ACT, TAS — ours).
+         * is told whether no count is published or whether this platform
+         * could not establish it. All four read the first as of 23 Sep 2026
+         * — the ACT and Tasmania each read the second, correctly, until the
+         * probe could reach where they publish.
          *
          * Keeping those two apart is the point. `null` for the other five
          * jurisdictions, so the existing sentence stands everywhere it

@@ -759,5 +759,30 @@ five milliseconds because its table and job landed before the function knew
 the stage (`20261214000000`), so this order is not a preference. A green cron tick is not a delivered request: each file's
 load is proved by its own `market_sales_sync` row — `file`, `rows_written`,
 `via`, `licence`, `base`, `horizon`, `declined` — and a report's reading by its
-source line. **None of that has happened yet**, and until it has, NSW,
-Victoria and Queensland read `not_loaded` on every report and say so.
+source line.
+
+**Shipped on 23 September 2026, and each load proved by its own log line.**
+#2737 merged as `16364001c` at 10:31 UTC. The function deploy finished at
+10:49, and all three migrations applied in one ordered `apply-migration.yml`
+run at 10:52. The five first loads then logged, every one equal to its CI dry
+run to the row:
+
+| file | rows · areas | fetched from |
+| --- | --- | --- |
+| `nsw_sa2` | 13,482 · 622 | the publisher, HTTP 200 |
+| `nsw_lga` | 2,709 · 129 | the publisher, HTTP 200 |
+| `vic_lga` | 320 · 80 (1 declined, the state) | **the archive** — the publisher answered production 403, as it answers CI |
+| `qld_sa2` | 3,276 · 546 | the publisher, HTTP 200 |
+| `qld_lga` | 1,404 · 78 (3 declined, the state total per series) | the publisher, HTTP 200 |
+
+Queensland answered from its own host, which settles the open question of
+whether production's egress reaches QGSO. **Two things are still owed, and
+neither is proved yet:**
+
+- **A report's reading.** The first NSW, Victorian or Queensland report
+  generated after 10:53 UTC is the proof, through its `[forward-demand]` log
+  line.
+- **The monthly jobs.** They applied without error, and the `DO` block raises
+  on any failure, but a cron job is proved by its tick, not by its migration.
+  The first tick is 3 October, from 18:05 UTC. Until the owner decides, each
+  Tasmanian job writes its refusal monthly.

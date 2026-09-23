@@ -183,7 +183,7 @@ export function investmentGeometryDocuments(): GeometryDocument[] {
       ...(data.report ?? {}),
       type: 'investment_compass',
       tier,
-      documentTitle: policy.documentTitle ?? data.report?.documentTitle,
+      documentTitle: data.report?.documentTitle,
       standfirst: policy.standfirst ?? data.report?.standfirst,
       drawsFinancialModelling: policy.financialModelling,
       companionNote: policy.companionNote ?? data.report?.companionNote,

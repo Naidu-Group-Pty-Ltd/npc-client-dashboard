@@ -67,16 +67,22 @@ export interface CreateAssessmentInput {
   segment: 'commercial' | 'industrial';
   assessmentType: string;
   payload: AssessmentPayload;
-  /** An existing client the assessment is being prepared for. Not a link. */
-  intendedClientId?: string | null;
 }
 
+/**
+ * Create a draft. `useStartAssessment` is the only caller: "New assessment"
+ * creates on the click and opens the Type step.
+ *
+ * The server also accepts an `intendedClientId`, recorded as `client_intended`
+ * (who the assessment is being prepared for, never a link). Only the "New
+ * assessment" dialog sent one, and it went with the dialog. Assessments it
+ * started still read it back, through `intendedClient`.
+ */
 export function createAssessment(input: CreateAssessmentInput) {
   return call<AssessmentListRow>('create', {
     segment: input.segment,
     data: { title: input.title, assessmentType: input.assessmentType },
     payload: input.payload,
-    ...(input.intendedClientId ? { intendedClientId: input.intendedClientId } : {}),
   });
 }
 

@@ -86,33 +86,58 @@ from the body). The insert failed on the missing column.
 
 | Tab | Holds |
 | --- | --- |
-| **Assessments** | The working list. **New assessment**, in the header or on an empty list, opens the one dialog that starts an assessment. |
-| **Property register** | Commercial and industrial buildings as one list. Each row can start **New assessment of …** that building. Was "Properties". |
+| **Assessments** | The working list. **New assessment**, in the header or on an empty list, creates the draft and opens it on its Type step. |
+| **Property register** | Commercial and industrial buildings as one list. Each row can start **New assessment of …** that building, the same way. Was "Properties". |
 | Portfolio impact | Unchanged. |
 | Reports | Generate from a completed assessment, and the template choice. Unchanged (§6). |
 | **Policy defaults** | The assessment policy settings. Was "Calculator settings", a name left over from the retired suite. |
 
-### One way in: the New assessment dialog
+### One way in: New assessment creates the draft and opens its Type step
 
-`NewAssessmentDialog` asks before it creates anything, and nothing is written
-until **Create** is pressed. It asks for:
+**New assessment** creates the draft on the click and opens it on step 1, the
+Type step. That step asks the two questions every assessment starts with, its
+name and its transaction type, at its top. There is nothing to confirm first.
+Every button that starts an assessment is the one action, `useStartAssessment`:
+the landing's header and its empty list, a register row, and a building's own
+page (its header and its **Assessments** panel).
 
-- **a name**, which may be left blank; the record is then named after the
-  building (`defaultTitle`);
-- **the transaction type**, the question the Type step asks first anyway;
-- optionally, **a building from the register**. Its figures fill the
+- **The name.** The server refuses an empty name, so a draft nobody has named is
+  stored as `Untitled assessment` (`UNTITLED_ASSESSMENT`). The Type step shows
+  that as an EMPTY field with its placeholder (`isUntitled`), because it is the
+  list's word for the draft and not text anybody should have to delete. An
+  empty name is never sent: a pause with the field empty commits nothing, and
+  leaving it empty puts back what it showed.
+- **The type** starts as a commercial investment, or as an industrial investment
+  for an industrial building (`startingType`), until the Type step is answered.
+- **Started from a building**, the draft carries it from the first moment. The
+  building is read on its own (`readRegisterProperty`). Its figures fill the
   assessment's blanks and never overwrite (`applyRegisterProperty`, over the
-  existing `applyPropertyPrefill`), and the link is stored on the record. An untouched type follows the building, so an
-  industrial building starts as an industrial investment;
-- optionally, **the client it is for**, from the client book. This is recorded
-  as an *intent*, never a link (§5).
+  existing `applyPropertyPrefill`), the link is stored on the record, and the
+  draft is named after the building (`defaultTitle`). **A building that cannot
+  be read creates nothing**: the click asked for an assessment OF it, and one
+  silently without it is a different thing.
+- **One start at a time.** A second click while the first is creating makes
+  nothing, so a double-click cannot mint two drafts. The button pressed shows
+  that it is working.
+- **The client** is chosen inside the assessment: created on the intake step, or
+  linked on the final step, existing or new (§5).
 
-The new assessment opens on the intake pack. Every old entry point leads here:
-the property pages' "New assessment", the register rows, and every
-`/calculators` link that named a property (§4). A link opens the dialog by URL
-(`?new=assessment[&domain=…&propertyId=…]`, read by `readNewAssessmentLink`).
-Closing the dialog clears the link, so a refresh does not reopen it. Creating
-from a link replaces that history entry, so Back does not offer the dialog again.
+**A link never creates a record.** A refresh, the Back button and every
+bookmark follow a link again, so a link that created would create each time.
+Old links therefore land where one click does: `?new=assessment&domain=…&propertyId=…`
+(read by `readNewAssessmentLink`) and every `/calculators` link that named a
+property (§4) go to that building's own page (`registerPropertyPath`), and a
+`?new=assessment` naming no building is simply the list. The request is
+replaced, so Back does not bring it round again.
+
+**Why the click creates again.** For a while a dialog asked the name, the type,
+the building and the client first, and created nothing until it was
+confirmed. It existed because every click that went no further used to leave
+an "Untitled assessment" behind that nobody could delete. It answered the wrong
+half of that. A draft can be deleted now (§3: one plain confirmation for an
+untouched draft), and the dialog asked, before the work began, the very
+questions the Type step asks at its start. The one thing it offered that the
+assessment does not is choosing an EXISTING client before completion (§5).
 
 ### The workflow: the ten steps, unchanged, plus one optional step
 
@@ -156,7 +181,7 @@ inside the `property` section because `hydrateAssessmentPayload` spreads each
 section but drops unknown top-level keys, so a top-level key would be erased by
 the first autosave. The link is written by:
 
-- the New assessment dialog;
+- New assessment, started from a building (`useStartAssessment`);
 - the Property step's **Is this a property in your register?** panel
   (`RegisterPropertyPanel`), which links, re-links or unlinks, and fills blanks
   only.
@@ -251,7 +276,7 @@ redirects (`legacyCalculatorRedirect`). They stay behind the same
 | Arrival | Lands on |
 | --- | --- |
 | `?workspace=<id>[&stage=<s>]` | That assessment, at the step that now holds the stage's fields (`valuation`/`forecast` → Valuation & forecast, `income` → Lease income, `lending` → Loan structure, `report` → Results, …). |
-| `?propertyId=<id>[&domain=<d>]` | The landing, with New assessment open on that building. |
+| `?propertyId=<id>[&domain=<d>]` | That building's own page (`registerPropertyPath`), whose **New assessment** starts one of it. The link itself creates nothing. |
 | anything else | The assessment list. |
 
 `/calculators/classic`, the pre-workspace suite, is a separate route. It is
@@ -260,9 +285,13 @@ untouched and unlinked.
 ## 5. Clients
 
 **Intent and link are different facts.** The client an assessment is *for* can
-be known long before it is linked: chosen in the New assessment dialog, or
-created from the intake step. That intent is an audit event (`client_intended`
-or `client_created`) and never a link. `intended_client` returns the latest one.
+be known long before it is linked: created from the intake step, or, for an
+assessment started while the New assessment dialog existed, chosen there. That
+intent is an audit event (`client_created` or `client_intended`) and never a
+link. `intended_client` returns the latest one. Nothing writes
+`client_intended` any more. The server still accepts `intendedClientId` on
+`create`, and the dialog was its only caller. An existing client is linked on
+the final step.
 The workspace header says "For Marcus Chen (not linked yet)", the intake pack
 shows who it is being prepared for, and the Save & link step opens with that
 client already selected. **Only `link_client` writes a link**, on the final
@@ -535,14 +564,16 @@ into each clone's Supabase project. The lineage is in
 | `lib/ciAssessment/__tests__/assessmentDeletion.test.ts` | Every block, its order, the in-flight window, typed confirmation, restore. |
 | `lib/ciAssessment/__tests__/clientRecords.test.ts` | Word search, filter safety, email sameness, the new-client rules. |
 | `lib/ciAssessment/__tests__/registerProperty.test.ts` | Where the link lives, that hydration keeps it, prefill fills blanks only. |
-| `lib/ciAssessment/__tests__/legacyCalculatorLinks.test.ts` | Every old link shape, and reading the landing's link back. |
-| `lib/ciAssessment/__tests__/newAssessment.test.ts` | Default names, segment filing, the create plan. |
+| `lib/ciAssessment/__tests__/legacyCalculatorLinks.test.ts` | Every old link shape: a property link lands on the building's page and never creates; reading the links already out there. |
+| `lib/ciAssessment/__tests__/newAssessment.test.ts` | Default names, the placeholder name told from a real one, the starting type, segment filing, the create plan. |
+| `components/commercial/assessment/__tests__/useStartAssessment.test.tsx` | New assessment creates one draft on the click and opens the Type step; from a building, read from its own register and carried; an unreadable building creates nothing; a double-click makes one draft; a failed create opens nothing. |
+| `components/commercial/assessment/__tests__/assessmentRename.test.tsx` | The name field, including an unnamed draft shown as an empty field and an empty name never sent. |
 | `lib/__tests__/commercialOwnership.test.ts` | Leases and DCF runs get both ownership columns. |
-| `components/commercial/assessment/__tests__/assessmentManagement.test.tsx` | The dialog creates nothing until confirmed, starts fresh each opening, the delete dialog's every answer. |
+| `components/commercial/assessment/__tests__/assessmentManagement.test.tsx` | The delete dialog's every answer. |
 | `components/commercial/assessment/__tests__/clientCreateAndLink.test.tsx` | Creating, matching and linking a client. |
 | `pages/calculators/__tests__/commercialIndustrialWorkspace.test.tsx` | The redirects, as the router renders them. It reads no other file, so it can travel to the clones (§7). |
 | `lib/navigation/__tests__/registry.spec.ts` | The module guard on every C&I route, the retired `/calculators` routes included. Pre-existing. |
-| `pages/commercial/__tests__/commercialModule.test.tsx` | The landing, the step order, the optional step, in-app client creation, archive/delete with the record, the Results step's Documents panel. |
+| `pages/commercial/__tests__/commercialModule.test.tsx` | The landing: New assessment from the header, the empty list and a register row opens the Type step with no dialog, and an old link creates nothing. The step order, the optional step, in-app client creation, archive/delete with the record, the Results step's Documents panel. |
 | `lib/ciAssessment/__tests__/issuedDocuments.test.ts` | Both ledgers as one list; the client a document belongs to, through a relink; the did-not-finish window is the delete rule's; the buckets the two render functions actually write to. |
 | `lib/ciAssessment/__tests__/documentDownload.test.ts` | A re-download is the stored file, never a re-render, sent through the client it was reached from. |
 | `lib/ciAssessment/__tests__/assessmentActivity.test.ts` | A phrase for every audit event the functions write, read from their source; no database name ever reaches the page. |

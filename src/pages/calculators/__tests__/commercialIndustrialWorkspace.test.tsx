@@ -57,11 +57,10 @@ describe('the retired analysis workspace', () => {
     expect(arriveAt('/calculators?workspace=a1')).toBe('/commercial/assessments/a1');
   });
 
-  it('turns a property link into "New assessment" on that property — without creating one', () => {
-    expect(arriveAt('/calculators?domain=industrial&propertyId=p1')).toBe(
-      '/commercial?tab=assessments&new=assessment&domain=industrial&propertyId=p1',
-    );
-    // The old page minted an "Untitled analysis" on every property click.
+  it('sends a property link to that building, one click from a new assessment — without creating one', () => {
+    expect(arriveAt('/calculators?domain=industrial&propertyId=p1')).toBe('/industrial/p1');
+    // The old page minted an "Untitled analysis" on every property click, and
+    // a link is followed again by every refresh and bookmark.
     expect(create).not.toHaveBeenCalled();
   });
 

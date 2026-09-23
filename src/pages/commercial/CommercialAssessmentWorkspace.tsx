@@ -157,8 +157,9 @@ export default function CommercialAssessmentWorkspace() {
 
   /**
    * Who the assessment is being prepared for, before it is linked: the client
-   * named when it was started, or created from its intake step. Read from the
-   * assessment's own audit trail by the server — it is never a link.
+   * created from its intake step, or, for one started while the New assessment
+   * dialog existed, named there. Read from the assessment's own audit trail by
+   * the server — it is never a link.
    */
   const [intent, setIntent] = useState<{ assessmentId: string; client: IntendedClient | null } | null>(null);
   const linkedClientId = record?.client_id ?? null;

@@ -540,10 +540,16 @@ CI test reads the router's source and fails when the two drift.
 Read [`docs/commercial/MODULE_STRUCTURE.md`](./docs/commercial/MODULE_STRUCTURE.md)
 before touching `/commercial`, `/calculators`, `src/components/commercial/`,
 `src/lib/ciAssessment/` or `manage-ci-assessments`. **An assessment is one
-record with one editor.** There is one "New assessment" dialog, and it creates
-nothing until it is confirmed. The ten established steps are joined by an
-optional Valuation & forecast step, which was the only capability unique to the
-retired `/calculators` workspace; that route now redirects and creates nothing.
+record with one editor.** "New assessment" creates the draft on the click and
+opens it on its Type step, which asks the name and the transaction type first.
+Every button uses the one `useStartAssessment` action, and a building's button
+carries the building. There was a confirm-first dialog, and it is gone: deletion
+is what makes a stray draft harmless, and the dialog asked what the Type step
+asks anyway. **A link never creates a record**, because a refresh, Back and
+every bookmark follow it again. An old `?new=assessment` or `/calculators`
+property link lands on the building's page instead. The ten established steps
+are joined by an optional Valuation & forecast step, which was the only
+capability unique to the retired `/calculators` workspace.
 The register building an assessment concerns is recorded at
 `payload.property.registerProperty`. It sits inside a section because
 `hydrateAssessmentPayload` drops unknown top-level keys.

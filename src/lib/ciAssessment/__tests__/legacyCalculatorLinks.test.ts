@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  legacyCalculatorRedirect, newAssessmentPath, readNewAssessmentLink, withoutNewAssessmentLink,
+  legacyCalculatorRedirect, readNewAssessmentLink, withoutNewAssessmentLink,
 } from '../legacyCalculatorLinks';
 import { workspacePath } from '../workspaceBootstrap';
 
@@ -50,24 +50,22 @@ describe('an analysis link opens the same record in the assessment', () => {
   });
 });
 
-describe('a property link opens "New assessment" on that property', () => {
-  it('keeps the domain, so an industrial property is looked up in its own register', () => {
-    expect(at('domain=industrial&propertyId=p1')).toBe(
-      '/commercial?tab=assessments&new=assessment&domain=industrial&propertyId=p1',
-    );
-    expect(at('domain=commercial&propertyId=p1')).toBe(
-      '/commercial?tab=assessments&new=assessment&domain=commercial&propertyId=p1',
-    );
+describe('a property link lands on that building, one click from a new assessment', () => {
+  it('keeps the domain, so an industrial property opens from its own register', () => {
+    expect(at('domain=industrial&propertyId=p1')).toBe('/industrial/p1');
+    expect(at('domain=commercial&propertyId=p1')).toBe('/commercial/p1');
   });
 
   it('reads an unknown domain as commercial', () => {
-    expect(at('domain=retail&propertyId=p1')).toContain('domain=commercial');
+    expect(at('domain=retail&propertyId=p1')).toBe('/commercial/p1');
   });
 
-  it('creates nothing on arrival — the dialog asks first', () => {
-    // A redirect is a path, not a request: the old page minted an "Untitled
-    // analysis" on every "Send to Calculators" click.
-    expect(newAssessmentPath()).toBe('/commercial?tab=assessments&new=assessment');
+  it('creates nothing on arrival: a link is not a request for a record', () => {
+    // The old page minted an "Untitled analysis" on every "Send to
+    // Calculators" click, and a link is followed again by every refresh and
+    // bookmark. A redirect is a PATH, never a creation, and the building's
+    // page is where "New assessment" starts one of it.
+    expect(at('domain=commercial&propertyId=p1')).not.toContain('new=');
   });
 });
 
@@ -79,28 +77,28 @@ describe('everything else lands on the assessment list', () => {
   });
 });
 
-describe('the landing reads the link back', () => {
+describe('the landing reads a "New assessment" link already out there', () => {
   const read = (path: string) => readNewAssessmentLink(new URL(path, 'https://app.test').searchParams);
 
-  it('reads what newAssessmentPath wrote, building and all', () => {
-    expect(read(newAssessmentPath())).toEqual({ property: null });
-    expect(read(newAssessmentPath({ domain: 'industrial', propertyId: 'p1' }))).toEqual({
+  it('reads the link the landing used to write, building and all', () => {
+    expect(read('/commercial?tab=assessments&new=assessment')).toEqual({ property: null });
+    expect(read('/commercial?tab=assessments&new=assessment&domain=industrial&propertyId=p1')).toEqual({
       property: { domain: 'industrial', propertyId: 'p1' },
     });
   });
 
-  it('is null when the URL does not ask for the dialog', () => {
+  it('is null when the URL is not one', () => {
     expect(read('/commercial?tab=assessments')).toBeNull();
     expect(read('/commercial?new=something-else&propertyId=p1')).toBeNull();
   });
 
-  it('opens with no building rather than guessing a register it does not have', () => {
+  it('names no building rather than guessing a register it does not have', () => {
     expect(read('/commercial?new=assessment&domain=retail&propertyId=p1')).toEqual({ property: null });
     expect(read('/commercial?new=assessment&domain=commercial&propertyId=%20')).toEqual({ property: null });
   });
 
   it('clears the request and keeps everything else', () => {
-    const params = new URL(newAssessmentPath({ domain: 'commercial', propertyId: 'p1' }), 'https://app.test').searchParams;
+    const params = new URL('/commercial?tab=assessments&new=assessment&domain=commercial&propertyId=p1', 'https://app.test').searchParams;
     expect(withoutNewAssessmentLink(params).toString()).toBe('tab=assessments');
     // The input is not modified — the router owns it.
     expect(params.get('new')).toBe('assessment');

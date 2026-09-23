@@ -6,6 +6,10 @@
  * not think of a building by the table it was filed in. The rows are kept, not
  * just their labels: the prefill is built from the row that was chosen, so
  * choosing a building costs no second request.
+ *
+ * Starting an assessment OF a building — from its register row or its own
+ * page — already knows which one, so `readRegisterProperty` reads that row
+ * alone rather than both registers to find it.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -65,15 +69,46 @@ export function useRegisterProperties(enabled: boolean) {
   const resolve = useCallback((domain: RegisterDomain, propertyId: string): ResolvedRegisterProperty | null => {
     if (domain === 'commercial') {
       const row = commercial.find((property) => property.id === propertyId);
-      if (!row) return null;
-      const option = commercialOption(row);
-      return { option, prefill: buildCommercialPrefill(row), link: linkFor(option) };
+      return row ? resolveCommercial(row) : null;
     }
     const row = industrial.find((property) => property.id === propertyId);
-    if (!row) return null;
-    const option = industrialOption(row);
-    return { option, prefill: buildIndustrialPrefill(row), link: linkFor(option) };
+    return row ? resolveIndustrial(row) : null;
   }, [commercial, industrial]);
 
   return { options, loading, error, resolve };
 }
+
+function resolveCommercial(row: CommercialProperty): ResolvedRegisterProperty {
+  const option = commercialOption(row);
+  return { option, prefill: buildCommercialPrefill(row), link: linkFor(option) };
+}
+
+function resolveIndustrial(row: IndustrialProperty): ResolvedRegisterProperty {
+  const option = industrialOption(row);
+  return { option, prefill: buildIndustrialPrefill(row), link: linkFor(option) };
+}
+
+/**
+ * One building, read on its own, with its prefill and link.
+ *
+ * `null` data is always paired with the reason, because a building that could
+ * not be read is not a building that is absent, and whoever asked for an
+ * assessment of it should be told which.
+ */
+export async function readRegisterProperty(
+  domain: RegisterDomain,
+  propertyId: string,
+): Promise<{ data: ResolvedRegisterProperty | null; error: string | null }> {
+  if (domain === 'commercial') {
+    const result = await commercialApi.getProperty(propertyId);
+    if (result.error) return { data: null, error: result.error.message };
+    const row = result.data as CommercialProperty | null;
+    return row ? { data: resolveCommercial(row), error: null } : { data: null, error: NOT_IN_REGISTER };
+  }
+  const result = await industrialApi.getProperty(propertyId);
+  if (result.error) return { data: null, error: result.error.message };
+  const row = result.data as IndustrialProperty | null;
+  return row ? { data: resolveIndustrial(row), error: null } : { data: null, error: NOT_IN_REGISTER };
+}
+
+const NOT_IN_REGISTER = 'That property is no longer in your register.';

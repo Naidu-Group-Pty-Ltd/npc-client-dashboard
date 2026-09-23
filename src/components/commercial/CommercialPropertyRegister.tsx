@@ -39,7 +39,7 @@ import { useIndustrialProperties, industrialApi, type IndustrialProperty } from 
 import { CommercialPropertyFormModal } from '@/components/commercial/CommercialPropertyFormModal';
 import { IndustrialPropertyFormModal } from '@/components/industrial/IndustrialPropertyFormModal';
 import { toast } from '@/hooks/use-toast';
-import { newAssessmentPath } from '@/lib/ciAssessment/legacyCalculatorLinks';
+import { startKey } from '@/components/commercial/assessment/useStartAssessment';
 
 type AssetKind = 'commercial' | 'industrial';
 type CombinedRow =
@@ -81,13 +81,15 @@ function Value({ children }: { children: ReactNode }) {
 
 interface RegisterProps {
   /**
-   * Start an assessment of a building. The landing passes its own "New
-   * assessment" dialog; without it, the row action navigates to the same dialog.
+   * Start an assessment of a building: the landing's own "New assessment",
+   * which creates it and opens its Type step (`useStartAssessment`).
    */
-  onStartAssessment?: (property: { domain: AssetKind; propertyId: string }) => void;
+  onStartAssessment: (property: { domain: AssetKind; propertyId: string }) => void;
+  /** The start under way, by `startKey`, so the row that was pressed says so. */
+  starting: string | null;
 }
 
-export function CommercialPropertyRegister({ onStartAssessment }: RegisterProps = {}) {
+export function CommercialPropertyRegister({ onStartAssessment, starting }: RegisterProps) {
   const commercial = useCommercialProperties();
   const industrial = useIndustrialProperties();
   const navigate = useNavigate();
@@ -309,13 +311,15 @@ export function CommercialPropertyRegister({ onStartAssessment }: RegisterProps 
                       <div className="flex justify-end gap-1">
                         <Button
                           size="icon" variant="ghost" className="h-8 w-8"
-                          onClick={() => (onStartAssessment
-                            ? onStartAssessment({ domain: row.kind, propertyId: property.id })
-                            : navigate(newAssessmentPath({ domain: row.kind, propertyId: property.id })))}
+                          onClick={() => onStartAssessment({ domain: row.kind, propertyId: property.id })}
+                          disabled={starting !== null}
+                          aria-busy={starting === startKey({ domain: row.kind, propertyId: property.id })}
                           aria-label={`New assessment of ${address || 'this property'}`}
                           title="New assessment of this property"
                         >
-                          <FilePlus2 className="h-4 w-4" aria-hidden="true" />
+                          {starting === startKey({ domain: row.kind, propertyId: property.id })
+                            ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                            : <FilePlus2 className="h-4 w-4" aria-hidden="true" />}
                         </Button>
                         <Button
                           size="icon" variant="ghost" className="h-8 w-8"

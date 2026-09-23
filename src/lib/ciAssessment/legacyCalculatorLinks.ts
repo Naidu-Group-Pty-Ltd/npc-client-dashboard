@@ -18,17 +18,21 @@
  * | Arrival | Lands on |
  * | --- | --- |
  * | `?workspace=<id>[&stage=<s>]` | that assessment, at the matching step |
- * | `?propertyId=<id>[&domain=<d>]` | the module, with "New assessment" open on that property |
+ * | `?propertyId=<id>[&domain=<d>]` | that building's own page, whose "New assessment" starts one of it |
  * | anything else | the module's assessment list |
  *
- * A property link does not create a record on arrival. It used to — every
- * "Send to Calculators" click minted an "Untitled analysis" — and the dialog it
- * now opens asks for the one confirmation that stops a stray click becoming a
- * draft nobody wanted.
+ * **A link never creates a record.** It used to: every "Send to Calculators"
+ * click minted an "Untitled analysis". A "New assessment" BUTTON creates one
+ * now (`useStartAssessment`), because pressing it is somebody asking for one.
+ * A link is not. It is followed again by a refresh, the Back button and every
+ * bookmark, so a link that created would create each time. A property link
+ * therefore lands on the building's page, one click away.
  *
  * The pre-workspace suite at `/calculators/classic` is a separate route and is
  * untouched by this.
  */
+
+import { registerPropertyPath } from './registerProperty';
 
 export interface LegacyCalculatorParams {
   workspace: string | null;
@@ -55,30 +59,28 @@ const STAGE_TO_STEP: Readonly<Record<string, string>> = {
   report: 'results',
 };
 
-/** The query parameter the module landing reads to open "New assessment". */
+/**
+ * The query parameter of a "New assessment" link: `?new=assessment`, with
+ * `&domain=…&propertyId=…` when it names a building.
+ *
+ * Nothing in the app writes one any more; the buttons create directly. The
+ * links already out there (this landing opened a "New assessment" dialog from
+ * them) are still read, so each lands where it meant: on the building it
+ * names, or on the list.
+ */
 export const NEW_ASSESSMENT_PARAM = 'new';
 export const NEW_ASSESSMENT_VALUE = 'assessment';
 
-/** The landing link that opens "New assessment", optionally on a property. */
-export function newAssessmentPath(property?: { domain: string; propertyId: string } | null): string {
-  const params = new URLSearchParams({ tab: 'assessments', [NEW_ASSESSMENT_PARAM]: NEW_ASSESSMENT_VALUE });
-  if (property) {
-    params.set('domain', property.domain === 'industrial' ? 'industrial' : 'commercial');
-    params.set('propertyId', property.propertyId);
-  }
-  return `/commercial?${params.toString()}`;
-}
-
-/** What a "New assessment" link asks for: the dialog, and optionally the building. */
+/** What a "New assessment" link asks for: a new assessment, and optionally the building. */
 export interface NewAssessmentLink {
   property: { domain: 'commercial' | 'industrial'; propertyId: string } | null;
 }
 
 /**
- * Read a `newAssessmentPath` link back off the landing's URL — `null` when the
- * URL does not ask for the dialog. A building is named only when both halves
- * are present and the register is one the module has; anything else opens the
- * dialog with no building rather than guessing which register was meant.
+ * Read a "New assessment" link off the landing's URL — `null` when the URL is
+ * not one. A building is named only when both halves are present and the
+ * register is one the module has; anything else names no building rather than
+ * guessing which register was meant.
  */
 export function readNewAssessmentLink(params: URLSearchParams): NewAssessmentLink | null {
   if (params.get(NEW_ASSESSMENT_PARAM) !== NEW_ASSESSMENT_VALUE) return null;
@@ -89,7 +91,7 @@ export function readNewAssessmentLink(params: URLSearchParams): NewAssessmentLin
   };
 }
 
-/** The same URL without the request — what the landing writes when the dialog closes. */
+/** The same URL without the request — what the landing replaces it with. */
 export function withoutNewAssessmentLink(params: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete(NEW_ASSESSMENT_PARAM);
@@ -107,7 +109,7 @@ export function legacyCalculatorRedirect(params: LegacyCalculatorParams): string
 
   const propertyId = params.propertyId?.trim();
   if (propertyId) {
-    return newAssessmentPath({ domain: params.domain === 'industrial' ? 'industrial' : 'commercial', propertyId });
+    return registerPropertyPath({ domain: params.domain === 'industrial' ? 'industrial' : 'commercial', propertyId });
   }
 
   return '/commercial?tab=assessments';

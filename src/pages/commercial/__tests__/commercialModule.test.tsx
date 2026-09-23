@@ -4,11 +4,14 @@
  * What these pin is the structure the September 2026 audit settled on, as the
  * pages actually render it:
  *
- *  - the landing offers ONE way to start an assessment, and it asks before it
- *    creates — no "Standalone calculators" (a second editor for the same
- *    records), no ten duplicate type buttons, no record minted on a click;
+ *  - the landing offers ONE way to start an assessment — no "Standalone
+ *    calculators" (a second editor for the same records), no ten duplicate
+ *    type buttons — and it creates the draft on the click and opens its Type
+ *    step, with no dialog in between;
+ *  - a LINK never creates a record: an old "New assessment" link lands on the
+ *    building it names, or on the list;
  *  - the tabs name what they hold — the Property register, Policy defaults;
- *  - a register property starts an assessment of that building;
+ *  - a register property starts an assessment of that building, the same way;
  *  - the assessment carries the analysis the calculators workspace had, as an
  *    optional "Valuation & forecast" step between Loan structure and Results,
  *    with the ten established steps unchanged around it;
@@ -89,12 +92,17 @@ vi.mock('@/hooks/useCommercialProperties', () => ({
   useCommercialProperties: () => ({ properties: [BUILDING], loading: false, refresh: vi.fn() }),
   commercialApi: {
     listProperties: vi.fn().mockResolvedValue({ data: [BUILDING], error: null }),
+    getProperty: vi.fn().mockResolvedValue({ data: BUILDING, error: null }),
     deleteProperty: vi.fn(),
   },
 }));
 vi.mock('@/hooks/useIndustrialProperties', () => ({
   useIndustrialProperties: () => ({ properties: [], loading: false, refresh: vi.fn() }),
-  industrialApi: { listProperties: vi.fn().mockResolvedValue({ data: [], error: null }), deleteProperty: vi.fn() },
+  industrialApi: {
+    listProperties: vi.fn().mockResolvedValue({ data: [], error: null }),
+    getProperty: vi.fn().mockResolvedValue({ data: null, error: null }),
+    deleteProperty: vi.fn(),
+  },
 }));
 
 vi.mock('@/hooks/useCapacityReport', () => ({ useCapacityReport: () => ({ generatingId: null, generate: vi.fn() }) }));
@@ -163,15 +171,22 @@ describe('the module landing', () => {
     expect(screen.queryByText(/start from a transaction type/i)).toBeNull();
   });
 
-  it('asks before it creates anything', async () => {
+  it('creates the assessment on the click and opens it on its Type step — no dialog', async () => {
     renderAt('/commercial', { workspace: false });
     fireEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: /new assessment/i }));
-    expect(await screen.findByRole('dialog', { name: /new assessment/i })).toBeInTheDocument();
-    expect(createAssessment).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /create assessment/i }));
-    // A new assessment opens on the intake pack — the dialog asked the type.
-    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/commercial/assessments/new-1?step=pack'));
+    // The Type step is the first page: it asks the name and the transaction type.
+    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/commercial/assessments/new-1?step=type'));
+    expect(createAssessment).toHaveBeenCalledTimes(1);
+    expect(createAssessment.mock.calls[0][0]).toMatchObject({ title: 'Untitled assessment', assessmentType: 'commercial_investment' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('starts the same way from an empty list', async () => {
+    renderAt('/commercial', { workspace: false });
+    const empty = screen.getByText('No assessments yet').closest('div')!.parentElement!;
+    fireEvent.click(within(empty).getByRole('button', { name: /new assessment/i }));
+    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/commercial/assessments/new-1?step=type'));
     expect(createAssessment).toHaveBeenCalledTimes(1);
   });
 
@@ -182,26 +197,30 @@ describe('the module landing', () => {
     expect(screen.queryByRole('tab', { name: /calculator settings/i })).toBeNull();
   });
 
-  it('starts an assessment of a building from its register row', async () => {
-    renderAt('/commercial?tab=properties');
+  it('starts an assessment of a building from its register row, filled from it', async () => {
+    renderAt('/commercial?tab=properties', { workspace: false });
     fireEvent.click(screen.getByRole('button', { name: /new assessment of g12\/25 solent circuit/i }));
-    const dialog = await screen.findByRole('dialog', { name: /new assessment/i });
-    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: /property/i })).toHaveTextContent('G12/25 Solent Circuit'));
+
+    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/commercial/assessments/new-1?step=type'));
+    const input = createAssessment.mock.calls[0][0];
+    expect(input.title).toBe('G12/25 Solent Circuit — commercial investment');
+    expect(input.payload.property.registerProperty).toMatchObject({ domain: 'commercial', propertyId: PROPERTY_ID });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('opens "New assessment" on a building when a link asks it to — the old calculators links land here', async () => {
-    renderAt(`/commercial?tab=assessments&new=assessment&domain=commercial&propertyId=${PROPERTY_ID}`);
-    const dialog = await screen.findByRole('dialog', { name: /new assessment/i });
-    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: /property/i })).toHaveTextContent('G12/25 Solent Circuit'));
+  it('sends an old "New assessment" link to the building it names — and creates nothing', async () => {
+    renderAt(`/commercial?tab=assessments&new=assessment&domain=commercial&propertyId=${PROPERTY_ID}`, { workspace: false });
+    // The building's own page, where "New assessment" starts one of it in one click.
+    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent(`/commercial/${PROPERTY_ID}`));
     expect(createAssessment).not.toHaveBeenCalled();
   });
 
-  it('closes a dialog a link opened, and it stays closed', async () => {
-    renderAt(`/commercial?tab=assessments&new=assessment&domain=commercial&propertyId=${PROPERTY_ID}`);
-    const dialog = await screen.findByRole('dialog', { name: /new assessment/i });
-    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
-    // The dialog is read from the link, so it closes only if the link is cleared.
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /new assessment/i })).toBeNull());
+  it('shows the list for an old link that names no building — and creates nothing', async () => {
+    renderAt('/commercial?tab=assessments&new=assessment');
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Assessments' })).toHaveAttribute('data-state', 'active'));
+    // It stays on the landing: nothing to redirect to, and nothing created.
+    expect(screen.queryByTestId('landed')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(createAssessment).not.toHaveBeenCalled();
   });
 

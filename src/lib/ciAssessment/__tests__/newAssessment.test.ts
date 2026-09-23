@@ -1,14 +1,17 @@
 /**
  * What "New assessment" creates.
  *
- * It used to create an "Untitled assessment" on the click and ask the
- * questions afterwards, which is where the list of untitled drafts came from.
- * These pin what it creates now that it asks first: a named record, filed under
- * the right segment, filled from the register property it concerns.
+ * It creates the draft on the click and opens it on its Type step, which asks
+ * the name and the transaction type first (`newAssessment.ts` records why that
+ * is right now, where it once was not). These pin the draft itself: filed
+ * under the right segment, typed by the building it concerns, filled from that
+ * building, and called something that is not mistaken for a name.
  */
 
 import { describe, expect, it } from 'vitest';
-import { defaultTitle, planNewAssessment, segmentFor } from '../newAssessment';
+import {
+  defaultTitle, isUntitled, planNewAssessment, segmentFor, startingType, UNTITLED_ASSESSMENT,
+} from '../newAssessment';
 import { buildCommercialPrefill, commercialOption, linkFor, registerLinkOf } from '../registerProperty';
 import type { CommercialProperty } from '@/hooks/useCommercialProperties';
 
@@ -43,6 +46,32 @@ describe('the record it creates', () => {
   it('names itself after the building when nobody names it', () => {
     expect(defaultTitle('refinance', '45 Industrial Drive')).toBe('45 Industrial Drive — refinance');
     expect(defaultTitle('commercial_investment', null)).toBe('Untitled assessment');
+    expect(defaultTitle('commercial_investment', '   ')).toBe(UNTITLED_ASSESSMENT);
+  });
+
+  it('knows the placeholder name from one somebody chose', () => {
+    // The Type step shows the placeholder as an empty field, so this must
+    // never mistake a real name for it, nor it for a real name.
+    expect(isUntitled(UNTITLED_ASSESSMENT)).toBe(true);
+    expect(isUntitled('  Untitled assessment ')).toBe(true);
+    expect(isUntitled('Untitled assessment 2')).toBe(false);
+    expect(isUntitled('45 Industrial Drive — industrial investment')).toBe(false);
+    expect(isUntitled('')).toBe(false);
+    expect(isUntitled(null)).toBe(false);
+  });
+
+  it('starts as the type the building implies, before the Type step is answered', () => {
+    expect(startingType(true)).toBe('industrial_investment');
+    expect(startingType(false)).toBe('commercial_investment');
+  });
+
+  it('starts an assessment with no building as an untitled commercial investment', () => {
+    const plan = planNewAssessment({ title: '', assessmentType: startingType(false), segmentChoice: null });
+    expect(plan.title).toBe(UNTITLED_ASSESSMENT);
+    expect(plan.assessmentType).toBe('commercial_investment');
+    expect(plan.segment).toBe('commercial');
+    expect(plan.payload.assessmentType).toBe('commercial_investment');
+    expect(plan.applied).toEqual([]);
   });
 
   it('files a refinance of an industrial building as industrial, down to its classification', () => {

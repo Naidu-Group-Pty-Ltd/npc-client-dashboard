@@ -32,6 +32,14 @@ owner's confirmation (§1, §13).
 
 What is proved, and what is still owed, is in §12 step 3 and §13.
 
+**Update, 12:05 UTC: the programme is closed.** #2745 merged as `bded8c0fd`.
+It was docs only, so nothing deployed. `REPORT_PRESENTATION_PROGRAMME.md` §7
+is now the programme's closing record. Every workstream is done, withdrawn on
+measurement, or closed by a recorded decision. §7 lists what remains:
+evidence that arrives on its own schedule, the owner's decisions, and
+follow-ups found on the way. Seven passages in that plan had been made untrue
+by the last two days, and each now says it is superseded.
+
 ---
 
 ## 0 · If you read one thing

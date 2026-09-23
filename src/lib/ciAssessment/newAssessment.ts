@@ -1,15 +1,28 @@
 /**
  * What "New assessment" creates.
  *
- * ## Why this asks two questions before creating anything
+ * ## Create on the click, open on the Type step
  *
- * "New assessment" used to create a record on the click — titled "Untitled
- * assessment", typed as a commercial investment — and open it on the type step
- * to ask the questions afterwards. Every click that went no further left an
- * untitled draft behind, and with no way to delete one, the list filled with
- * them. It now asks the name and the transaction type first (the two things the
- * type step asked straight away anyway), optionally the register property and
- * the client, and creates nothing until the operator says so.
+ * "New assessment" creates the draft and opens it on its Type step, which asks
+ * the two questions every assessment starts with: its name and its
+ * transaction type. Started from a building in the property register, the
+ * draft carries that building from the first moment: its figures fill the
+ * blanks, its kind sets the starting type, and the register lists the
+ * assessment.
+ *
+ * It asked first for a while. A dialog took the name, the type and optionally
+ * the building and the client, and created nothing until it was confirmed.
+ * That was the answer to drafts piling up, when every click that went no
+ * further left an "Untitled assessment" behind that nobody could delete. It
+ * answered the wrong half of the problem. A draft can be deleted now
+ * (`deletion.pure.ts`: an untouched draft goes with one plain confirmation),
+ * and the dialog asked, before the work began, the very questions the Type
+ * step asks at its start. So the click creates again.
+ *
+ * What still never creates a record is a LINK. A refresh, the Back button or
+ * an old bookmark is not somebody asking for a new assessment, so
+ * `legacyCalculatorLinks.ts` sends every link to the page where one click
+ * does.
  *
  * Pure, so the rules — which segment a type implies, what a register property
  * fills, what the record is called when nobody names it — are test cases.
@@ -45,11 +58,36 @@ export function segmentFor(
   return 'commercial';
 }
 
-/** The name a record gets when the operator leaves the field blank. */
+/**
+ * What a record is called until somebody names it.
+ *
+ * The server refuses an empty name, so an unnamed draft needs one. The Type
+ * step shows this as an empty field rather than as a name to delete
+ * (`isUntitled`).
+ */
+export const UNTITLED_ASSESSMENT = 'Untitled assessment';
+
+/** Whether a title is the placeholder name, not one anybody chose. */
+export function isUntitled(title: string | null | undefined): boolean {
+  return (title ?? '').trim() === UNTITLED_ASSESSMENT;
+}
+
+/** The name a record gets when nobody has named it yet. */
 export function defaultTitle(type: AssessmentType, propertyLabel: string | null): string {
   const label = propertyLabel?.trim();
   const definition = assessmentTypeDefinition(type);
-  return label ? `${label} — ${definition.label.toLowerCase()}` : 'Untitled assessment';
+  return label ? `${label} — ${definition.label.toLowerCase()}` : UNTITLED_ASSESSMENT;
+}
+
+/**
+ * The type a new assessment starts as, before the Type step is answered.
+ *
+ * An industrial building starts as an industrial investment. Anything else,
+ * including no building at all, starts as a commercial investment, which is
+ * the first card on the Type step.
+ */
+export function startingType(propertyIsIndustrial: boolean): AssessmentType {
+  return propertyIsIndustrial ? 'industrial_investment' : 'commercial_investment';
 }
 
 export interface NewAssessmentInput {

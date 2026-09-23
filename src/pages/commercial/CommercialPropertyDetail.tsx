@@ -13,7 +13,7 @@ import { FinancialSnapshot } from '@/components/commercial/FinancialSnapshot';
 import { CommercialCapexTable } from '@/components/commercial/CommercialCapexTable';
 import { PropertyFinancingPanel } from '@/components/property/PropertyFinancingPanel';
 import { PropertyAssessmentsPanel } from '@/components/commercial/PropertyAssessmentsPanel';
-import { newAssessmentPath } from '@/lib/ciAssessment/legacyCalculatorLinks';
+import { useStartAssessment } from '@/components/commercial/assessment/useStartAssessment';
 import { generateCommercialInvestmentReport } from '@/utils/commercial/commercialReportPdf';
 
 
@@ -25,6 +25,7 @@ const ASSET_LABEL: Record<string, string> = {
 export default function CommercialPropertyDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { start: startAssessment, starting } = useStartAssessment();
   const [property, setProperty] = useState<CommercialProperty | null>(null);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
@@ -77,13 +78,21 @@ export default function CommercialPropertyDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* Starts an assessment of this building: the dialog fills its blanks
-              from this record, and the assessment records the building, so it is
-              listed below. This was "Send to Calculators", which minted an
-              "Untitled analysis" on arrival and held the building only in memory —
-              the record never said which property it was about. */}
-          <Button variant="secondary" onClick={() => navigate(newAssessmentPath({ domain: 'commercial', propertyId: property.id }))}>
-            <FilePlus2 className="h-4 w-4 mr-2" /> New assessment
+          {/* Starts an assessment of this building and opens its Type step: its
+              blanks are filled from this record, and the assessment records the
+              building, so it is listed below. This was "Send to Calculators",
+              which minted an "Untitled analysis" on arrival and held the building
+              only in memory — the record never said which property it was about. */}
+          <Button
+            variant="secondary"
+            onClick={() => void startAssessment({ domain: 'commercial', propertyId: property.id })}
+            disabled={starting !== null}
+            aria-busy={starting !== null}
+          >
+            {starting !== null
+              ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              : <FilePlus2 className="h-4 w-4 mr-2" />}
+            New assessment
           </Button>
           <Button onClick={handleGenerateReport} disabled={generating}>
             {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}

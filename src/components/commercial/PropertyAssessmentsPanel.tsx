@@ -6,6 +6,10 @@
  * list it. Assessments started from the register now record the building
  * (`registerLink.pure.ts`), and this lists them — the relationship read from
  * the other end.
+ *
+ * "New assessment" here starts one OF this building and opens its Type step
+ * (`useStartAssessment`). It is also where an old link naming a building
+ * lands, because a link never creates a record on its own.
  */
 
 import { useEffect, useState } from 'react';
@@ -17,7 +21,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { AssessmentListRow } from '@/hooks/useCiAssessments';
 import { listAssessmentsForProperty } from '@/lib/ciAssessment/assessmentManagement';
-import { newAssessmentPath } from '@/lib/ciAssessment/legacyCalculatorLinks';
+import { useStartAssessment } from '@/components/commercial/assessment/useStartAssessment';
 import { formatMoney, toCents } from '@/lib/ciAssessment/money';
 import type { RegisterDomain } from '@/lib/ciAssessment/registerProperty';
 import {
@@ -31,6 +35,7 @@ interface Props {
 
 export function PropertyAssessmentsPanel({ domain, propertyId }: Props) {
   const navigate = useNavigate();
+  const { start, starting } = useStartAssessment();
   const [attempt, setAttempt] = useState(0);
   const [answer, setAnswer] = useState<{
     key: string; rows: AssessmentListRow[] | null; error: string | null;
@@ -67,8 +72,16 @@ export function PropertyAssessmentsPanel({ domain, propertyId }: Props) {
               fills their blanks.
             </p>
           </div>
-          <Button size="sm" onClick={() => navigate(newAssessmentPath({ domain, propertyId }))}>
-            <FilePlus2 className="mr-1.5 h-4 w-4" aria-hidden="true" /> New assessment
+          <Button
+            size="sm"
+            onClick={() => void start({ domain, propertyId })}
+            disabled={starting !== null}
+            aria-busy={starting !== null}
+          >
+            {starting !== null
+              ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+              : <FilePlus2 className="mr-1.5 h-4 w-4" aria-hidden="true" />}
+            New assessment
           </Button>
         </div>
 

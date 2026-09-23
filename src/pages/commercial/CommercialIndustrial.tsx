@@ -13,22 +13,22 @@
  * The page offered four ways to start the same record and two editors for it:
  * the header's "New assessment", ten "Start from a transaction type" buttons,
  * and a "Standalone calculators" button whose workspace listed these same
- * assessments and edited them through a second set of stages. Each created a
- * record on the click, so abandoned clicks accumulated as undeletable
- * "Untitled assessment" drafts.
+ * assessments and edited them through a second set of stages.
  *
- * Now "New assessment" opens a dialog that asks first (name, transaction type,
- * optionally the register property and the client) and creates nothing until
- * confirmed; the calculators workspace is retired into the assessment's own
- * "Valuation & forecast" step; and an assessment can be deleted, within the
- * limits `deletion.pure.ts` sets. The tabs name what they hold: the Property
- * register is where buildings live and assessments start from, and Policy
- * defaults are the assumptions every assessment starts under.
+ * Now there is one "New assessment". It creates the draft and opens it on its
+ * Type step, where the name and the transaction type are the first two
+ * questions (`useStartAssessment`). The calculators workspace is retired into
+ * the assessment's own "Valuation & forecast" step. An assessment can be
+ * deleted, within the limits `deletion.pure.ts` sets, which is what lets a
+ * click create again: a draft nobody wanted goes with one confirmation. A LINK
+ * still never creates one (see below). The tabs name what they hold: the
+ * Property register is where buildings live and assessments start from, and
+ * Policy defaults are the assumptions every assessment starts under.
  *
  * See `docs/commercial/MODULE_STRUCTURE.md`.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,13 +56,13 @@ import { clientCommercialIndustrialPath } from '@/lib/ciAssessment/clientRoute';
 import { PROFILE_LABELS, PLATFORM_DEFAULT_POLICY, POLICY_VERSION, CALCULATION_ENGINE_VERSION } from '@/lib/ciAssessment/policy';
 import { CommercialPropertyRegister } from '@/components/commercial/CommercialPropertyRegister';
 import { PortfolioImpactTab } from '@/components/commercial/assessment/PortfolioImpactTab';
-import { NewAssessmentDialog, type NewAssessmentCreated } from '@/components/commercial/assessment/NewAssessmentDialog';
+import { STARTING_BLANK, useStartAssessment } from '@/components/commercial/assessment/useStartAssessment';
 import {
   DeleteAssessmentDialog, type DeletableAssessment,
 } from '@/components/commercial/assessment/DeleteAssessmentDialog';
 import { useMayOfferAssessmentDelete } from '@/components/commercial/assessment/useMayOfferAssessmentDelete';
 import { readNewAssessmentLink, withoutNewAssessmentLink } from '@/lib/ciAssessment/legacyCalculatorLinks';
-import type { RegisterDomain } from '@/lib/ciAssessment/registerProperty';
+import { registerPropertyPath } from '@/lib/ciAssessment/registerProperty';
 
 const STATUS_TONE: Record<AssessmentStatus, string> = {
   draft: 'ci-status-neutral',
@@ -116,8 +116,6 @@ export default function CommercialIndustrial() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [segment, setSegment] = useState('all');
-  const [newOpen, setNewOpen] = useState(false);
-  const [newForProperty, setNewForProperty] = useState<{ domain: RegisterDomain; propertyId: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DeletableAssessment | null>(null);
   const mayOfferDelete = useMayOfferAssessmentDelete();
 
@@ -139,45 +137,30 @@ export default function CommercialIndustrial() {
   const { rows, loading, refresh, metrics } = useCiAssessments(filters);
   const { generatingId, generate } = useCapacityReport();
 
-  const startAssessment = (property?: { domain: RegisterDomain; propertyId: string } | null) => {
-    setNewForProperty(property ?? null);
-    setNewOpen(true);
-  };
+  const { start: startAssessment, starting } = useStartAssessment();
+  const startingBlank = starting === STARTING_BLANK;
 
   /**
-   * `?new=assessment[&domain=…&propertyId=…]` opens "New assessment" — on that
-   * building when one is named. It is what a property page's "New assessment"
-   * and every old "Send to Calculators" link lead to. The request is READ from
-   * the URL rather than copied into state, and cleared when the dialog closes,
-   * so a refresh after closing does not reopen it.
+   * `?new=assessment[&domain=…&propertyId=…]` is a LINK asking for a new
+   * assessment: the old "Send to Calculators" links and the ones this page used
+   * to open a dialog from. A link never creates a record, because a refresh,
+   * the Back button or a bookmark is not somebody asking for one. A link
+   * naming a building goes to that building's page, where "New assessment"
+   * starts one of it in one click. One naming no building is simply this list.
+   * Either way the request is REPLACED, so Back does not bring it round again.
    */
   const linkRequest = readNewAssessmentLink(searchParams);
-  const newAssessmentOpen = newOpen || linkRequest !== null;
-  const newAssessmentProperty = linkRequest ? linkRequest.property : newForProperty;
-  const setNewAssessmentOpen = (open: boolean) => {
-    setNewOpen(open);
-    if (!open && linkRequest) setSearchParams((current) => withoutNewAssessmentLink(current), { replace: true });
-  };
-
-  /**
-   * A new assessment opens on the intake pack: the dialog already asked the
-   * type and the name, and the documented flow from there is download the
-   * pack, meet the client, come back and upload it.
-   *
-   * Arriving by a link, the new assessment REPLACES the landing entry that
-   * carried it, so Back returns to where the link was followed from rather than
-   * to a dialog asking to create the assessment again.
-   */
-  const created = (result: NewAssessmentCreated) => {
-    setNewOpen(false);
-    toast({
-      title: 'Assessment created',
-      description: result.filledFromProperty
-        ? `${result.title} — ${result.filledFromProperty} detail${result.filledFromProperty === 1 ? '' : 's'} filled from the property register.`
-        : result.title,
-    });
-    navigate(`/commercial/assessments/${result.id}?step=pack`, { replace: linkRequest !== null });
-  };
+  const hasLinkRequest = linkRequest !== null;
+  const linkedDomain = linkRequest?.property?.domain ?? null;
+  const linkedPropertyId = linkRequest?.property?.propertyId ?? null;
+  useEffect(() => {
+    if (!hasLinkRequest) return;
+    if (linkedDomain && linkedPropertyId) {
+      navigate(registerPropertyPath({ domain: linkedDomain, propertyId: linkedPropertyId }), { replace: true });
+    } else {
+      setSearchParams((current) => withoutNewAssessmentLink(current), { replace: true });
+    }
+  }, [hasLinkRequest, linkedDomain, linkedPropertyId, navigate, setSearchParams]);
 
   const archive = async (row: AssessmentListRow) => {
     const result = row.archived_at
@@ -208,8 +191,11 @@ export default function CommercialIndustrial() {
           </p>
         </div>
         <div className="ci-page-actions">
-          <Button size="sm" onClick={() => startAssessment(null)}>
-            <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" /> New assessment
+          <Button size="sm" onClick={() => void startAssessment()} disabled={starting !== null} aria-busy={startingBlank}>
+            {startingBlank
+              ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+              : <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />}
+            New assessment
           </Button>
         </div>
       </header>
@@ -298,8 +284,11 @@ export default function CommercialIndustrial() {
                     : 'Start one to work through the property, borrower, portfolio and loan structure, then see indicative capacity and portfolio impact.'}
                 </p>
               </div>
-              <Button size="sm" onClick={() => startAssessment(null)}>
-                <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" /> New assessment
+              <Button size="sm" onClick={() => void startAssessment()} disabled={starting !== null} aria-busy={startingBlank}>
+                {startingBlank
+                  ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+                  : <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />}
+                New assessment
               </Button>
             </div>
           ) : (
@@ -448,7 +437,10 @@ export default function CommercialIndustrial() {
 
         {/* ---- Property register ---------------------------------------- */}
         <TabsContent value="properties" className="mt-4">
-          <CommercialPropertyRegister onStartAssessment={(property) => startAssessment(property)} />
+          <CommercialPropertyRegister
+            onStartAssessment={(property) => void startAssessment(property)}
+            starting={starting}
+          />
         </TabsContent>
 
         {/* ---- Portfolio impact ---------------------------------------- */}
@@ -604,13 +596,6 @@ export default function CommercialIndustrial() {
           </div>
         </TabsContent>
       </Tabs>
-
-      <NewAssessmentDialog
-        open={newAssessmentOpen}
-        onOpenChange={setNewAssessmentOpen}
-        initialProperty={newAssessmentProperty}
-        onCreated={created}
-      />
 
       <DeleteAssessmentDialog
         assessment={pendingDelete}

@@ -1,27 +1,23 @@
 /**
- * Starting an assessment, and deleting one.
+ * Deleting an assessment.
  *
- * "New assessment" used to create a record on the click, and there was no way
- * to delete one — so every click that went no further left an undeletable
- * "Untitled assessment" behind. These pin both ends: the dialog creates nothing
- * until it is confirmed, and the delete dialog does exactly what the server
- * decided, saying why when the answer is no.
+ * "New assessment" creates a draft on the click, and there was once no way to
+ * delete one, so every click that went no further left an undeletable
+ * "Untitled assessment" behind. Deletion is what makes creating on the click
+ * safe (`useStartAssessment.test.tsx` pins the click). These pin the delete
+ * dialog: it does exactly what the server decided, and says why when the
+ * answer is no.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 
-const createAssessment = vi.fn();
-const searchClients = vi.fn();
 const previewDeletion = vi.fn();
 const deleteAssessment = vi.fn();
 const archiveAssessment = vi.fn();
 const toast = vi.fn();
 
 vi.mock('@/lib/ciAssessment/assessmentManagement', () => ({
-  createAssessment: (...args: unknown[]) => createAssessment(...args),
-  searchClients: (...args: unknown[]) => searchClients(...args),
   previewDeletion: (...args: unknown[]) => previewDeletion(...args),
   deleteAssessment: (...args: unknown[]) => deleteAssessment(...args),
   archiveAssessment: (...args: unknown[]) => archiveAssessment(...args),
@@ -31,117 +27,16 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ isSuperadmin: false, permissions: [] }),
 }));
 
-const PROPERTY_ID = '6b0f4c1e-9a55-4e3c-9c1b-2f6f1d2b7a10';
-const listCommercial = vi.fn();
-const listIndustrial = vi.fn();
-vi.mock('@/hooks/useCommercialProperties', () => ({
-  commercialApi: { listProperties: (...args: unknown[]) => listCommercial(...args) },
-}));
-vi.mock('@/hooks/useIndustrialProperties', () => ({
-  industrialApi: { listProperties: (...args: unknown[]) => listIndustrial(...args) },
-}));
-
-const { NewAssessmentDialog } = await import('../NewAssessmentDialog');
 const { DeleteAssessmentDialog } = await import('../DeleteAssessmentDialog');
 
-const INDUSTRIAL_BUILDING = {
-  id: PROPERTY_ID, user_id: 'u1', address: '45 Industrial Drive', suburb: 'Wetherill Park', state: 'NSW',
-  postcode: '2164', asset_class: 'industrial', tenure: 'freehold', gst_treatment: 'going_concern',
-  purchase_price: 6_100_000, nla_sqm: 4_200, site_area_sqm: 8_000, outgoings_recoverable: {},
-  industrial_specs: {}, created_at: '', updated_at: '',
-};
-
 beforeEach(() => {
-  createAssessment.mockReset().mockResolvedValue({ data: { id: 'new-1' }, error: null });
-  searchClients.mockReset().mockResolvedValue({ data: [], error: null });
   previewDeletion.mockReset();
   deleteAssessment.mockReset().mockResolvedValue({ data: { id: 'a1', reference: 'CI-202609-AYY4E' }, error: null });
   archiveAssessment.mockReset().mockResolvedValue({ data: { id: 'a1' }, error: null });
-  listCommercial.mockReset().mockResolvedValue({ data: [INDUSTRIAL_BUILDING], error: null });
-  listIndustrial.mockReset().mockResolvedValue({ data: [], error: null });
   toast.mockReset();
 });
 
 afterEach(cleanup);
-
-describe('New assessment', () => {
-  function openDialog(props: Partial<Parameters<typeof NewAssessmentDialog>[0]> = {}) {
-    const onCreated = vi.fn();
-    render(
-      <MemoryRouter>
-        <NewAssessmentDialog open onOpenChange={() => {}} onCreated={onCreated} {...props} />
-      </MemoryRouter>,
-    );
-    return { onCreated };
-  }
-
-  it('creates nothing until it is confirmed', async () => {
-    openDialog();
-    expect(await screen.findByRole('dialog', { name: /new assessment/i })).toBeInTheDocument();
-    expect(createAssessment).not.toHaveBeenCalled();
-  });
-
-  it('creates a named record of the chosen type, and hands back its id', async () => {
-    const { onCreated } = openDialog();
-    fireEvent.change(await screen.findByLabelText(/assessment name/i), { target: { value: '45 Industrial Drive — acquisition' } });
-    fireEvent.click(screen.getByRole('button', { name: /create assessment/i }));
-
-    await waitFor(() => expect(createAssessment).toHaveBeenCalledWith(expect.objectContaining({
-      title: '45 Industrial Drive — acquisition',
-      assessmentType: 'commercial_investment',
-      segment: 'commercial',
-      intendedClientId: null,
-    })));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ id: 'new-1' })));
-  });
-
-  it('starts from the building it was opened for, filling it in and filing it by what it is', async () => {
-    const { onCreated } = openDialog({ initialProperty: { domain: 'commercial', propertyId: PROPERTY_ID } });
-    // The register loads, the building is chosen, and an untouched type follows it.
-    await waitFor(() => expect(screen.getByRole('combobox', { name: /property/i })).toHaveTextContent('45 Industrial Drive'));
-    fireEvent.click(screen.getByRole('button', { name: /create assessment/i }));
-
-    await waitFor(() => expect(createAssessment).toHaveBeenCalled());
-    const input = createAssessment.mock.calls[0][0];
-    expect(input.assessmentType).toBe('industrial_investment');
-    expect(input.segment).toBe('industrial');
-    expect(input.title).toBe('45 Industrial Drive — industrial investment');
-    expect(input.payload.property.address).toBe('45 Industrial Drive');
-    expect(input.payload.property.purchasePrice).toBe(6_100_000);
-    expect(input.payload.property.registerProperty).toMatchObject({ domain: 'commercial', propertyId: PROPERTY_ID });
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ filledFromProperty: expect.any(Number) })));
-  });
-
-  it('records the client it is being prepared for — as an intent, never a link', async () => {
-    searchClients.mockResolvedValue({
-      data: [{ id: 'c1', primary_first_name: 'Marcus', primary_surname: 'Chen', primary_email: 'm@c.test', primary_mobile: null, updated_at: null }],
-      error: null,
-    });
-    openDialog();
-    fireEvent.change(await screen.findByLabelText(/search your clients/i), { target: { value: 'Marcus' } });
-    fireEvent.click(await screen.findByRole('button', { name: /marcus chen/i }, { timeout: 2000 }));
-    fireEvent.click(screen.getByRole('button', { name: /create assessment/i }));
-
-    await waitFor(() => expect(createAssessment).toHaveBeenCalledWith(expect.objectContaining({ intendedClientId: 'c1' })));
-  });
-
-  it('says so when the building it was opened for is not in the register', async () => {
-    openDialog({ initialProperty: { domain: 'industrial', propertyId: PROPERTY_ID } });
-    expect(await screen.findByText(/no longer in your register/i)).toBeInTheDocument();
-  });
-
-  it('starts every opening from a fresh form', async () => {
-    const dialog = (open: boolean) => (
-      <MemoryRouter><NewAssessmentDialog open={open} onOpenChange={() => {}} onCreated={() => {}} /></MemoryRouter>
-    );
-    const view = render(dialog(true));
-    fireEvent.change(await screen.findByLabelText(/assessment name/i), { target: { value: 'Half-typed' } });
-    view.rerender(dialog(false));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    view.rerender(dialog(true));
-    expect(await screen.findByLabelText(/assessment name/i)).toHaveValue('');
-  });
-});
 
 describe('Delete assessment', () => {
   const ASSESSMENT = { id: 'a1', title: 'Untitled assessment', reference: 'CI-202609-AYY4E' };

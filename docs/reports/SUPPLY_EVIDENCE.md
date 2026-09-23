@@ -771,3 +771,17 @@ Every read the planner uses now refuses the run when it fails. The two edge
 reads had discarded their errors, and a failed read taken as "no rows"
 re-establishes a frontier the table already has.
 
+**Observed in production, 23 Sep 2026.** The rule shipped on #2737 (deployed
+10:49 UTC). The first scheduled tick on it, at 11:20 UTC, logged
+`page=0 2024-04→2024-06 frontier=2026-07 proven=2024-07 held=2024-07` and
+answered POST 200 in 8,820 ms. `proven` is the edge the ledger vouches for and
+`held` is `min(period)`, and only this rule logs them. They agree, so
+completed writes vouch for every month from 2026-07 down to 2024-07. That
+covers the rebuild's walk down from 22 Sep and the stalled window §14
+describes. The window asked is the one directly below that edge, which is the
+window the old rule would have asked. That is the "no failures" case above,
+seen on the real ledger rather than a model of it. The counts on that run's
+sync row (`windows_vouching`, and `windows_stale`, where the two rows from
+before the clear should appear) are in the table and not the log, so they are
+not read here.
+

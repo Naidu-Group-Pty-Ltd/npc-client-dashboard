@@ -12,6 +12,8 @@
 //   search_clients | create_client | link_client | unlink_client
 //   client_workspace | intended_client
 //   archive | restore | deletion_preview | delete | audit
+//   list_documents | documents_library | client_documents | document_url
+//   record_template_document
 //
 // Client association is deliberately a separate, explicit operation. Nothing
 // else in this file writes a client_id. The client an assessment was *started
@@ -29,6 +31,22 @@ import {
 } from '../_shared/ciAssessments/deletion.pure.ts';
 import { clientSearchFilters, newClientProblem, sameEmail } from '../_shared/ciAssessments/clientRecords.pure.ts';
 import { REGISTER_PROPERTY_ID_PATH, isUuid } from '../_shared/ciAssessments/registerLink.pure.ts';
+import {
+  DOCUMENT_LINK_TTL_SECONDS,
+  FALLBACK_DOCUMENT_FILE_NAME,
+  clientLinkedAt,
+  documentStorage,
+  documentsForClient,
+  isDocumentLedger,
+  isGenuineTemplateJob,
+  labelDocuments,
+  mayReadDocument,
+  projectIssuedDocuments,
+  templateJobAssessmentId,
+  type CapacityRenderRow,
+  type ClientLinkRow,
+  type TemplateJobRow,
+} from '../_shared/ciAssessments/documents.pure.ts';
 
 /**
  * Client ownership filter, matching the model used by `get-client-data`:
@@ -54,7 +72,8 @@ type Operation =
   | 'save_scenario' | 'list_scenarios'
   | 'complete' | 'search_clients' | 'create_client' | 'link_client' | 'unlink_client'
   | 'client_workspace' | 'intended_client'
-  | 'archive' | 'restore' | 'deletion_preview' | 'delete' | 'audit';
+  | 'archive' | 'restore' | 'deletion_preview' | 'delete' | 'audit'
+  | 'list_documents' | 'documents_library' | 'client_documents' | 'document_url' | 'record_template_document';
 
 /**
  * The module whose `can_delete` permission governs deleting an assessment.
@@ -65,6 +84,24 @@ type Operation =
  * `requireModulePermission`; a lookup that fails refuses.
  */
 const DELETE_PERMISSION_MODULE = 'commercial';
+
+/**
+ * What the document readers select from each ledger — the columns
+ * `documents.pure.ts` reads, and no more. `storage_path` travels to the
+ * projection (it decides `downloadable`) and never to the browser.
+ */
+const RENDER_DOCUMENT_COLUMNS =
+  'id, assessment_id, status, file_name, storage_bucket, storage_path, bytes, page_count, has_analysis, analysis_note, error, created_at';
+const TEMPLATE_DOCUMENT_COLUMNS =
+  'id, status, file_name, storage_path, bytes, page_count, template_name, error, created_at, requested_by, metadata';
+const LINK_HISTORY_COLUMNS = 'assessment_id, client_id, linked_at, unlinked_at';
+
+/** Assessment ids per ledger query, and rows per batch. */
+const LEDGER_ID_BATCH = 50;
+const LEDGER_ROWS_PER_BATCH = 500;
+
+/** How many of the caller's assessments Generated Reports reads documents for. */
+const DOCUMENT_LIBRARY_ASSESSMENTS = 500;
 
 const VALID_STATUSES = new Set([
   'draft', 'data_entry', 'ready_to_calculate', 'calculated',
@@ -150,6 +187,11 @@ interface RequestBody {
   propertyId?: string;
   /** `delete` — the reference, typed back, for a completed assessment. */
   confirmReference?: string;
+  /** `document_url` — which ledger recorded the document, and its row. */
+  ledger?: string;
+  documentId?: string;
+  /** `record_template_document` — where `render-template-pdf` stored the file. */
+  storagePath?: string;
 }
 
 function json(body: unknown, status: number, cors: Record<string, string>) {
@@ -459,6 +501,114 @@ Deno.serve(async (req) => {
       source: data.event_type === 'client_created' ? 'created' as const : 'intended' as const,
       recordedAt: String(data.created_at),
     };
+  }
+
+  /**
+   * Both report ledgers, and the link history, for a set of assessments.
+   *
+   * `scope` names each assessment's OWNER, because a template job counts only
+   * when the owner requested it (`isGenuineTemplateJob`). The ids are read in
+   * batches so a long list cannot grow a request URL past what the gateway
+   * accepts.
+   *
+   * A ledger table missing from this deployment holds no documents, and says so
+   * by being empty rather than by taking the page down. Any other failed read
+   * throws: a failed read is not an empty ledger, and reporting "no documents"
+   * for an assessment that has them is the answer this module exists to stop.
+   */
+  async function readDocumentLedgers(scope: ReadonlyArray<{ id: string; userId: string }>) {
+    const owners = new Map(scope.map((row) => [row.id, row.userId]));
+    const ids = [...owners.keys()];
+    if (!ids.length) {
+      return { renders: [] as CapacityRenderRow[], templateJobs: [] as TemplateJobRow[], links: [] as ClientLinkRow[] };
+    }
+    const batches: string[][] = [];
+    for (let at = 0; at < ids.length; at += LEDGER_ID_BATCH) batches.push(ids.slice(at, at + LEDGER_ID_BATCH));
+
+    const [renderPages, jobPages, linkPages] = await Promise.all([
+      Promise.all(batches.map((batch) => supabase
+        .from('commercial_industrial_report_renders')
+        .select(RENDER_DOCUMENT_COLUMNS)
+        .in('assessment_id', batch)
+        .order('created_at', { ascending: false })
+        .limit(LEDGER_ROWS_PER_BATCH))),
+      Promise.all(batches.map((batch) => supabase
+        .from('template_render_jobs')
+        .select(TEMPLATE_DOCUMENT_COLUMNS)
+        .eq('mode', 'final')
+        .in('metadata->>report_id', batch)
+        .order('created_at', { ascending: false })
+        .limit(LEDGER_ROWS_PER_BATCH))),
+      Promise.all(batches.map((batch) => supabase
+        .from('commercial_industrial_assessment_client_links')
+        .select(LINK_HISTORY_COLUMNS)
+        .in('assessment_id', batch)
+        .limit(LEDGER_ROWS_PER_BATCH))),
+    ]);
+
+    const rowsOf = <T>(
+      pages: ReadonlyArray<{ data: unknown; error: { code?: string; message?: string } | null }>,
+      optional: boolean,
+    ): T[] => {
+      const rows: T[] = [];
+      for (const page of pages) {
+        if (page.error) {
+          if (optional && isMissingRelation(page.error)) continue;
+          throw page.error;
+        }
+        rows.push(...((page.data ?? []) as T[]));
+      }
+      return rows;
+    };
+
+    const templateJobs = rowsOf<TemplateJobRow>(jobPages, true).filter((job) => {
+      const assessmentId = templateJobAssessmentId(job);
+      const owner = assessmentId ? owners.get(assessmentId) : undefined;
+      return Boolean(assessmentId && owner && isGenuineTemplateJob(job, { id: assessmentId, userId: owner }));
+    });
+
+    return {
+      renders: rowsOf<CapacityRenderRow>(renderPages, true),
+      templateJobs,
+      links: rowsOf<ClientLinkRow>(linkPages, false),
+    };
+  }
+
+  /**
+   * Every document drawn for ONE client, from both report ledgers.
+   *
+   * Reading documents through the assessments linked NOW moved a client's
+   * history to whichever client an assessment was relinked to, while each PDF
+   * still names the first (G7), and never saw a document drawn through a report
+   * template (G4). This follows the link history instead: an assessment linked
+   * to this client at any time contributes the documents drawn WHILE it was,
+   * and nothing drawn for anybody else.
+   *
+   * `linkedNow` saves a read for the assessments the caller already has;
+   * `history` is the client's link rows, current and closed.
+   */
+  async function documentsForClientRecord(
+    clientId: string,
+    linkedNow: ReadonlyArray<Record<string, any>>,
+    history: ReadonlyArray<{ assessment_id: string }>,
+  ) {
+    const known = new Map<string, Record<string, any>>(linkedNow.map((row) => [String(row.id), row]));
+    const everLinked = [...new Set([...known.keys(), ...history.map((row) => row.assessment_id)])];
+    const missing = everLinked.filter((id) => !known.has(id));
+    for (let at = 0; at < missing.length; at += LEDGER_ID_BATCH) {
+      const { data: moved, error: movedError } = await supabase
+        .from('commercial_industrial_assessments')
+        .select('id, user_id, reference, title')
+        .in('id', missing.slice(at, at + LEDGER_ID_BATCH));
+      if (movedError) throw movedError;
+      for (const row of (moved ?? []) as Array<Record<string, any>>) known.set(String(row.id), row);
+    }
+    const scope = everLinked
+      .map((id) => known.get(id))
+      .filter((row): row is Record<string, any> => Boolean(row))
+      .map((row) => ({ id: String(row.id), userId: String(row.user_id), reference: row.reference, title: row.title }));
+    const ledgers = await readDocumentLedgers(scope);
+    return labelDocuments(documentsForClient(projectIssuedDocuments(ledgers), clientId), scope);
   }
 
   try {
@@ -1192,7 +1342,27 @@ Deno.serve(async (req) => {
           runs = runsRes.data ?? [];
           renders = rendersRes.data ?? [];
           links = linksRes.data ?? [];
+        } else {
+          // Nothing is linked now, but something may have been: the documents
+          // below follow the link HISTORY, so it is read either way.
+          const { data: historic, error: historicError } = await supabase
+            .from('commercial_industrial_assessment_client_links')
+            .select('id, assessment_id, linked_at, unlinked_at, applied_changes')
+            .eq('client_id', body.clientId)
+            .order('linked_at', { ascending: false })
+            .limit(100);
+          if (historicError) throw historicError;
+          links = historic ?? [];
         }
+
+        // `renders` above is the legacy reading — the direct route's rows for
+        // the assessments linked NOW — kept only because a frontend published
+        // before this server still reads it. `documents` is the one to read.
+        const documents = await documentsForClientRecord(
+          body.clientId,
+          (assessments ?? []) as Array<Record<string, any>>,
+          links as Array<{ assessment_id: string }>,
+        );
 
         /**
          * Assessments that belong to this client but are not linked to them.
@@ -1265,7 +1435,7 @@ Deno.serve(async (req) => {
 
         return json({
           success: true,
-          data: { client, assessments: assessmentRows, runs, renders, links, uploads, candidates },
+          data: { client, assessments: assessmentRows, runs, renders, documents, links, uploads, candidates },
         }, 200, corsHeaders);
       }
 
@@ -1490,6 +1660,226 @@ Deno.serve(async (req) => {
           .limit(200);
         if (error) throw error;
         return json({ success: true, data }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // Every document this assessment has issued, from both report ledgers —
+      // including the ones that failed, and why. See `documents.pure.ts`.
+      case 'list_documents': {
+        if (!isUuid(body.assessmentId)) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const ledgers = await readDocumentLedgers([{ id: existing.id, userId: existing.user_id }]);
+        return json({ success: true, data: projectIssuedDocuments(ledgers) }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // Every document the caller's own assessments have issued — Generated
+      // Reports' Commercial & Industrial tab. Scoped to the caller's
+      // assessments, the rule every list in this module follows.
+      case 'documents_library': {
+        const { data: assessments, error: assessmentsError } = await supabase
+          .from('commercial_industrial_assessments')
+          .select('id, user_id, reference, title, status, segment, archived_at')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false })
+          .limit(DOCUMENT_LIBRARY_ASSESSMENTS);
+        if (assessmentsError) throw assessmentsError;
+        const rows = ((assessments ?? []) as Array<Record<string, any>>).map((row) => ({
+          id: String(row.id), userId: String(row.user_id), reference: row.reference, title: row.title,
+        }));
+
+        const ledgers = await readDocumentLedgers(rows);
+        const documents = labelDocuments(projectIssuedDocuments(ledgers), rows);
+
+        // The name of the client each document was drawn for — only where this
+        // caller may still reach that client. A document keeps its client
+        // either way; a name the caller may no longer see is not sent.
+        const clientIds = [...new Set(documents.map((doc) => doc.clientId).filter((id): id is string => Boolean(id)))];
+        let clients: unknown[] = [];
+        if (clientIds.length) {
+          let query = supabase
+            .from('clients')
+            .select('id, primary_first_name, primary_surname')
+            .in('id', clientIds.slice(0, 200));
+          if (await resolveClientScope() === 'own') query = query.or(clientOwnershipFilter(userId));
+          const { data: clientRows, error: clientError } = await query;
+          if (clientError) throw clientError;
+          clients = clientRows ?? [];
+        }
+
+        return json({ success: true, data: { documents, clients } }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // The documents drawn for one client — the client record's Reports tab.
+      // Access follows the client, exactly as `client_workspace` does.
+      case 'client_documents': {
+        if (!isUuid(body.clientId)) return fail('clientId is required', 400, corsHeaders);
+        const client = await loadReachableClient(body.clientId);
+        if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
+
+        const [linkedRes, historyRes] = await Promise.all([
+          supabase
+            .from('commercial_industrial_assessments')
+            .select('id, user_id, reference, title')
+            .eq('client_id', body.clientId)
+            .limit(100),
+          supabase
+            .from('commercial_industrial_assessment_client_links')
+            .select('assessment_id')
+            .eq('client_id', body.clientId)
+            .limit(100),
+        ]);
+        if (linkedRes.error) throw linkedRes.error;
+        if (historyRes.error) throw historyRes.error;
+
+        const documents = await documentsForClientRecord(
+          body.clientId,
+          (linkedRes.data ?? []) as Array<Record<string, any>>,
+          (historyRes.data ?? []) as Array<{ assessment_id: string }>,
+        );
+        return json({ success: true, data: documents }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // A short-lived link to one issued document's file.
+      //
+      // The owner may read any of their assessment's documents. Anyone else
+      // only through a client they may reach, and only a document drawn while
+      // the assessment was linked to that client (`mayReadDocument`). Anything
+      // else is answered exactly as a document that does not exist.
+      case 'document_url': {
+        const ledger = body.ledger;
+        if (!isUuid(body.assessmentId) || !isDocumentLedger(ledger) || !isUuid(body.documentId)) {
+          return fail('assessmentId, ledger and documentId are required', 400, corsHeaders);
+        }
+
+        const { data: assessment, error: assessmentError } = await supabase
+          .from('commercial_industrial_assessments')
+          .select('id, user_id')
+          .eq('id', body.assessmentId)
+          .maybeSingle();
+        if (assessmentError) throw assessmentError;
+        if (!assessment) return fail('Document not found', 404, corsHeaders, 'NOT_FOUND');
+
+        let row: (CapacityRenderRow | TemplateJobRow) | null = null;
+        if (ledger === 'capacity_report') {
+          const { data, error } = await supabase
+            .from('commercial_industrial_report_renders')
+            .select(RENDER_DOCUMENT_COLUMNS)
+            .eq('id', body.documentId)
+            .eq('assessment_id', assessment.id)
+            .maybeSingle();
+          if (error) throw error;
+          row = (data as CapacityRenderRow | null) ?? null;
+        } else {
+          const { data, error } = await supabase
+            .from('template_render_jobs')
+            .select(TEMPLATE_DOCUMENT_COLUMNS)
+            .eq('id', body.documentId)
+            .eq('mode', 'final')
+            .eq('metadata->>report_id', assessment.id)
+            .maybeSingle();
+          if (error) throw error;
+          const job = (data as TemplateJobRow | null) ?? null;
+          row = job && isGenuineTemplateJob(job, { id: assessment.id, userId: assessment.user_id }) ? job : null;
+        }
+        if (!row) return fail('Document not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const callerOwnsAssessment = assessment.user_id === userId;
+        let allowed = callerOwnsAssessment;
+        if (!allowed && isUuid(body.clientId)) {
+          const client = await loadReachableClient(body.clientId);
+          if (client) {
+            const { data: links, error: linksError } = await supabase
+              .from('commercial_industrial_assessment_client_links')
+              .select(LINK_HISTORY_COLUMNS)
+              .eq('assessment_id', assessment.id)
+              .limit(LEDGER_ROWS_PER_BATCH);
+            if (linksError) throw linksError;
+            allowed = mayReadDocument({
+              callerOwnsAssessment,
+              viaClientId: body.clientId,
+              clientReachable: true,
+              documentClientId: clientLinkedAt((links ?? []) as ClientLinkRow[], assessment.id, row.created_at),
+            });
+          }
+        }
+        if (!allowed) return fail('Document not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const stored = documentStorage(ledger, row);
+        if (!stored) {
+          return fail('This document has no stored file to download.', 409, corsHeaders, 'NOT_DOWNLOADABLE');
+        }
+        const { data: signed, error: signError } = await supabase.storage
+          .from(stored.bucket)
+          .createSignedUrl(stored.path, DOCUMENT_LINK_TTL_SECONDS);
+        if (signError || !signed?.signedUrl) {
+          console.error('[manage-ci-assessments] document could not be signed', ledger, row.id, signError?.message);
+          return fail('The stored document could not be fetched. Try again shortly.', 502, corsHeaders, 'STORAGE_UNAVAILABLE');
+        }
+        return json({
+          success: true,
+          data: {
+            url: signed.signedUrl,
+            fileName: row.file_name?.trim() || FALLBACK_DOCUMENT_FILE_NAME,
+            expiresInSeconds: DOCUMENT_LINK_TTL_SECONDS,
+          },
+        }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // The audit event for a document drawn through a report template.
+      //
+      // `render-commercial-capacity-pdf` writes `report_generated` itself; a
+      // template render happens in a function that knows nothing of
+      // assessments, so the app reports it here and this function checks the
+      // report against the ledger before recording anything: the job must be a
+      // finished FINAL render of THIS assessment, requested by its owner, at
+      // the path the app names. Written once per job however often it is
+      // reported.
+      case 'record_template_document': {
+        const storagePath = typeof body.storagePath === 'string' ? body.storagePath.trim() : '';
+        if (!isUuid(body.assessmentId) || !storagePath) {
+          return fail('assessmentId and storagePath are required', 400, corsHeaders);
+        }
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const { data: job, error: jobError } = await supabase
+          .from('template_render_jobs')
+          .select('id, status, file_name, template_name, page_count, requested_by, metadata')
+          .eq('storage_path', storagePath)
+          .eq('mode', 'final')
+          .eq('requested_by', userId)
+          .eq('metadata->>report_id', existing.id)
+          .maybeSingle();
+        if (jobError) throw jobError;
+        if (!job || job.status !== 'succeeded') {
+          return fail('No finished template document matches that file.', 404, corsHeaders, 'NOT_FOUND');
+        }
+
+        const { data: prior, error: priorError } = await supabase
+          .from('commercial_industrial_assessment_audit_events')
+          .select('id')
+          .eq('assessment_id', existing.id)
+          .eq('event_type', 'report_generated')
+          .eq('detail->>templateJobId', job.id)
+          .limit(1);
+        if (priorError) throw priorError;
+        if (!prior?.length) {
+          await writeAudit(existing.id, 'report_generated', {
+            route: 'template',
+            templateJobId: job.id,
+            fileName: job.file_name,
+            templateName: job.template_name ?? null,
+            pageCount: job.page_count ?? null,
+            clientId: existing.client_id ?? null,
+          });
+        }
+        return json({ success: true, data: { recorded: true } }, 200, corsHeaders);
       }
 
       // ---------------------------------------------------------------------

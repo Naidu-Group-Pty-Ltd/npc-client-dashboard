@@ -3,8 +3,8 @@
 Read this before touching `/commercial`, `/calculators`, anything under
 `src/components/commercial/` or `src/lib/ciAssessment/`, or
 `manage-ci-assessments`. It records the September 2026 audit: what the module
-was, what it is now, the rules that keep it safe, and what the reporting
-workstream will have to do. It supersedes
+was, what it is now, the rules that keep it safe, and how its reports are
+recorded, found and downloaded (§6). It supersedes
 [`ANALYSIS_WORKSPACE.md`](./ANALYSIS_WORKSPACE.md), which describes the
 standalone workspace this retired.
 
@@ -320,71 +320,154 @@ the client record** (§8).
   calculation run and recorded in one of two ledgers. It is not linked to the
   client directly (§6, G7).
 
-## 6. Reports and templates: what is kept, and what the reporting workstream inherits
+## 6. Reports: one record per document, one reader, and where each is found
 
-**Nothing in report generation was changed.** That was the instruction, and
-this audit kept to it:
+The first pass of this work changed nothing in report generation and recorded
+nine gaps (G1–G9) for the reporting workstream. They are closed here. The two
+that were decisions (G6, G7) are taken and stated below. The render paths
+themselves — the document, the engine, the template picker — are unchanged.
 
-- `useCapacityReport`, `render-commercial-capacity-pdf` and the template route
-  are untouched.
-- `ReportTemplateSelector` is still offered wherever a C&I report is generated:
-  the landing's Reports tab, the Results step and the client's C&I tab.
-- The Results step's Generate is the same call it was.
+### Two routes, two ledgers, one reader
 
-The only report-adjacent change is read-only: deletion reads both ledgers
-(§3), so a document can never lose the assessment it was issued from.
+A Capacity Report is drawn one of two ways, and each route records what it
+drew in its own ledger:
 
-The request was that a C&I report should eventually appear in **Generated
-Reports**, categorised as a C&I Report. Doing that means closing these gaps
-first. Each is recorded as it stands, not fixed:
+| Route | Ledger | Bucket |
+| --- | --- | --- |
+| `render-commercial-capacity-pdf` | `commercial_industrial_report_renders` | `client-files` |
+| a report template, through `render-template-pdf` | `template_render_jobs` (`mode = 'final'`, the assessment in `metadata.report_id`) | `investment-reports` |
 
-- **G1. C&I reports never appear in Generated Reports.** `GeneratedReports.tsx`
-  reads `get-investment-reports` (`investment_reports`) and `property_comparisons`
-  only. Its vocabulary (tabs, scope, tier) has no C&I slot.
-- **G2. A stored PDF cannot be downloaded again.** No screen offers it.
-  `render-commercial-capacity-pdf` writes no `storage_object_bindings` row, and
-  `LEGACY_FALLBACK_BUCKETS` is now empty ("a missing binding now fails closed",
-  `_shared/storageAuthz.ts`). So a `secure-storage` read of those paths is
-  refused for anyone but a superadmin.
-- **G3. A standalone assessment's renders appear nowhere.** The only reader of
-  `commercial_industrial_report_renders` is `client_workspace`, which needs a
-  client and reads assessments currently linked to it. `get` and `list` return
-  no renders.
-- **G4. The template route skips the C&I ledger and audit event.** A production
-  template is active for `commercial_capacity`, and `useCapacityReport` tries
-  `tryTemplateDocument('commercial_capacity', …)` **first**. When it succeeds,
-  the PDF comes from `render-template-pdf` into `template_render_jobs`, and no
-  `commercial_industrial_report_renders` row or `report_generated` event is
-  written. Every reader of the C&I ledger misses those documents.
-  `compassRoute.ts` warns about exactly this bypass.
-- **G5. The client's Reports and Files tabs leave C&I out.** `ClientReportKind`
-  (`clientReportInventory.pure.ts`) has no C&I kind, and the inventory reads
-  `client_files`, `investment_reports`, `borrowing_capacity_assessments`,
-  `portfolio_analysis_reports` and `client_portal_reports` only. No `client_files`
-  row is ever written for a C&I report.
-- **G6. Access differs between the client tab and the render.** `client_workspace`
-  follows the client, but the render route is owner-only. A colleague sees
-  Generate and is answered "not found".
-- **G7. Render history moves with the link.** Renders carry no `client_id`, so
-  relinking an assessment moves its render history to another client's tab,
-  though each PDF names the client that was linked when it was drawn.
-- **G8. `report_generated` is never shown.** `ciAssessmentApi.audit` has no UI
-  caller.
-- **G9. Some failures leave no ledger row.** A refusal, or a failure before the
-  render row is inserted, leaves nothing. The insert's own error is also ignored.
+`useCapacityReport` tries the template route first, so wherever a template is
+active most documents were in the second ledger, and every reader of the first
+missed them (G4). The fix is not to copy one ledger into the other.
+`report_render_coverage` counts both tables, so a copy would count every
+templated document twice. Each document is recorded once, where it was drawn,
+and `_shared/ciAssessments/documents.pure.ts` is the one place that reads the
+two as a single list. Every surface below goes through it.
 
-**A suggested order for that workstream.** This is a suggestion, not a decision
-made here.
+Two rules there matter:
 
-1. Record every C&I document once, whichever route drew it (G4, G9).
-2. Give it a binding and a download (G2).
-3. Surface it from the assessment itself, linked or not (G3).
-4. Only then add it to Generated Reports and the client's Reports tab as its own
-   kind (G1, G5). A list that shows half of the documents is worse than one that
-   shows none.
+- **A template job counts only if the assessment's owner requested it.**
+  `render-template-pdf` accepts HTML and a report id from any signed-in user,
+  so a job naming an assessment proves only that somebody sent its id. The
+  adapter that draws this format reads the assessment through its owner-scoped
+  `get`, so a genuine job is the owner's (`isGenuineTemplateJob`).
+- **A render still `running` after 15 minutes "did not finish".** The window is
+  the delete rule's own, imported rather than restated, so the Documents panel
+  and the delete dialog cannot disagree.
 
-G6 and G7 are access and ownership decisions to take with the client record's
-owners.
+### Every attempt leaves a row (G9)
+
+`render-commercial-capacity-pdf` now writes its row straight after the
+refusals, before the model call, the brand, the document build and the engine.
+A failure in any of them is recorded with its reason. If the row cannot be
+written, the render stops: a document that exists in no ledger can never be
+listed, downloaded again or accounted for. The WeasyPrint configuration check
+moved to just after the record, so "the report never arrived" has an answer on
+a misconfigured deployment too. The analysis and brand facts are written on the
+final update, whether it succeeded or failed.
+
+A refusal (not found, not completed, no calculation run) still writes nothing,
+deliberately. It is an answer to the caller rather than an attempt, and an
+assessment that is not the caller's must not gain a row about it.
+
+One consequence is deliberate. The ledger holds its rows with
+`ON DELETE RESTRICT`, so an assessment with any recorded attempt is archived
+rather than deleted (§3's `report_requested`). That rule already applied to a
+render that failed at the engine. It now also applies to one that failed
+earlier, including on a deployment with no WeasyPrint configured. A request is
+a record whether or not a document came of it, and archiving can be undone.
+
+The template route now gets its `report_generated` audit event too.
+`useCapacityReport` reports the stored path, and `record_template_document`
+checks it against the template ledger before writing anything: it must be a
+finished final render of this assessment, requested by its owner. The event is
+written once per job. A document the browser drew as a stand-in while the print
+engine was down was never stored, so there is nothing to record or download
+again; the notice at the time says so.
+
+### Downloading again (G2)
+
+`document_url` on `manage-ci-assessments` signs a five-minute link to the file
+stored when the document was produced. Nothing is re-rendered: a second render
+reads today's brand and today's analysis, so it would not be the document the
+client was sent.
+
+It does not go through `secure-storage`, and no storage binding is written.
+None of this product's rendered reports writes one. A binding would also open
+a second read path beside this module's, with a different rule (the client's
+creator, or a finance assignment). One document, one rule.
+
+### Where a document is found
+
+- **The assessment (G3, G8).** The Results step has a Documents panel listing
+  every document from both routes. Each shows its state, route and page count,
+  the reason if it failed, and Download once it is finished. Beneath it,
+  Activity shows the assessment's audit trail in words, which no screen showed
+  before. An event type it does not know reads "Change recorded", never its
+  database name.
+- **The client's Commercial / Industrial tab (G7).** This lists the documents
+  drawn FOR this client. Renders carry no client, and reading them through the
+  current link moved a client's history to whichever client an assessment was
+  relinked to, while each PDF still names the first. The link history already
+  says who a document belonged to: the client whose link was open when it was
+  drawn (`clientLinkedAt`), or nobody when none was. An assessment linked here
+  once still contributes what was drawn while it was.
+- **The client's Reports tab (G5).** Commercial & Industrial is a new kind,
+  added as a sixth source after the five so no existing row moves.
+  - It downloads through `document_url`.
+  - It is not offered for the portal, which has no route to the file. Its
+    publish verdict says so, where a missing file reference would otherwise
+    have produced "nothing has been generated".
+  - Generated PDFs are deliberately not added to the Files tab. That tab lists
+    uploads with a Delete beside each one, and these files are evidence.
+- **Generated Reports (G1).** A Commercial & Industrial tab, gated on the
+  module the way the Comparisons tab is gated on its capability. The tab, its
+  read and the `?tab=commercial` deep link go together.
+  - A capability still loading resolves to `enabled: false`, and the
+    resolver's own contract is that this is "a skeleton, not a denial". The
+    deep link and the open tab are taken away only once the capability is
+    decided; otherwise a bookmark opened while permissions load lands on
+    Investment every time. The `?tab=comparisons` redirect beside it had the
+    same fault and has the same guard.
+  - A third tab card does not fit three to a row at every width the page
+    gets: the sidebar takes 16rem from 768px up. So three cards wrap as many
+    to a row as fit and their text wraps inside them. Measured, all three sit
+    on one row from a 1280px screen up, and none clips its text at any width.
+    One or two tabs render exactly as before. On a phone the tabs are a strip
+    that scrolls sideways, so the strip brings the open tab into view.
+  - It lists the documents from the caller's own assessments.
+  - It names the client each was drawn for, where the caller may still reach
+    that client, and opens the assessment.
+  - It is its own tab over its own reader. Pushed through the investment
+    pipeline, these rows would be read and grouped as Compass reports
+    (`normalizeReportVariant`).
+
+### Who may do what (G6)
+
+- **Generating a report stays with the assessment's owner**, and so does
+  opening the assessment. On the client tab both are offered only on the
+  caller's own assessments. On a colleague's, the cell says "Another adviser's
+  assessment" instead of offering buttons the server would answer "not found".
+- **Downloading follows the client.** Anyone who may see a client may download
+  what was issued to that client, the rule `client_workspace` already applied
+  to listing it. Only a document drawn while the assessment was linked to that
+  client qualifies (`mayReadDocument`). Anything else gets exactly the answer a
+  document that does not exist would.
+
+### What `client_workspace` still sends
+
+The response still carries `renders`, the direct route's rows for the
+assessments linked now. This frontend no longer reads it; it is kept because a
+frontend published before this server still does. `documents` is the field to
+read. Remove `renders` once no deployment serves the older frontend.
+
+### Not done here
+
+- A C&I report cannot be published to the client portal. Whether it should,
+  and through which path, is a product decision.
+- Generated Reports lists only the caller's own documents, the rule every list
+  in this module follows. A team-wide view would need a new access rule.
 
 ## 7. How this reaches the clones
 
@@ -459,4 +542,12 @@ into each clone's Supabase project. The lineage is in
 | `components/commercial/assessment/__tests__/clientCreateAndLink.test.tsx` | Creating, matching and linking a client. |
 | `pages/calculators/__tests__/commercialIndustrialWorkspace.test.tsx` | The redirects, as the router renders them. It reads no other file, so it can travel to the clones (§7). |
 | `lib/navigation/__tests__/registry.spec.ts` | The module guard on every C&I route, the retired `/calculators` routes included. Pre-existing. |
-| `pages/commercial/__tests__/commercialModule.test.tsx` | The landing, the step order, the optional step, in-app client creation, archive/delete with the record. |
+| `pages/commercial/__tests__/commercialModule.test.tsx` | The landing, the step order, the optional step, in-app client creation, archive/delete with the record, the Results step's Documents panel. |
+| `lib/ciAssessment/__tests__/issuedDocuments.test.ts` | Both ledgers as one list; the client a document belongs to, through a relink; the did-not-finish window is the delete rule's; the buckets the two render functions actually write to. |
+| `lib/ciAssessment/__tests__/documentDownload.test.ts` | A re-download is the stored file, never a re-render, sent through the client it was reached from. |
+| `lib/ciAssessment/__tests__/assessmentActivity.test.ts` | A phrase for every audit event the functions write, read from their source; no database name ever reaches the page. |
+| `hooks/__tests__/useCapacityReportDocuments.test.tsx` | The template route's audit event (and none for a browser stand-in); the end of every render announced, failures included. |
+| `components/clients/__tests__/clientCommercialIndustrialTab.test.tsx` | The documents drawn for this client, downloaded through it; generating and opening only on the caller's own assessments. |
+| `lib/reports/__tests__/clientReportInventoryCommercial.spec.ts` | The Reports tab's sixth source, appended after the five; not offered for the portal, and why. |
+| `components/reports/library/__tests__/commercialDocumentsPanel.test.tsx` | Generated Reports' C&I tab in every state; the tab only with the module; on a phone, the open tab is brought into view by scrolling the tab strip, never the page. |
+| `lib/entitlements/__tests__/gatingContracts.spec.ts` | The C&I tab, its read and its deep link gated on the module; the Reports tab's read too; a capability still loading takes nothing away, on this tab or on Comparisons. |

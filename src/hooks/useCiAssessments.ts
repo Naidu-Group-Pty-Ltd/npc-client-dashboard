@@ -15,6 +15,7 @@ import {
   type AssessmentStatus,
 } from '@/lib/ciAssessment/types';
 import type { AssessmentResult } from '@/lib/ciAssessment/engine';
+import type { DocumentLedger, IssuedDocument, ListedDocument } from '@/lib/ciAssessment/issuedDocuments';
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -101,6 +102,11 @@ export interface ClientCiWorkspace {
     policy_version: string;
     created_at: string;
   }>;
+  /**
+   * The direct route's renders for the assessments linked NOW. Legacy: kept by
+   * the server for a frontend published before `documents`, and read by
+   * nothing here. It missed every templated document and followed a relink.
+   */
   renders: Array<{
     id: string;
     assessment_id: string;
@@ -112,6 +118,12 @@ export interface ClientCiWorkspace {
     analysis_note: string | null;
     created_at: string;
   }>;
+  /**
+   * Every document drawn for THIS client, from both report ledgers, including
+   * assessments linked here once and since moved on. Absent from a server
+   * deployed before it, which is why every reader defaults it.
+   */
+  documents?: ListedDocument[];
   links: Array<{
     id: string;
     assessment_id: string;
@@ -156,6 +168,13 @@ export interface ClientCiWorkspace {
     maximum_indicative_loan: number | null;
     updated_at: string;
   }>;
+}
+
+/** Generated Reports' Commercial & Industrial tab: the caller's own documents. */
+export interface DocumentsLibrary {
+  documents: ListedDocument[];
+  /** The clients those documents were drawn for, where the caller may still reach them. */
+  clients: Array<{ id: string; primary_first_name: string | null; primary_surname: string | null }>;
 }
 
 export interface AuditEventRow {
@@ -310,6 +329,35 @@ export const ciAssessmentApi = {
 
   audit: (assessmentId: string) =>
     call<AuditEventRow[]>('audit', { assessmentId }).then(unwrap),
+
+  /** Every document this assessment has issued, from both report ledgers. */
+  listDocuments: (assessmentId: string) =>
+    call<IssuedDocument[]>('list_documents', { assessmentId }).then(unwrap),
+
+  /** Every document the caller's own assessments have issued. */
+  documentsLibrary: () =>
+    call<DocumentsLibrary>('documents_library', {}).then(unwrap),
+
+  /** Every document drawn for one client — the client record's Reports tab. */
+  clientDocuments: (clientId: string) =>
+    call<ListedDocument[]>('client_documents', { clientId }).then(unwrap),
+
+  /**
+   * A short-lived link to one document's file. `clientId` is the way in for
+   * somebody who does not own the assessment: the client they reached it
+   * through, which the server checks the document was drawn for.
+   */
+  documentUrl: (input: { assessmentId: string; ledger: DocumentLedger; documentId: string; clientId?: string | null }) =>
+    call<{ url: string; fileName: string; expiresInSeconds: number }>('document_url', {
+      assessmentId: input.assessmentId,
+      ledger: input.ledger,
+      documentId: input.documentId,
+      ...(input.clientId ? { clientId: input.clientId } : {}),
+    }).then(unwrap),
+
+  /** Record the audit event for a document drawn through a report template. */
+  recordTemplateDocument: (input: { assessmentId: string; storagePath: string }) =>
+    call<{ recorded: boolean }>('record_template_document', input).then(unwrap),
 };
 
 // ---------------------------------------------------------------------------

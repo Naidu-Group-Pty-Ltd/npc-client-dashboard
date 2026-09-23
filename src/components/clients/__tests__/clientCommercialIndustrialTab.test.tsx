@@ -14,12 +14,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const clientWorkspace = vi.fn();
 const generate = vi.fn();
+const downloadIssuedDocument = vi.fn();
+let currentUser: { id: string; username: string; role: string } | null = { id: 'u1', username: 'adviser', role: 'user' };
 
 vi.mock('@/hooks/useCiAssessments', () => ({
   ciAssessmentApi: { clientWorkspace: (...args: unknown[]) => clientWorkspace(...args) },
 }));
 vi.mock('@/hooks/useCapacityReport', () => ({
   useCapacityReport: () => ({ generatingId: null, generate }),
+}));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: currentUser }) }));
+vi.mock('@/lib/ciAssessment/documentDownload', () => ({
+  downloadIssuedDocument: (...args: unknown[]) => downloadIssuedDocument(...args),
 }));
 const navigate = vi.fn();
 vi.mock('react-router-dom', async () => ({
@@ -57,11 +63,20 @@ const WORKSPACE = {
     maximum_indicative_loan: 3_055_219, engine_version: '1.0.0', policy_version: '1.0.0',
     created_at: '2026-08-05T00:30:00.000Z',
   }],
+  // The legacy reading the server still sends for an older frontend. The tab
+  // reads `documents`; one test below proves it ignores this.
   renders: [{
     id: 'render-1', assessment_id: 'a-linked', status: 'succeeded',
     file_name: 'Commercial_Capacity_Report_CI_202608_AAAA_2026-08-05.pdf',
     page_count: 17, bytes: 84_000, has_analysis: true, analysis_note: null,
     created_at: '2026-08-05T01:10:00.000Z',
+  }],
+  documents: [{
+    ledger: 'capacity_report', id: 'render-1', assessmentId: 'a-linked', state: 'ready',
+    fileName: 'Commercial_Capacity_Report_CI_202608_AAAA_2026-08-05.pdf',
+    createdAt: '2026-08-05T01:10:00.000Z', pageCount: 17, bytes: 84_000, hasAnalysis: true,
+    analysisNote: null, templateName: null, error: null, clientId: 'c1a2b3c4-d5e6-4f70-8123-456789abcdef',
+    downloadable: true, assessmentReference: 'CI-202608-AAAA', assessmentTitle: 'Foundry Link acquisition',
   }],
   links: [{ id: 'link-1', assessment_id: 'a-linked', linked_at: '2026-08-05T01:00:00.000Z', unlinked_at: null, applied_changes: [] }],
   uploads: [
@@ -79,7 +94,9 @@ const WORKSPACE = {
 beforeEach(() => {
   clientWorkspace.mockReset().mockResolvedValue({ data: WORKSPACE, error: null });
   generate.mockReset().mockResolvedValue(undefined);
+  downloadIssuedDocument.mockReset().mockResolvedValue(undefined);
   navigate.mockReset();
+  currentUser = { id: 'u1', username: 'adviser', role: 'user' };
 });
 
 afterEach(cleanup);
@@ -135,6 +152,60 @@ describe('the client Commercial / Industrial tab', () => {
     await waitFor(() => expect(generate).toHaveBeenCalledWith('a-linked'));
     // One load on mount, one after the render completes.
     await waitFor(() => expect(clientWorkspace).toHaveBeenCalledTimes(2));
+  });
+
+  it('downloads a report through this client, from the file kept when it was issued', async () => {
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+
+    fireEvent.click(screen.getByRole('button', {
+      name: /download commercial_capacity_report_ci_202608_aaaa_2026-08-05\.pdf/i,
+    }));
+    await waitFor(() => expect(downloadIssuedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ ledger: 'capacity_report', id: 'render-1', assessmentId: 'a-linked' }),
+      { viaClientId: CLIENT_ID },
+    ));
+    // Nothing is re-rendered to serve a download.
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('lists what was drawn for this client, not the legacy renders of what is linked now', async () => {
+    clientWorkspace.mockResolvedValue({ data: { ...WORKSPACE, documents: [] }, error: null });
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+    expect(screen.getByText(/Capacity reports \(0\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Commercial_Capacity_Report_CI_202608_AAAA/)).toBeNull();
+  });
+
+  it('offers generating and opening only on the caller’s own assessments', async () => {
+    clientWorkspace.mockResolvedValue({
+      data: {
+        ...WORKSPACE,
+        assessments: WORKSPACE.assessments.map((row) => (
+          row.id === 'a-linked' ? { ...row, user_id: 'colleague' } : row
+        )),
+      },
+      error: null,
+    });
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+
+    // The server answers anyone but the owner "not found" for both, so neither
+    // is offered — and the cell says why rather than sitting empty.
+    expect(screen.queryByRole('button', { name: /generate the capacity report for foundry link acquisition/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /open foundry link acquisition/i })).toBeNull();
+    expect(screen.getByText(/another adviser's assessment/i)).toBeInTheDocument();
+    // Their own draft keeps its Open.
+    expect(screen.getByRole('button', { name: /open retail strata draft/i })).toBeInTheDocument();
+    // And the colleague's document still downloads, through the client.
+    expect(screen.getByRole('button', { name: /download commercial_capacity_report/i })).toBeInTheDocument();
+  });
+
+  it('offers nobody the owner’s actions before it knows who is signed in', async () => {
+    currentUser = null;
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+    expect(screen.queryByRole('button', { name: /generate the capacity report/i })).toBeNull();
   });
 
   it('says what to do when nothing is linked yet', async () => {

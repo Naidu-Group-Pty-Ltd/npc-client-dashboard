@@ -31,6 +31,7 @@ let assessmentPayload: AssessmentPayload | null = null;
 const listRows: Array<Record<string, unknown>> = [];
 const reload = vi.fn();
 const saveNow = vi.fn();
+const listDocuments = vi.fn();
 
 vi.mock('@/hooks/useCiAssessments', () => ({
   ciAssessmentApi: {
@@ -39,6 +40,8 @@ vi.mock('@/hooks/useCiAssessments', () => ({
     runCalculation: vi.fn(),
     complete: vi.fn(),
     clientWorkspace: vi.fn().mockResolvedValue({ data: null, error: null }),
+    listDocuments: (...args: unknown[]) => listDocuments(...args),
+    audit: vi.fn().mockResolvedValue({ data: [], error: null }),
   },
   useCiAssessments: () => ({
     rows: listRows,
@@ -144,6 +147,7 @@ beforeEach(() => {
   intendedClient.mockReset().mockResolvedValue({ data: null, error: null });
   saveNow.mockReset().mockResolvedValue(undefined);
   reload.mockReset().mockResolvedValue(undefined);
+  listDocuments.mockReset().mockResolvedValue({ data: [], error: null });
 });
 
 afterEach(cleanup);
@@ -280,6 +284,35 @@ describe('the assessment workflow', () => {
     expect(screen.getByText(/being prepared for marcus chen/i)).toBeInTheDocument();
     // One client is not created twice from the same assessment.
     expect(screen.queryByRole('button', { name: /create a new client/i })).toBeNull();
+  });
+
+  it('keeps what the assessment issued on its Results step, failures included', async () => {
+    listDocuments.mockResolvedValue({
+      data: [
+        {
+          ledger: 'template', id: 'j1', assessmentId: 'a1', state: 'ready',
+          fileName: 'commercial_capacity-CI-202609-AYY4E.pdf', createdAt: '2026-09-23T09:00:00Z',
+          pageCount: 7, bytes: 90_000, hasAnalysis: null, analysisNote: null, templateName: 'Harbour · Slate',
+          error: null, clientId: null, downloadable: true,
+        },
+        {
+          ledger: 'capacity_report', id: 'r1', assessmentId: 'a1', state: 'failed',
+          fileName: 'Commercial_Capacity_Report_CI_202609_AYY4E_2026-09-22.pdf', createdAt: '2026-09-22T09:00:00Z',
+          pageCount: null, bytes: null, hasAnalysis: false, analysisNote: null, templateName: null,
+          error: 'storage upload failed: quota exceeded', clientId: null, downloadable: false,
+        },
+      ],
+      error: null,
+    });
+    openAssessment('results', { status: 'completed', current_calculation_id: 'run-1' });
+
+    expect(await screen.findByRole('heading', { name: 'Documents' })).toBeInTheDocument();
+    expect(listDocuments).toHaveBeenCalledWith('a1');
+    expect(await screen.findByText('commercial_capacity-CI-202609-AYY4E.pdf')).toBeInTheDocument();
+    // A failure is listed with its reason, and offers nothing to download.
+    expect(screen.getByText('storage upload failed: quota exceeded')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^download /i })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /download commercial_capacity-CI-202609-AYY4E\.pdf/i })).toBeInTheDocument();
   });
 
   it('keeps archiving and deleting with the record', async () => {

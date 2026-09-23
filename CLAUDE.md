@@ -554,10 +554,19 @@ report in EITHER ledger. `template_render_jobs` has no foreign key, so it is
 checked there because nothing else would notice. The server decides and the
 dialog renders its answer. **Intent is not a link.** The client an assessment
 is for is an audit event (`client_intended`/`client_created`), and only
-`link_client` writes a link. **Nothing in report generation was changed.**
-G1–G9 in that doc are the gaps the reporting workstream inherits before a C&I
-report can appear in Generated Reports. The two analysis engines still use
-different units (a ratio and a percentage), pinned by tests.
+`link_client` writes a link. **A document is recorded once, where it was
+drawn, and read through one module.** The two render routes keep two ledgers
+(`commercial_industrial_report_renders`, and `template_render_jobs` for a
+template) and `report_render_coverage` counts both, so copying one into the
+other counts a document twice. `_shared/ciAssessments/documents.pure.ts` reads
+them as one list for the assessment, the client's tabs and Generated Reports:
+a template job counts only where the assessment's owner requested it, and a
+document belongs to the client whose link was open when it was drawn, never to
+today's link. A render writes its row before anything that can fail, so a
+failure is recorded rather than lost. Generating stays with the owner;
+downloading follows the client, through `document_url`, which signs the stored
+file and never re-renders it. The two analysis engines still use different
+units (a ratio and a percentage), pinned by tests.
 
 ## The sanctions register itself
 Read [`docs/aml/SANCTIONS_LIST_LOADING.md`](./docs/aml/SANCTIONS_LIST_LOADING.md)

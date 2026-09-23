@@ -347,6 +347,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   const started = Date.now();
   let renderId: string | null = null;
 
+  // What the record has learned so far, so a failure is written with the
+  // analysis and brand facts that were settled before it.
+  const learned: Record<string, unknown> = {};
+  const recordFailure = async (message: string) => {
+    if (!renderId) return;
+    const { error } = await supabase
+      .from('commercial_industrial_report_renders')
+      .update({ ...learned, status: 'failed', error: message.slice(0, 2000), duration_ms: Date.now() - started })
+      .eq('id', renderId);
+    if (error) {
+      console.error(`[render-commercial-capacity-pdf] failure not recorded for ${renderId}: ${error.message}`);
+    }
+  };
+
   try {
     const body = await req.json().catch(() => null);
 
@@ -372,15 +386,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const parsed = parseCapacityRequest(body);
     if (!parsed.ok) return json({ error: parsed.error }, 400, corsHeaders);
     const request = parsed.request;
-
-    const weasyprint = weasyPrintConfig((key) => Deno.env.get(key));
-    if (!weasyprint) {
-      // Checked before the reads: a misconfigured environment should say so,
-      // not after five queries, a model call and a document build.
-      return json({
-        error: 'WeasyPrint is not configured (WEASYPRINT_SERVICE_URL + WEASYPRINT_SERVICE_TOKEN)',
-      }, 503, corsHeaders);
-    }
 
     // ── Read everything the document says ───────────────────────────────────
 
@@ -444,6 +449,56 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }, 409, corsHeaders);
     }
     const run = runRes.data as Record<string, unknown>;
+
+    // ── The record, before anything that can fail ───────────────────────────
+    //
+    // Every attempt that gets past the refusals above leaves a row, written
+    // HERE — before the model call, the brand, the document build and the
+    // engine — so a failure in any of them is recorded with its reason. It used
+    // to be written after all four with its error discarded: a failure before
+    // it left nothing, and a failed insert let a document leave the building
+    // unrecorded (`MODULE_STRUCTURE.md` G9). A refusal above writes nothing, on
+    // purpose: it is an answer to the caller rather than an attempt, and an
+    // assessment that is not the caller's must not gain a row about it.
+    //
+    // The path is written before the upload, as it always was, which is why a
+    // failed row cannot prove that no file was stored (`deletion.pure.ts`).
+
+    const now = new Date().toISOString();
+    const fileName = capacityFileName(String(assessment.reference ?? ''), now);
+    const path = capacityStoragePath(String(assessment.id), fileName, now, crypto.randomUUID());
+
+    const { data: renderRow, error: renderInsertError } = await supabase
+      .from('commercial_industrial_report_renders')
+      .insert({
+        assessment_id: assessment.id,
+        calculation_run_id: run.id,
+        user_id: userId,
+        requested_by: userId,
+        status: 'running',
+        file_name: fileName,
+        storage_bucket: PDF_BUCKET,
+        storage_path: path,
+      })
+      .select('id')
+      .single();
+    // No record, no document. A report stating what a borrower can borrow that
+    // exists in no ledger can never be listed, downloaded again or accounted
+    // for, so it is not produced.
+    if (renderInsertError || !renderRow?.id) {
+      throw new Error(`could not record the render: ${renderInsertError?.message ?? 'no row returned'}`);
+    }
+    renderId = String(renderRow.id);
+
+    const weasyprint = weasyPrintConfig((key) => Deno.env.get(key));
+    if (!weasyprint) {
+      // Before the model call and the document build — a misconfigured
+      // environment should say so, not after spending both — and after the
+      // record, so "the report never arrived" has an answer.
+      const message = 'WeasyPrint is not configured (WEASYPRINT_SERVICE_URL + WEASYPRINT_SERVICE_TOKEN)';
+      await recordFailure(message);
+      return json({ error: message, renderId }, 503, corsHeaders);
+    }
 
     // A client read that failed is worth a log line and nothing more: the
     // report's subject falls back to the assessment's own title, which is what
@@ -517,6 +572,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
     }
 
+    learned.has_analysis = Boolean(analysis);
+    learned.analysis_note = analysisNote;
+
     const payload = buildCapacitySnapshot({
       assessment: assessment as Record<string, unknown>,
       outputs: run.outputs,
@@ -580,6 +638,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       _brand_hex: snapshot.brandHex,
       _source_whitelabel_setting_id: snapshot.source.whitelabelSettingId,
     });
+    learned.brand_snapshot_id = brandSnapshotId ?? null;
 
     // ── Build the document ──────────────────────────────────────────────────
 
@@ -596,6 +655,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       edition: request.edition,
       reference: String(assessment.reference ?? '').slice(0, 40) || null,
     });
+    learned.brand_gaps = gaps;
 
     // The guard runs on HTML this function built, deliberately. The assets in
     // it came from a tenant's settings form; the boundary is where the check
@@ -603,30 +663,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
 
     // ── Render, store, sign ─────────────────────────────────────────────────
-
-    const now = new Date().toISOString();
-    const fileName = capacityFileName(String(assessment.reference ?? ''), now);
-    const path = capacityStoragePath(String(assessment.id), fileName, now, crypto.randomUUID());
-
-    const { data: renderRow } = await supabase
-      .from('commercial_industrial_report_renders')
-      .insert({
-        assessment_id: assessment.id,
-        calculation_run_id: run.id,
-        user_id: userId,
-        requested_by: userId,
-        status: 'running',
-        file_name: fileName,
-        storage_bucket: PDF_BUCKET,
-        storage_path: path,
-        brand_snapshot_id: brandSnapshotId ?? null,
-        brand_gaps: gaps,
-        has_analysis: Boolean(analysis),
-        analysis_note: analysisNote,
-      })
-      .select('id')
-      .maybeSingle();
-    renderId = (renderRow?.id as string) ?? null;
 
     const pdf = await renderPdf(weasyprint, html, { variant: 'pdf/a-2b', tagged: true });
 
@@ -649,22 +685,39 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const durationMs = Date.now() - started;
     const pageCount = await countPdfPagesAsync(pdf);
 
-    if (renderId) {
-      await supabase
-        .from('commercial_industrial_report_renders')
-        .update({ status: 'succeeded', bytes: pdf.length, page_count: pageCount, duration_ms: durationMs })
-        .eq('id', renderId);
+    const { error: succeededError } = await supabase
+      .from('commercial_industrial_report_renders')
+      .update({ ...learned, status: 'succeeded', bytes: pdf.length, page_count: pageCount, duration_ms: durationMs })
+      .eq('id', renderId);
+    if (succeededError) {
+      // The document exists and is stored, so the person still gets it. What
+      // is wrong is the record, and that has to be visible somewhere.
+      console.error(
+        `[render-commercial-capacity-pdf] render ${renderId} succeeded but was not recorded as such: ${succeededError.message}`,
+      );
     }
 
     // The audit trail this feature keeps for every state change. A document
-    // leaving the building is a state change.
-    await supabase.from('commercial_industrial_assessment_audit_events').insert({
+    // leaving the building is a state change. The client is the one linked
+    // when it was drawn — the PDF names them, and the link may have moved by
+    // the time anybody reads this.
+    const { error: auditError } = await supabase.from('commercial_industrial_assessment_audit_events').insert({
       assessment_id: assessment.id,
       user_id: userId,
       event_type: 'report_generated',
-      detail: { renderId, fileName, pageCount, hasAnalysis: Boolean(analysis) },
+      detail: {
+        route: 'capacity_report',
+        renderId,
+        fileName,
+        pageCount,
+        hasAnalysis: Boolean(analysis),
+        clientId: assessment.client_id ?? null,
+      },
       actor_id: userId,
     });
+    if (auditError) {
+      console.error(`[render-commercial-capacity-pdf] audit event not written for ${renderId}: ${auditError.message}`);
+    }
 
     const response: CapacityRenderResponse = {
       url: signed.signedUrl,
@@ -682,16 +735,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error('[render-commercial-capacity-pdf]', message);
-    if (renderId) {
-      await supabase
-        .from('commercial_industrial_report_renders')
-        .update({
-          status: 'failed',
-          error: message.slice(0, 2000),
-          duration_ms: Date.now() - started,
-        })
-        .eq('id', renderId);
-    }
+    await recordFailure(message);
     // The message is the service's own where there is one. A 500 that says only
     // "render failed" costs an hour that a quoted upstream error does not.
     return json({ error: message, renderId }, 500, corsHeaders);

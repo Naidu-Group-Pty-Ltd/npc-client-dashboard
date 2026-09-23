@@ -12,6 +12,15 @@
  * hook behind the same completed-only rule. This tab is a *view* of the
  * client's record — creating and editing assessments stays in the module,
  * which is one click away on every row.
+ *
+ * Access follows the CLIENT here, not the assessment: a colleague's assessment
+ * linked to a client you may see is part of that client's record. So its
+ * documents are listed and download through this client, while generating a
+ * report and opening the assessment stay with its owner — the server answers
+ * anyone else "not found", and a button that can only fail is not offered.
+ *
+ * The documents are the ones drawn FOR this client, from both render routes,
+ * whether or not the assessment is still linked here (`documents.pure.ts`).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -27,6 +36,8 @@ import {
 import { cn } from '@/lib/utils';
 import { ciAssessmentApi, type ClientCiWorkspace } from '@/hooks/useCiAssessments';
 import { useCapacityReport } from '@/hooks/useCapacityReport';
+import { useAuth } from '@/hooks/useAuth';
+import { IssuedDocumentList } from '@/components/commercial/assessment/IssuedDocumentList';
 import { isReportable } from '@/lib/reports/commercialCapacity/route.pure';
 import { ASSESSMENT_STATUS_LABELS, type AssessmentStatus } from '@/lib/ciAssessment/types';
 import { formatMoney, formatMultiple, formatRatioPercent, toCents } from '@/lib/ciAssessment/money';
@@ -68,6 +79,10 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { generatingId, generate } = useCapacityReport();
+  const { user } = useAuth();
+  // Not known yet reads as "not yours": offering the owner's actions to
+  // somebody who is not the owner is the failure this guards against.
+  const ownedByCaller = (ownerId: string) => Boolean(user?.id) && ownerId === user?.id;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,7 +125,9 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
   }
 
   const assessments = workspace?.assessments ?? [];
-  const renders = workspace?.renders ?? [];
+  // A server deployed before `documents` sends none, and the list reads empty
+  // until it is redeployed — never an older, narrower reading presented as this one.
+  const documents = workspace?.documents ?? [];
   const runs = workspace?.runs ?? [];
   const links = workspace?.links ?? [];
   const uploads = workspace?.uploads ?? [];
@@ -266,27 +283,33 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{formatDate(row.linked_at)}</TableCell>
                     <TableCell>
-                      <div className="flex justify-end gap-1">
-                        {isReportable(row.status) ? (
+                      {ownedByCaller(row.user_id) ? (
+                        <div className="flex justify-end gap-1">
+                          {isReportable(row.status) ? (
+                            <Button
+                              size="icon" variant="ghost" className="h-8 w-8"
+                              onClick={() => void generateAndRefresh(row.id)}
+                              disabled={generatingId !== null}
+                              aria-label={`Generate the capacity report for ${row.title}`}
+                            >
+                              {generatingId === row.id
+                                ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                                : <FileDown className="h-4 w-4" aria-hidden="true" />}
+                            </Button>
+                          ) : null}
                           <Button
                             size="icon" variant="ghost" className="h-8 w-8"
-                            onClick={() => void generateAndRefresh(row.id)}
-                            disabled={generatingId !== null}
-                            aria-label={`Generate the capacity report for ${row.title}`}
+                            onClick={() => navigate(`/commercial/assessments/${row.id}?step=results`)}
+                            aria-label={`Open ${row.title}`}
                           >
-                            {generatingId === row.id
-                              ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                              : <FileDown className="h-4 w-4" aria-hidden="true" />}
+                            <ExternalLink className="h-4 w-4" aria-hidden="true" />
                           </Button>
-                        ) : null}
-                        <Button
-                          size="icon" variant="ghost" className="h-8 w-8"
-                          onClick={() => navigate(`/commercial/assessments/${row.id}?step=results`)}
-                          aria-label={`Open ${row.title}`}
-                        >
-                          <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                        </Button>
-                      </div>
+                        </div>
+                      ) : (
+                        // Said rather than left blank: an empty cell reads as a
+                        // missing button, and this is a rule.
+                        <p className="text-right text-xs text-muted-foreground">Another adviser&apos;s assessment</p>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -355,58 +378,21 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm font-semibold">
             <FileText className="h-4 w-4 text-primary" aria-hidden="true" />
-            Capacity reports ({renders.length})
+            Capacity reports ({documents.length})
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {renders.length ? (
-            <div className="overflow-x-auto" role="region" aria-label="Generated capacity reports" tabIndex={0}>
-              <Table className="min-w-[640px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Report</TableHead>
-                    <TableHead>Assessment</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Pages</TableHead>
-                    <TableHead>AI analysis</TableHead>
-                    <TableHead>Generated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {renders.map((render) => (
-                    <TableRow key={render.id}>
-                      <TableCell className="max-w-[260px] truncate font-mono text-xs" title={render.file_name}>
-                        {render.file_name || '—'}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{titleFor(render.assessment_id)}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            'ci-status-badge',
-                            render.status === 'succeeded'
-                              ? 'ci-status-good'
-                              : render.status === 'failed' ? 'ci-status-warn' : 'ci-status-progress',
-                          )}
-                        >
-                          {render.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">{render.page_count ?? '—'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {render.has_analysis ? 'Included' : render.analysis_note ?? 'Not included'}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{formatDate(render.created_at)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+          {documents.length ? (
+            <IssuedDocumentList
+              documents={documents}
+              viaClientId={clientId}
+              describe={(doc) => [doc.assessmentTitle, doc.assessmentReference].filter(Boolean).join(' · ')}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
-              No reports generated yet. Use the download action on a completed assessment above — the
-              report is white-labelled, carries the AI analysis of the figures, and downloads on the spot.
-              Each generation is also recorded here.
+              No reports have been generated for this client yet. Use the download action on a completed
+              assessment above — the report is white-labelled, carries the AI analysis of the figures, and
+              downloads on the spot. Every report generated for this client is kept here to download again.
             </p>
           )}
         </CardContent>

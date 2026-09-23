@@ -62,6 +62,8 @@ import { prefillFromAssessment } from '@/components/commercial/assessment/client
 import { DeleteAssessmentDialog } from '@/components/commercial/assessment/DeleteAssessmentDialog';
 import { useMayOfferAssessmentDelete } from '@/components/commercial/assessment/useMayOfferAssessmentDelete';
 import { ResultsRail } from '@/components/commercial/assessment/ResultsRail';
+import { AssessmentDocumentsPanel } from '@/components/commercial/assessment/AssessmentDocumentsPanel';
+import { useAssessmentDocuments } from '@/components/commercial/assessment/useAssessmentDocuments';
 
 /**
  * The steps, in the order an assessment is built.
@@ -310,7 +312,10 @@ export default function CommercialAssessmentWorkspace() {
       || moved(record.proposed_dscr, liveResult.summary.proposedDscr, 0.0001);
   }, [record, liveResult]);
 
-  const { generatingId, generate } = useCapacityReport();
+  // Every document this assessment has issued. A render that ends — with a
+  // document or without one — is a new ledger row, so the list is re-read.
+  const assessmentDocuments = useAssessmentDocuments(id);
+  const { generatingId, generate } = useCapacityReport({ onFinished: assessmentDocuments.reload });
 
   const setPayload = useCallback((next: AssessmentPayload) => {
     update(next, STEPS[activeIndex]?.section);
@@ -795,6 +800,7 @@ export default function CommercialAssessmentWorkspace() {
                   </p>
                 </div>
               ) : null}
+              <AssessmentDocumentsPanel assessmentId={record.id} documents={assessmentDocuments} />
             </>
           ) : null}
           {activeStep === 'link' ? (

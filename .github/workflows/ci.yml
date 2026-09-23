@@ -67,6 +67,24 @@ jobs:
       - name: This deployment ships its own backend identity
         run: npx vitest run src/lib/__tests__/shippedBackendIdentity.spec.ts
 
+      # Every build-time variable is read in the one form the bundler replaces.
+      #
+      # Vite substitutes the literal `import.meta.env.VITE_X` and nothing else.
+      # `import.meta?.env?.[key]` is a property read on the browser's real
+      # `import.meta`, which has no `env`, so it is `undefined` in every
+      # production bundle however the environment is set. `env.ts` read that
+      # way, and so did four other modules, and each absence looked like the
+      # feature merely being off. `npc-crm-independent` fixed its own copies on
+      # 19 Sep 2026 and the cascade of 20 Sep reverted two of them, because the
+      # broken copies were the ones this repository kept delivering.
+      #
+      # Named by path for the step above's reason: nothing else in this
+      # workflow reaches `src/integrations/supabase/__tests__`, so these guards
+      # had never been asked anything. No network, a few seconds, so it runs
+      # early.
+      - name: Build-time variables are read in the form the bundler replaces
+        run: npx vitest run src/integrations/supabase/__tests__
+
       # The edge-function secret allowlist and status map are generated from
       # src/lib/integrations/registry.ts. Both live under supabase/functions/, which
       # none of the test paths below reach, so without this step the generated module

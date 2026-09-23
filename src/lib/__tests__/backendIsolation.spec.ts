@@ -165,7 +165,16 @@ describe('the app itself resolves its project from one place', () => {
     // another authenticates to nothing. Assert both halves name the same
     // project, and that the project is ours — so an unconfigured build lands
     // here rather than anywhere else.
-    const env = read(join('src', 'integrations', 'supabase', 'env.ts'));
+    // The pair lives in `supabaseTarget.pure.ts` since 23 Sep 2026; `env.ts`
+    // keeps the reads and names no project. Read whichever declares it —
+    // the same resolution Mission Control's provisioning uses.
+    const env =
+      [
+        join('src', 'integrations', 'supabase', 'supabaseTarget.pure.ts'),
+        join('src', 'integrations', 'supabase', 'env.ts'),
+      ]
+        .map((rel) => read(rel))
+        .find((text) => /const FALLBACK_URL = '/.test(text)) ?? '';
 
     const url = /const FALLBACK_URL = '([^']+)'/.exec(env)?.[1] ?? '';
     expect(url, 'FALLBACK_URL not found').not.toBe('');

@@ -2184,7 +2184,9 @@ area refused the Bureau's own download over `Australia 2026-07 reads
 $22,314,955,000`; worse than the refusal, stamping every row with the
 REQUESTED grain files the national total as a council area, which the read
 path would then serve as one suburb's supply. **A total summed from part of a
-register is a FLOOR** and a year-on-year change is computed only between two
+register is PARTIAL, never a floor** — the ABS publishes approvals NET OF
+AMENDMENTS, so a month of cancellations is negative and a missing month can
+lower the year — and a year-on-year change is computed only between two
 COMPLETE windows. And **the four absences are four different sentences** —
 `not_loaded` is about this deployment, `none_for_area` about the area,
 `unavailable` about us, `no_area_resolved` about the subject. The check that
@@ -2193,6 +2195,21 @@ anywhere, and **exits 0 when the ABS is unreachable and 1 when the ABS
 answered and this reader refused** — its first version printed "THE ABS DID
 NOT ANSWER" and exited 0 over an HTTP 200, which is a size problem on our
 side reported as an outage on theirs.
+
+**The sign was never the check, and one -5 stalled the walk for seventeen
+hours** (§14 of the same doc). Ulverstone's 2025-08 is the Bureau's own
+figure, and three layers stood in its way: the parser's sign test, the table's
+own `CHECK (… >= 0)`, and a loader that commits a window batch by batch while
+the walk steps below `min(period)` — so lifting the first refusal alone would
+have committed part of a window and skipped the rest for ever. Three rules.
+**A ceiling bounds magnitude in either direction**, in the parser and in the
+table (`20261217000000`, which proves its own swap by inserting a negative it
+always rolls back). **Drift is a share and an artefact is a count** — an
+isolated over-ceiling cell is dropped and named in the sync ledger, and more
+than three refuses, because a 1% share let a 1,000× drift through. And **a
+window is never half written by a sign**: `approvalsWriteOrder` writes the
+negative-bearing rows first, so a table that still refuses them refuses before
+anything commits, and the code and the migration ship in either order.
 
 **The national pipeline was asked for, and the answer is a measurement.**
 Read [`NATIONAL_PIPELINE_EVIDENCE.md`](./docs/reports/NATIONAL_PIPELINE_EVIDENCE.md)

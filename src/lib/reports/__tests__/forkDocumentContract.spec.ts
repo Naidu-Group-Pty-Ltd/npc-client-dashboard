@@ -269,14 +269,14 @@ describe('the seven slots nothing could fill', () => {
   };
 
   it('merges each one where the Compass merges it, or into a heading that names it', () => {
-    const compassMerges = new Map(
-      mergesForTier('compass' as never).map((m) => [m.id, m.into]),
+    const compassMerges = new Map<string, string>(
+      mergesForTier('compass' as never).map((m) => [m.id as string, m.into as string]),
     );
-    const strategicMerges = new Map(
-      mergesForTier('strategic' as never).map((m) => [m.id, m.into]),
+    const strategicMerges = new Map<string, string>(
+      mergesForTier('strategic' as never).map((m) => [m.id as string, m.into as string]),
     );
-    const strategicLabels = new Map(
-      sectionsForTier('strategic' as never).map((s) => [s.id, s.label]),
+    const strategicLabels = new Map<string, string>(
+      sectionsForTier('strategic' as never).map((s) => [s.id as string, s.label as string]),
     );
 
     for (const [id, into] of MERGED_AWAY) {

@@ -393,7 +393,7 @@ each clone as a pull request: to `npc-client-dashboard` directly and on to its
 own children through it. On the same cascade it deploys the Edge Functions
 into each clone's Supabase project. The lineage is in
 [`CLONE_PROVISIONING_GAPS.md`](../operations/CLONE_PROVISIONING_GAPS.md),
-"Which deployment a clone receives from". Three things follow for this work:
+"Which deployment a clone receives from". Four things follow for this work:
 
 - **It is new modules wherever it could be.** They include
   `_shared/ciAssessments/*.pure.ts`, `_shared/commercialOwnership.pure.ts`,
@@ -408,6 +408,17 @@ into each clone's Supabase project. The lineage is in
   `manage-commercial-data` changed, and a frontend that calls the new
   operations before its server is redeployed is answered "Unknown operation",
   which every caller reports as an ordinary error.
+- **A spec that reads `src/App.tsx` does not travel.** Every clone carries its
+  own `App.tsx`, so the cascade holds it back, and it holds back any spec that
+  reads it too: a spec and its subject travel together or not at all. A held
+  spec keeps the clone's old copy. The first cascade of this work
+  (`npc-client-dashboard` #236, 23 Sep 2026) carried the new redirect page and
+  held its spec, because one test in it read `App.tsx`. The client was left
+  running the retired workspace's spec against the redirect, and all 11 of its
+  tests failed. Nothing reported it, because that repository's CI runs no
+  `src/pages/calculators` tests. The redirect spec now reads only the page it
+  tests. The route guard it was checking was already pinned by
+  `lib/navigation/__tests__/registry.spec.ts`.
 
 ## 8. Found along the way and not fixed here
 
@@ -446,5 +457,6 @@ into each clone's Supabase project. The lineage is in
 | `lib/__tests__/commercialOwnership.test.ts` | Leases and DCF runs get both ownership columns. |
 | `components/commercial/assessment/__tests__/assessmentManagement.test.tsx` | The dialog creates nothing until confirmed, starts fresh each opening, the delete dialog's every answer. |
 | `components/commercial/assessment/__tests__/clientCreateAndLink.test.tsx` | Creating, matching and linking a client. |
-| `pages/calculators/__tests__/commercialIndustrialWorkspace.test.tsx` | The redirects, as the router renders them, behind the module guard. |
+| `pages/calculators/__tests__/commercialIndustrialWorkspace.test.tsx` | The redirects, as the router renders them. It reads no other file, so it can travel to the clones (§7). |
+| `lib/navigation/__tests__/registry.spec.ts` | The module guard on every C&I route, the retired `/calculators` routes included. Pre-existing. |
 | `pages/commercial/__tests__/commercialModule.test.tsx` | The landing, the step order, the optional step, in-app client creation, archive/delete with the record. |

@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-// @ts-expect-error — plain .mjs, no types; this is a script module by design.
 import { assessMigrationDrift, probeIsReadOnly } from '../../../../scripts/ops/migrationDrift.pure.mjs';
 import { migrationText, migrationsContaining } from '../../testSupport/migrationCorpus';
 

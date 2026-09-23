@@ -536,23 +536,28 @@ adjacently to their own call pass `meterUsage: false`. The credential a
 which mirrors the router's dispatch and returns **null** rather than guessing; a
 CI test reads the router's source and fails when the two drift.
 
-## The Commercial & Industrial Analysis Workspace
-`/calculators` is one guided workspace, not nine calculator cards. Read
-[`docs/commercial/ANALYSIS_WORKSPACE.md`](./docs/commercial/ANALYSIS_WORKSPACE.md)
-before touching it, `src/components/commercial/workspace/` or
-`src/lib/ciAssessment/analysis*.ts`. The rule that carries it: **an analysis is
-an assessment record** — there is no separate calculator session, client model
-or property model, so autosave, calculation runs, client linking and the
-rendered report are the platform's own rather than a second implementation. The
-standalone suite it replaces kept the whole deal in a Zustand store with no
-persistence (a refresh discarded it) and its "Generate Report" produced no
-document at all.
+## The Commercial & Industrial module
+Read [`docs/commercial/MODULE_STRUCTURE.md`](./docs/commercial/MODULE_STRUCTURE.md)
+before touching `/commercial`, `/calculators`, `src/components/commercial/`,
+`src/lib/ciAssessment/` or `manage-ci-assessments`. **An assessment is one
+record with one editor.** There is one "New assessment" dialog, and it creates
+nothing until it is confirmed. The ten established steps are joined by an
+optional Valuation & forecast step, which was the only capability unique to the
+retired `/calculators` workspace; that route now redirects and creates nothing.
+The register building an assessment concerns is recorded at
+`payload.property.registerProperty`. It sits inside a section because
+`hydrateAssessmentPayload` drops unknown top-level keys.
 
-Two things bite. The **two analysis engines use different units** —
-`capRateEngine`'s valuation gap is a ratio, `dcfEngine`'s IRRs are already
-percentages — and getting it wrong renders a plausible number rather than an
-error; both are pinned by tests. And **readiness is not a second opinion**:
-blocking is exactly what the report route refuses, everything else is disclosed.
+Three rules bite. **Deletion is narrower than archiving.** `deletion.pure.ts`
+refuses an assessment that is linked to a client, was ever linked, or has any
+report in EITHER ledger. `template_render_jobs` has no foreign key, so it is
+checked there because nothing else would notice. The server decides and the
+dialog renders its answer. **Intent is not a link.** The client an assessment
+is for is an audit event (`client_intended`/`client_created`), and only
+`link_client` writes a link. **Nothing in report generation was changed.**
+G1–G9 in that doc are the gaps the reporting workstream inherits before a C&I
+report can appear in Generated Reports. The two analysis engines still use
+different units (a ratio and a percentage), pinned by tests.
 
 ## The sanctions register itself
 Read [`docs/aml/SANCTIONS_LIST_LOADING.md`](./docs/aml/SANCTIONS_LIST_LOADING.md)

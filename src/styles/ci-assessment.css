@@ -62,6 +62,32 @@
   .ci-table-wrap td:first-child { @apply whitespace-normal; }
   .ci-table-wrap tbody tr { @apply border-t border-border/60 transition-colors hover:bg-muted/40; }
 
+  /* Row actions stay in reach when a register scrolls sideways. At a 1440px
+     laptop with the sidebar open the assessment table is ~1,340px in a
+     ~1,120px pane, so every row action (report, open, archive, delete)
+     started off-screen. A repeated cell gets a translucent fill and nothing
+     more: glass.css forbids blur on anything that repeats. Content passing
+     underneath reads as a soft wash, the trade the glass table header already
+     makes. Each tint is LAYERED over the fill rather than replacing it,
+     because replacing it would thin the fill to the tint's own opacity.
+     Not below 768px: a phone's pane is narrower than the title column, so a
+     pinned column would sit on the one column the row is read by. */
+  @media (min-width: 768px) {
+    .ci-table-wrap .ci-sticky-actions {
+      position: sticky;
+      right: 0;
+      z-index: 1;
+      background-color: var(--glass-fill-strong);
+      box-shadow: inset 1px 0 0 0 var(--glass-stroke);
+    }
+    .ci-table-wrap thead .ci-sticky-actions {
+      background-image: linear-gradient(hsl(var(--muted) / 0.5), hsl(var(--muted) / 0.5));
+    }
+    .ci-table-wrap tbody tr:hover .ci-sticky-actions {
+      background-image: linear-gradient(hsl(var(--muted) / 0.4), hsl(var(--muted) / 0.4));
+    }
+  }
+
   .ci-status-badge { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold; }
   .ci-status-neutral { @apply border-border bg-muted/50 text-muted-foreground; }
   .ci-status-progress { @apply border-info/40 bg-info/10 text-info; }

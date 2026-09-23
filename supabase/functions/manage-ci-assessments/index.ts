@@ -9,10 +9,14 @@
 // Operations:
 //   list | get | create | autosave | update_section | run_calculation
 //   list_calculations | save_scenario | list_scenarios | complete
-//   search_clients | link_client | unlink_client | archive | restore | audit
+//   search_clients | create_client | link_client | unlink_client
+//   client_workspace | intended_client
+//   archive | restore | deletion_preview | delete | audit
 //
 // Client association is deliberately a separate, explicit operation. Nothing
-// else in this file writes a client_id.
+// else in this file writes a client_id. The client an assessment was *started
+// for* is recorded as an audit event (`client_intended`), never as a link — see
+// the `create` and `intended_client` operations.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
@@ -20,6 +24,11 @@ import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_share
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { summariseUploads } from '../_shared/ciAssessments/uploads.pure.ts';
+import {
+  decideDeletion, deletionNeedsTypedConfirmation, statusAfterRestore, type RenderFact,
+} from '../_shared/ciAssessments/deletion.pure.ts';
+import { clientSearchFilters, newClientProblem, sameEmail } from '../_shared/ciAssessments/clientRecords.pure.ts';
+import { REGISTER_PROPERTY_ID_PATH, isUuid } from '../_shared/ciAssessments/registerLink.pure.ts';
 
 /**
  * Client ownership filter, matching the model used by `get-client-data`:
@@ -44,8 +53,18 @@ type Operation =
   | 'run_calculation' | 'list_calculations'
   | 'save_scenario' | 'list_scenarios'
   | 'complete' | 'search_clients' | 'create_client' | 'link_client' | 'unlink_client'
-  | 'client_workspace'
-  | 'archive' | 'restore' | 'audit';
+  | 'client_workspace' | 'intended_client'
+  | 'archive' | 'restore' | 'deletion_preview' | 'delete' | 'audit';
+
+/**
+ * The module whose `can_delete` permission governs deleting an assessment.
+ *
+ * `commercial` is the key every Commercial & Industrial route is guarded by
+ * (`ModuleGuard moduleKey="commercial"`), so the authority to delete is granted
+ * where the authority to open the module already is. Superadmins pass inside
+ * `requireModulePermission`; a lookup that fails refuses.
+ */
+const DELETE_PERMISSION_MODULE = 'commercial';
 
 const VALID_STATUSES = new Set([
   'draft', 'data_entry', 'ready_to_calculate', 'calculated',
@@ -120,6 +139,17 @@ interface RequestBody {
   limit?: number;
   offset?: number;
   session_token?: string;
+  /** `create_client` — read at the operation, and now declared where it is read. */
+  firstName?: string;
+  surname?: string;
+  email?: string;
+  mobile?: string;
+  /** `create` — the existing client the assessment is being prepared for. */
+  intendedClientId?: string;
+  /** `list` — only assessments started from this property-register entry. */
+  propertyId?: string;
+  /** `delete` — the reference, typed back, for a completed assessment. */
+  confirmReference?: string;
 }
 
 function json(body: unknown, status: number, cors: Record<string, string>) {
@@ -305,6 +335,132 @@ Deno.serve(async (req) => {
     if (error) console.error('[manage-ci-assessments] audit write failed', eventType);
   }
 
+  /**
+   * A missing relation, as PostgREST and Postgres each report it.
+   *
+   * PostgREST refuses a relation absent from its schema cache before the
+   * statement is planned, so the wire answer is `PGRST205`, not the Postgres
+   * `42P01` — see CLAUDE.md on why both spellings are accepted.
+   */
+  const isMissingRelation = (error: { code?: string } | null | undefined) => (
+    error?.code === 'PGRST205' || error?.code === '42P01'
+  );
+
+  /**
+   * The facts `decideDeletion` rules on, read fresh for this request.
+   *
+   * A read that FAILED is not a row that is ABSENT: any error throws, and the
+   * request refuses rather than deleting on the strength of a query that did
+   * not answer. The one exception is a render ledger that does not exist on
+   * this deployment yet — a table that is not there holds no renders, and its
+   * foreign key cannot refuse the delete either.
+   */
+  async function gatherDeletionFacts(existing: Record<string, any>) {
+    const [links, renders, templateJobs, runs, scenarios] = await Promise.all([
+      supabase
+        .from('commercial_industrial_assessment_client_links')
+        .select('id', { count: 'exact', head: true })
+        .eq('assessment_id', existing.id),
+      supabase
+        .from('commercial_industrial_report_renders')
+        .select('status, created_at')
+        .eq('assessment_id', existing.id)
+        .limit(200),
+      // A document drawn through a report template is recorded here, with the
+      // assessment named in metadata and no foreign key to refuse anything.
+      supabase
+        .from('template_render_jobs')
+        .select('status, created_at')
+        .eq('mode', 'final')
+        .eq('metadata->>report_id', existing.id)
+        .limit(200),
+      supabase
+        .from('commercial_industrial_calculation_runs')
+        .select('id', { count: 'exact', head: true })
+        .eq('assessment_id', existing.id),
+      supabase
+        .from('commercial_industrial_assessment_scenarios')
+        .select('id', { count: 'exact', head: true })
+        .eq('assessment_id', existing.id),
+    ]);
+    if (links.error) throw links.error;
+    if (runs.error) throw runs.error;
+    if (scenarios.error) throw scenarios.error;
+    if (renders.error && !isMissingRelation(renders.error)) throw renders.error;
+    if (templateJobs.error && !isMissingRelation(templateJobs.error)) throw templateJobs.error;
+
+    const toFact = (ledger: RenderFact['ledger']) => (row: { status: unknown; created_at: unknown }): RenderFact => ({
+      status: String(row.status ?? ''),
+      createdAt: String(row.created_at ?? ''),
+      ledger,
+    });
+
+    return {
+      facts: {
+        status: String(existing.status),
+        clientId: (existing.client_id as string | null) ?? null,
+        clientLinkCount: links.count ?? 0,
+        renders: [
+          ...(renders.error ? [] : (renders.data ?? []).map(toFact('capacity_report'))),
+          ...(templateJobs.error ? [] : (templateJobs.data ?? []).map(toFact('template'))),
+        ],
+      },
+      counts: {
+        calculationRuns: runs.count ?? 0,
+        scenarios: scenarios.count ?? 0,
+      },
+    };
+  }
+
+  /**
+   * Whether this caller may delete assessments at all.
+   *
+   * Where an administrator manages per-user permissions for the module, delete
+   * is the `can_delete` they granted (superadmins pass). Where the deployment
+   * manages none — no `dashboard_modules` row for it, so the module is opened by
+   * the plan alone, exactly as `ModuleGuard` opens it — the owner may delete
+   * their own assessments, which is who may already archive them. Ownership is
+   * enforced either way: every assessment this function touches is the
+   * caller's own.
+   *
+   * A permission lookup that throws is a refusal, never a pass.
+   */
+  async function mayDelete(): Promise<boolean> {
+    try {
+      const decision = await requireModulePermission(supabase, auth, DELETE_PERMISSION_MODULE, 'can_delete');
+      return decision.ok || decision.reason_code === 'module_not_registered';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The client an assessment was prepared for: the client chosen when it was
+   * started, or created from inside it, whichever happened last. Null when
+   * neither did.
+   *
+   * Read from the audit trail on purpose. It is the record of a decision, and
+   * it must never be mistaken for the link — only `link_client` writes one.
+   */
+  async function latestClientIntent(assessmentId: string) {
+    const { data, error } = await supabase
+      .from('commercial_industrial_assessment_audit_events')
+      .select('event_type, detail, created_at')
+      .eq('assessment_id', assessmentId)
+      .in('event_type', ['client_intended', 'client_created'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const clientId = (data?.detail as Record<string, unknown> | null)?.clientId;
+    if (!data || typeof clientId !== 'string') return null;
+    return {
+      clientId,
+      source: data.event_type === 'client_created' ? 'created' as const : 'intended' as const,
+      recordedAt: String(data.created_at),
+    };
+  }
+
   try {
     switch (body.operation) {
       // ---------------------------------------------------------------------
@@ -329,6 +485,13 @@ Deno.serve(async (req) => {
         }
         if (body.segment && VALID_SEGMENTS.has(body.segment)) {
           query = query.eq('segment', body.segment);
+        }
+        // The assessments started from one property-register entry — what the
+        // property's own page lists. See `registerLink.pure.ts` for why the
+        // link lives inside the payload's property section.
+        if (body.propertyId != null && body.propertyId !== '') {
+          if (!isUuid(body.propertyId)) return fail('propertyId is not valid', 400, corsHeaders, 'INVALID_PROPERTY');
+          query = query.eq(REGISTER_PROPERTY_ID_PATH, body.propertyId);
         }
         if (body.search && body.search.trim()) {
           // Escape PostgREST's `or` filter separators so a search string cannot
@@ -372,6 +535,20 @@ Deno.serve(async (req) => {
         const title = String(body.data?.title ?? 'Untitled assessment').slice(0, 300);
         const assessmentType = String(body.data?.assessmentType ?? 'commercial_investment').slice(0, 60);
 
+        // The client the assessment is being prepared for, when one was named.
+        // Checked before anything is written: a client this caller cannot
+        // reach is refused, not recorded. This is an intent, not a link — the
+        // link is still made on the final step, after reconciliation.
+        let intendedClientId: string | null = null;
+        if (body.intendedClientId != null && body.intendedClientId !== '') {
+          if (!isUuid(body.intendedClientId)) {
+            return fail('intendedClientId is not valid', 400, corsHeaders, 'INVALID_CLIENT');
+          }
+          const client = await loadReachableClient(body.intendedClientId);
+          if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
+          intendedClientId = body.intendedClientId;
+        }
+
         const { data, error } = await supabase
           .from('commercial_industrial_assessments')
           .insert({
@@ -390,6 +567,9 @@ Deno.serve(async (req) => {
         if (error) throw error;
 
         await writeAudit(data.id, 'assessment_created', { segment, assessmentType });
+        if (intendedClientId) {
+          await writeAudit(data.id, 'client_intended', { clientId: intendedClientId, source: 'new_assessment' });
+        }
         return json({ success: true, data }, 200, corsHeaders);
       }
 
@@ -702,7 +882,6 @@ Deno.serve(async (req) => {
       // team member, and superadmins see all. This function only ever narrows
       // that scope, never widens it.
       case 'search_clients': {
-        const term = String(body.search ?? '').trim().slice(0, 120);
         let query = supabase
           .from('clients')
           .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at');
@@ -715,11 +894,13 @@ Deno.serve(async (req) => {
 
         // Filter in the database, not after a truncated fetch — filtering a
         // 25-row page in memory would hide any client outside that page.
-        if (term) {
-          const safe = term.replace(/[,()\\*]/g, ' ');
-          query = query.or(
-            `primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%,primary_email.ilike.%${safe}%`,
-          );
+        //
+        // One condition per word, all of which must hold, so "Marcus Chen"
+        // finds Marcus Chen — the whole string matched against one field at a
+        // time found nobody, and an adviser who cannot find a client creates
+        // them again. See `clientRecords.pure.ts`.
+        for (const filter of clientSearchFilters(String(body.search ?? ''))) {
+          query = query.or(filter);
         }
 
         const { data, error } = await query
@@ -749,28 +930,46 @@ Deno.serve(async (req) => {
         const email = String(body.email ?? '').trim().slice(0, 254);
         const mobile = String(body.mobile ?? '').trim().slice(0, 40);
 
-        if (!firstName && !surname) {
-          return fail('A first name or surname is required', 400, corsHeaders, 'MISSING_NAME');
-        }
-        if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-          return fail('The email address is not valid', 400, corsHeaders, 'INVALID_EMAIL');
-        }
+        // Both names, because `clients` stores both as NOT NULL. This used to
+        // accept either and write `null` into the other, so a single-name
+        // client failed as an opaque 500 after the form had accepted it.
+        const problem = newClientProblem({ firstName, surname, email });
+        if (problem) return fail(problem.message, 400, corsHeaders, problem.code);
 
         // Duplicate guard on exact email: creating "the same client twice"
-        // from the linking step is the likeliest mistake this screen invites,
-        // and the search a click away already finds the existing record.
+        // from the linking step is the likeliest mistake this screen invites.
+        //
+        // The database narrows the candidates (`ilike`, where `_` is a
+        // wildcard) and `sameEmail` decides, so a near-miss never blocks.
+        // The book is checked whole, because a duplicate is a duplicate
+        // whoever it belongs to — but the existing record is only NAMED to a
+        // caller who may reach it. Anyone else is told what to do rather than
+        // to search for somebody their search can never show them.
         if (email) {
-          const { data: existingClient, error: dupError } = await supabase
+          const { data: candidates, error: dupError } = await supabase
             .from('clients')
-            .select('id, primary_first_name, primary_surname')
+            .select('id, primary_email')
             .ilike('primary_email', email)
-            .limit(1)
-            .maybeSingle();
+            .limit(10);
           if (dupError) throw dupError;
-          if (existingClient) {
+          const duplicate = (candidates ?? []).find((row: { primary_email: string | null }) => sameEmail(row.primary_email, email));
+          if (duplicate) {
+            const reachable = await loadReachableClient(
+              String(duplicate.id),
+              'id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at',
+            );
+            if (reachable) {
+              return json({
+                success: false,
+                code: 'DUPLICATE_EMAIL',
+                error: 'A client with this email address already exists. Use their existing record instead.',
+                existingClient: reachable,
+              }, 409, corsHeaders);
+            }
             return fail(
-              'A client with this email already exists — search for them instead.',
-              409, corsHeaders, 'DUPLICATE_EMAIL',
+              'A client with this email address is already in the client book, but not one assigned to you. '
+                + 'Ask an administrator to assign them to you, then link them here.',
+              409, corsHeaders, 'DUPLICATE_EMAIL_UNREACHABLE',
             );
           }
         }
@@ -778,8 +977,8 @@ Deno.serve(async (req) => {
         const { data: created, error: createError } = await supabase
           .from('clients')
           .insert({
-            primary_first_name: firstName || null,
-            primary_surname: surname || null,
+            primary_first_name: firstName,
+            primary_surname: surname,
             primary_email: email || null,
             primary_mobile: mobile || null,
             pipeline_status: 'lead',
@@ -834,6 +1033,17 @@ Deno.serve(async (req) => {
         const appliedChanges = Array.isArray(body.appliedChanges)
           ? body.appliedChanges.slice(0, 500) : [];
 
+        // A link is one open row. Relinking is reachable only through the API
+        // (the workspace unlinks first), and it used to leave the previous row
+        // open — a history showing one assessment linked to two clients at
+        // once. Close whatever is open before opening the new one.
+        const { error: closeError } = await supabase
+          .from('commercial_industrial_assessment_client_links')
+          .update({ unlinked_by: userId, unlinked_at: new Date().toISOString() })
+          .eq('assessment_id', existing.id)
+          .is('unlinked_at', null);
+        if (closeError) throw closeError;
+
         const { data: link, error: linkError } = await supabase
           .from('commercial_industrial_assessment_client_links')
           .insert({
@@ -880,6 +1090,11 @@ Deno.serve(async (req) => {
         const existing = await loadOwned(body.assessmentId);
         if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
         if (!existing.client_id) return fail('Assessment is not linked to a client', 409, corsHeaders);
+        // Unlinking writes `completed` below, which on an archived assessment
+        // would leave it `completed` while still carrying `archived_at`.
+        if (existing.status === 'archived') {
+          return fail('An archived assessment cannot be unlinked. Restore it first.', 409, corsHeaders, 'NOT_EDITABLE');
+        }
 
         // The link row survives — unlinking closes it, it does not erase it.
         await supabase
@@ -996,10 +1211,12 @@ Deno.serve(async (req) => {
         let candidates: unknown[] = [];
         try {
           const [createdRes, historicRes] = await Promise.all([
+            // Created from an assessment's own linking step, or named as the
+            // client an assessment was started for.
             supabase
               .from('commercial_industrial_assessment_audit_events')
               .select('assessment_id')
-              .eq('event_type', 'client_created')
+              .in('event_type', ['client_created', 'client_intended'])
               .eq('detail->>clientId', body.clientId)
               .limit(50),
             supabase
@@ -1060,11 +1277,39 @@ Deno.serve(async (req) => {
         if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
 
         const archiving = body.operation === 'archive';
+        // Idempotent: archiving an archived assessment would record `archived`
+        // as the status to restore to, and restoring a live one has nothing
+        // to undo.
+        const isArchived = existing.status === 'archived' || Boolean(existing.archived_at);
+        if (archiving === isArchived) return json({ success: true, data: existing }, 200, corsHeaders);
+
+        // Restore returns to the status held before archiving. It used to set
+        // `draft` for every unlinked assessment, so a completed assessment that
+        // was archived and restored lost its completion — and its report —
+        // without a word. See `statusAfterRestore`.
+        let nextStatus = 'archived';
+        if (!archiving) {
+          const { data: archivedEvent, error: eventError } = await supabase
+            .from('commercial_industrial_assessment_audit_events')
+            .select('detail')
+            .eq('assessment_id', existing.id)
+            .eq('event_type', 'assessment_archived')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (eventError) throw eventError;
+          nextStatus = statusAfterRestore({
+            recordedStatus: (archivedEvent?.detail as Record<string, unknown> | null)?.previousStatus,
+            clientId: existing.client_id ?? null,
+            currentCalculationId: existing.current_calculation_id ?? null,
+          });
+        }
+
         const { data, error } = await supabase
           .from('commercial_industrial_assessments')
           .update({
             archived_at: archiving ? new Date().toISOString() : null,
-            status: archiving ? 'archived' : (existing.client_id ? 'linked' : 'draft'),
+            status: nextStatus,
             updated_by: userId,
             version: Number(existing.version) + 1,
           })
@@ -1074,8 +1319,160 @@ Deno.serve(async (req) => {
           .single();
         if (error) throw error;
 
-        await writeAudit(existing.id, archiving ? 'assessment_archived' : 'assessment_restored', {});
+        await writeAudit(
+          existing.id,
+          archiving ? 'assessment_archived' : 'assessment_restored',
+          archiving ? { previousStatus: existing.status } : { restoredStatus: nextStatus },
+        );
         return json({ success: true, data }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // The client an assessment is being prepared for, before it is linked.
+      //
+      // Returns the client only where the caller may reach them. The link step
+      // uses this to start where the adviser left off — the client named when
+      // the assessment was started, or created from its intake step — instead
+      // of asking them to search again for somebody they already chose.
+      case 'intended_client': {
+        if (!body.assessmentId) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const intent = await latestClientIntent(existing.id);
+        if (!intent) return json({ success: true, data: null }, 200, corsHeaders);
+        const client = await loadReachableClient(
+          intent.clientId,
+          'id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at',
+        );
+        return json({
+          success: true,
+          data: { clientId: intent.clientId, source: intent.source, recordedAt: intent.recordedAt, client: client ?? null },
+        }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // Whether an assessment may be deleted, and what deleting it removes.
+      //
+      // The dialog asks this before it offers the button, so a refusal is a
+      // sentence with a reason and an alternative rather than a failed click.
+      // The same facts are gathered again by `delete` itself — this answer is
+      // advice, and the delete is the authority.
+      case 'deletion_preview': {
+        if (!body.assessmentId) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        const [{ facts, counts }, permitted] = await Promise.all([gatherDeletionFacts(existing), mayDelete()]);
+        const verdict = decideDeletion(facts);
+        return json({
+          success: true,
+          data: {
+            ...verdict,
+            permitted,
+            typedConfirmation: deletionNeedsTypedConfirmation(String(existing.status)),
+            reference: existing.reference,
+            title: existing.title,
+            status: existing.status,
+            counts,
+          },
+        }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // Permanently delete an assessment.
+      //
+      // Only the owner (every query here is scoped by user_id), only with
+      // `can_delete` on the module, and only an assessment that never left its
+      // owner's working set — never linked to a client, no report ever
+      // requested from it. Everything else is refused with the reason and
+      // archiving offered instead; see `deletion.pure.ts`. The database cascades
+      // the calculation runs, scenarios, link history and audit trail, and its
+      // own `ON DELETE RESTRICT` on the report ledger stands behind the check.
+      case 'delete': {
+        if (!body.assessmentId) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        if (!(await mayDelete())) {
+          return fail(
+            'You do not have permission to delete Commercial & Industrial assessments. Archive it instead, or ask an administrator.',
+            403, corsHeaders, 'FORBIDDEN',
+          );
+        }
+
+        const { facts, counts } = await gatherDeletionFacts(existing);
+        const verdict = decideDeletion(facts);
+        if (!verdict.allowed) {
+          return json({
+            success: false,
+            code: 'DELETION_REFUSED',
+            block: verdict.block,
+            error: verdict.message,
+            archiveOffered: verdict.archiveOffered,
+          }, 409, corsHeaders);
+        }
+
+        if (
+          deletionNeedsTypedConfirmation(String(existing.status))
+          && String(body.confirmReference ?? '').trim().toUpperCase() !== String(existing.reference).toUpperCase()
+        ) {
+          return fail(
+            `Type the reference ${existing.reference} to delete a completed assessment.`,
+            400, corsHeaders, 'CONFIRMATION_REQUIRED',
+          );
+        }
+
+        // Scoped by version as well as owner: an assessment that changed
+        // between the checks above and this statement is not deleted.
+        const { data: deleted, error: deleteError } = await supabase
+          .from('commercial_industrial_assessments')
+          .delete()
+          .eq('id', existing.id)
+          .eq('user_id', userId)
+          .eq('version', existing.version)
+          .select('id');
+        if (deleteError) {
+          // A report render began after the checks: the ledger's RESTRICT held,
+          // which is the answer rather than a fault.
+          if (deleteError.code === '23001' || deleteError.code === '23503') {
+            return json({
+              success: false,
+              code: 'DELETION_REFUSED',
+              block: 'report_requested',
+              error: 'A report was requested from this assessment while it was being deleted, so it has been kept. '
+                + 'Archive it instead.',
+              archiveOffered: true,
+            }, 409, corsHeaders);
+          }
+          throw deleteError;
+        }
+        if (!deleted || deleted.length === 0) {
+          return json({
+            success: false,
+            code: 'VERSION_CONFLICT',
+            error: 'This assessment changed while it was being deleted. Reload it and try again.',
+          }, 409, corsHeaders);
+        }
+
+        // The assessment's own audit trail went with it, by design. The act of
+        // deleting is recorded here, in the function log: `activity_logs`'
+        // action vocabulary is a Postgres enum with no value for it, and what is
+        // deleted is by construction a working draft that never reached a
+        // client or a document.
+        console.info('[manage-ci-assessments] assessment deleted', JSON.stringify({
+          assessmentId: existing.id,
+          reference: existing.reference,
+          status: existing.status,
+          segment: existing.segment,
+          assessmentType: existing.assessment_type,
+          calculationRuns: counts.calculationRuns,
+          scenarios: counts.scenarios,
+          deletedBy: userId,
+          deletedAt: new Date().toISOString(),
+        }));
+
+        return json({ success: true, data: { id: existing.id, reference: existing.reference } }, 200, corsHeaders);
       }
 
       // ---------------------------------------------------------------------

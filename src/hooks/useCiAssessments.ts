@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeSecureFunction, type InvokeResult } from '@/lib/secureInvoke';
 import {
+  assessmentTypeDefinition,
   hydrateAssessmentPayload,
   type AssessmentPayload,
   type AssessmentStatus,
@@ -171,9 +172,27 @@ async function call<T>(operation: string, payload: Record<string, unknown> = {})
   return invokeSecureFunction<Envelope<T>>('manage-ci-assessments', { operation, ...payload });
 }
 
-/** Flatten the edge envelope into `{ data, error }` the callers already expect. */
+/**
+ * Flatten the edge envelope into `{ data, error }` the callers already expect.
+ *
+ * The server's `code` is kept on BOTH paths. A refusal arrives as a non-2xx —
+ * a version conflict is a 409 — and `invokeSecureFunction` reports those in
+ * `res.error`, carrying the code. This used to return only the message there,
+ * so `result.code === 'VERSION_CONFLICT'` could never be true: an edit made in
+ * another tab surfaced as "Save failed" with no Reload offered, instead of
+ * "Changed elsewhere — reload".
+ */
 function unwrap<T>(res: InvokeResult<Envelope<T>>): { data: T | null; error: string | null; code?: string } {
-  if (res.error) return { data: null, error: res.error.message };
+  if (res.error) {
+    const body = res.data as Envelope<T> | null;
+    return {
+      data: null,
+      // Some refusals (entitlement, auth) carry a structured `error`; only a
+      // string is a sentence the page can show.
+      error: typeof body?.error === 'string' ? body.error : res.error.message,
+      code: res.error.code ?? body?.code,
+    };
+  }
   if (res.data && res.data.success === false) {
     return { data: null, error: res.data.error ?? 'Request failed', code: res.data.code };
   }
@@ -403,11 +422,19 @@ export function useCiAssessment(assessmentId: string | null) {
 
     inFlightRef.current = true;
     setSaveState('saving');
+    // The record's `assessment_type` and `segment` columns travel with the
+    // payload they describe. They were written once, at creation, so changing
+    // "Commercial investment" to "Industrial investment" on the Type step left
+    // the record filed — and filtered, and counted — as commercial. A type that
+    // fits either segment keeps the one chosen when the assessment was started.
+    const typeSegment = assessmentTypeDefinition(next.assessmentType).segment;
     const result = await ciAssessmentApi.autosave({
       assessmentId,
       payload: next,
       expectedVersion: versionRef.current,
       section,
+      assessmentType: next.assessmentType,
+      segment: typeSegment === 'either' ? undefined : typeSegment,
     });
     inFlightRef.current = false;
 

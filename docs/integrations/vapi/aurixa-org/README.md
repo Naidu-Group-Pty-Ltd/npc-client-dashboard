@@ -14,6 +14,7 @@ snapshot and does not try to be one.
 | `prompts/npc-inbound-agent.b834610e.md` | NPC Inbound Agent (Angela) | `b834610e-469e-4f9f-9130-01a1fa751064` | `f24069d0eb68752fc38166e93aa58a7c` |
 | `prompts/npc-ifc-inbound.ed0aa90f.md` | NPC IFC Inbound | `ed0aa90f-e5ea-439d-b086-f694cf5f978d` | `764c54fa5b7a7b32645373b738d3d8c3` |
 | `prompts/npc-strategy-session-inbound.f958ec93.md` | NPC Strategy Session Inbound | `f958ec93-6f41-4507-a7b1-f8c8d54e775e` | `0db3dc62dfbc616b25634976128fc2c6` |
+| `prompts/npc-discovery-call-no-show-follow-up.9013efd8.md` | NPC Discovery Call No Show Follow Up | `9013efd8-c662-4466-99f9-bb9597b44cfb` | `78b365c8a70de6c5f4bcd6eb5e6b14ee` |
 
 Each file is the `model.messages[0].content` string exactly as Vapi returned it
 after the change, byte for byte. The MD5 above is what a `GET /assistant/<id>`
@@ -34,9 +35,13 @@ sending the entire `model` object — `provider`, `model`, `toolIds`,
 `knowledgeBase` and `messages` together. Sending `messages` alone drops the tool
 bindings and the knowledge base, silently, and the assistant keeps answering.
 
-**The knowledge-base file id differs between orgs.** It is
-`1e87753e-6c9e-427f-8e72-95c24c0dcea6` here and `9fff4149-…` in `snapshot/`.
-Read it live; do not copy it from the source-org capture.
+**The knowledge-base file id differs between orgs, and so does the model.** The
+file id is `1e87753e-6c9e-427f-8e72-95c24c0dcea6` here and `9fff4149-…` in
+`snapshot/`; `NPC Discovery Call No Show Follow Up` runs `gpt-5.6-luna` here
+where the snapshot says `gpt-5.2-chat-latest`, and carries `temperature` and
+`maxTokens` that the other three do not. Read the whole `model` object live and
+send it back; copying any of it from the source-org capture writes a stale value
+over a current one.
 
 **A Make mapper resolves `{{firstName}}`.** These prompts contain five such
 tokens, in the very sentences instructing the assistant never to say a raw

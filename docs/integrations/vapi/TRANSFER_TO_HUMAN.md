@@ -114,16 +114,45 @@ is where the live line answers:
 | NPC Inbound Agent (Angela) | `b834610e` | defects 1 and 2 |
 | NPC IFC Inbound | `ed0aa90f` | defect 2 |
 | NPC Strategy Session Inbound | `f958ec93` | defect 2 |
+| NPC Discovery Call No Show Follow Up | `9013efd8` | defect 2 |
 
-The latter two are squad members a caller reaches **after** Angela routes them,
-so the same request to them hit the same wall. Their prompts were byte-identical
-to their snapshots before the change, and their fix is the identical rule edit;
+The middle two are squad members a caller reaches **after** Angela routes them,
+so the same request to them hit the same wall. All three carried prompts
+byte-identical to their snapshots beforehand and took the identical rule edit;
 their behaviour is asserted from the ablation above rather than re-tested per
 assistant.
 
-**Still carrying defect 2 and not fixed:** `NPC Discovery Call No Show Follow
-Up`. It is an outbound follow-up assistant, not on the inbound path, and
-changing it was outside what was asked.
+## Defect 2 is estate-wide, and the first count of it was wrong
+
+The detector that produced the original scope matched only the long-form
+wording, `the assistant's next turn MUST be tool-only`. A case-sensitive
+lowercase variant — `next turn must be tool-only` — appears in **twelve NPC
+assistants, 39 times**, and **every one of the twelve that has a transfer
+protocol defers its transfer call this way**. Six assistants that the first
+sweep reported clean are not.
+
+Two rules for reading that number, both measured rather than assumed:
+
+**Not every deferral is a defect.** A deferral is only broken when the sentence
+before it gives the caller no reason to speak. *"Would it help if I briefly
+explain what NPC Services does?"* → *"If the caller says yes, the next turn must
+be tool-only"* is **correct**: the caller answers, so the turn exists. A
+transfer confirmation, and a spoken goodbye before `end_call_tool`, are the two
+shapes where it is not.
+
+**So the remaining exposure is `end_call_tool`, not the transfer.** After the
+four fixes above, no transfer-related deferral remains in any of them — verified
+by a case-insensitive scan of each committed prompt. What is left in those four
+is three to six `end_call_tool` and mid-flow tool steps apiece, untouched
+because they were outside what was asked and because a mid-flow step is the case
+where the caller usually does speak again.
+
+**Still carrying a deferred transfer call:** the eight remaining NPC assistants
+with a transfer protocol — Active Nurturing, Discovery Call Follow Up Test, IFC
+Follow Up, IFC No Show Follow Up, Opt In Follow Up Inbound (twice), Quiz Follow
+Up, Strategy Session (Phone) Follow Up, Strategy Session (Phone) No Show. All
+are outbound follow-up assistants, none is on the inbound path, and none was
+touched.
 
 Every change was a `PATCH` of the whole `model` object — Vapi replaces a
 top-level key wholesale, so `toolIds`, `knowledgeBase`, provider and model were

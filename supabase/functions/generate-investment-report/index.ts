@@ -7,7 +7,14 @@ import { getBrandConfig } from '../_shared/brand-config.ts';
 import { evidenceCautionLine, publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
-import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
+import { compassSections, financialSections, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
+import {
+  documentOutline,
+  sectionContract,
+  sectionRepairNote,
+  sectionShapeShortfall,
+  type CanonicalTier,
+} from '../_shared/compassSectionContract.ts';
 import { compassDocumentContract } from '../_shared/reports/investment/compassDocumentContract.pure.ts';
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
@@ -243,6 +250,14 @@ interface ReportSectionDefinition {
   /** Upper bound in characters. Optional: the legacy scope templates set none. */
   maxContentLength?: number;
   requiredKeywords: string[];
+  /** The section registry's id, for a canonical section; absent on the legacy scope templates. */
+  registryId?: string;
+  /**
+   * This section's own instructions and the document's rules, carried
+   * untrimmed in the system message on every call for it
+   * (`compassSectionContract.ts`). Absent on the legacy templates.
+   */
+  contract?: string;
 }
 
 /**
@@ -630,6 +645,7 @@ function normaliseGenerationTier(_raw: unknown): 'compass-40' | 'financial-analy
 function canonicalSectionsToGenerationSections(
   canonicalSections: CanonicalSectionDefinition[],
   prefix: string,
+  tier: CanonicalTier,
 ): ReportSectionDefinition[] {
   return canonicalSections.map((section, index) => {
     // ~6 chars a word, ×1.5 for the tables and directives that are not narrative
@@ -657,92 +673,30 @@ function canonicalSectionsToGenerationSections(
       minContentLength,
       maxContentLength,
       requiredKeywords: section.sourceHeadings.slice(0, 3).map((heading) => heading.split(/\s+/)[0]?.toLowerCase()).filter(Boolean),
+      registryId: section.id,
+      // Carried untrimmed, in the system message, on every call for this
+      // section, so its purpose, its ceiling and the document's rules cannot be
+      // trimmed away from it — see the module.
+      contract: sectionContract(section, tier),
     };
   });
 }
 
 function getCanonicalSectionsForTier(tier: 'compass-40' | 'financial-analysis'): ReportSectionDefinition[] {
   return tier === 'financial-analysis'
-    ? canonicalSectionsToGenerationSections(financialSections(), 'financialSection')
-    : canonicalSectionsToGenerationSections(compassSections(), 'compassSection');
+    ? canonicalSectionsToGenerationSections(financialSections(), 'financialSection', tier)
+    : canonicalSectionsToGenerationSections(compassSections(), 'compassSection', tier);
 }
 
-function buildCanonicalTemplateContext(tier: 'compass-40' | 'financial-analysis'): string {
-  const sections = tier === 'financial-analysis' ? financialSections() : compassSections();
-  const title = tier === 'financial-analysis'
-    ? 'Financial Analysis Report Structure'
-    // Read from the band rather than written, because the registry's page
-    // budget is the thing that decides it and a literal beside it is how the
-    // two come to disagree. v3.0 said 38 against a 23-page document.
-    : `Investment Location & Property Fit Report Structure (${COMPASS_PAGE_BAND.min}–${COMPASS_PAGE_BAND.max} pages)`;
-
-  const compassStyleRules = tier === 'compass-40' ? [
-    '',
-    '## MANDATORY WRITING STYLE — data first, no commentary blocks',
-    'Every section follows the same three steps, repeated as many times as it has findings:',
-    '1. **State the finding** in the sentence that introduces the data — one sentence, specific, with the number in it.',
-    '2. **Show the data** — a figure, a table, or a short list.',
-    '3. **Move on** to the next finding.',
-    '',
-    'A paragraph that follows a table or a figure and restates it is the single',
-    'thing this report must not contain. If a sentence would begin "this means",',
-    '"in other words", "for an investor this suggests" or similar, delete it: the',
-    'finding belongs in the sentence that introduced the data, not underneath it.',
-    '',
-    '## FORBIDDEN LABELS — these must not appear anywhere, in any form',
-    `- Never write ${EDITORIAL_LABELS.map((l) => `"${l}"`).join(', ')}.`,
-    '- That applies to all three forms: as a heading (`### NPC view`), as a bold',
-    '  lead-in (`**What This Means**`), and as a bare line above a paragraph.',
-    '- There is no permitted number of these. Not one per section, not one per report.',
-    '- Advisory judgement belongs in exactly two places: the Executive Verdict and the',
-    '  Final Recommendation. In both it is written as continuous prose with no label.',
-    '',
-    '## HARD EXCLUSIONS (Compass / Location & Property Fit Report)',
-    '- DO NOT include deposit, stamp duty, LMI, LVR, gross/net yield, loan amount, interest rate, monthly/annual repayments, cashflow, sensitivity, 10-year projections, capital growth %, equity-after-X-years, depreciation, negative gearing, land tax. ALL financial modelling lives in the separate Financial Analysis Report.',
-    // The asking price and the indicative rent are NOT on that list, and the
-    // line that used to put them there contradicted three things at once: the
-    // tier policy (`identityFigures` is true on every tier — what the property
-    // costs is a fact about the asset the way its land size is), the document
-    // itself (the cover band and the dashboard both print them), and Market
-    // Positioning, whose whole job is to place this property in its market and
-    // which cannot do it without naming the price. What may not happen is the
-    // ANALYSIS of them, and the KPI-row form, both of which the next two lines
-    // and the sanitiser hold.
-    '- The asking price and the indicative weekly rent MAY be stated, as facts about the property, in a sentence. They may not be analysed — no yield from them, no repayment on them, no projection of them — and they may not be set as a KPI row or a table of figures.',
-    '- DO NOT include a dashboard / KPI row of financial figures in the Executive Verdict or anywhere else.',
-    '- DO NOT emit `[citation]`, `[source needed]`, `[TBD]` or any placeholder. Either name the real source inline, or omit the claim and let the Source Appendix carry it.',
-    '- DO NOT repeat education, transport or employment content across sections. Each is rendered ONCE, in the section that owns it.',
-    '- DO NOT include transition paragraphs ("As we move into…", "Building on the above…", "This flows naturally…"). Start the next finding.',
-    '',
-    '## LENGTH AND STRUCTURE',
-    '- Respect the per-section word ceiling given above. It is a ceiling, not a target to reach: a section that says what it has to say in half of it is finished.',
-    '- At most 4 `###` sub-headings in a section. A sub-heading carries a group of findings, not a single paragraph.',
-    '- At most 2 visualisations per section, each showing data that is not also in a table on the same page.',
-    '- Finish every sentence and every paragraph. If you are running out of room, close the section cleanly rather than stopping mid-thought.',
-    '',
-    '## CONSISTENCY CHECKS',
-    '- Bed / bath / car / land size stated in the Property & Locality Snapshot MUST match every later reference (Property Fit, Risk Dashboard, Final Recommendation).',
-    '- Property type (house / townhouse / unit) MUST be identical everywhere it is mentioned.',
-    '',
-    '## RECOMMENDATION FORMAT',
-    'The Final Recommendation opens with one of three labels on its own line — **Proceed**, **Proceed with caution**, or **Not suitable** — then 150–250 words of continuous unlabelled rationale tied to location, tenant demand and risk, then the immediate actions as a short list. No financial verdict.',
-    '',
-  ].join('\n') : '';
-
-  return [
-    `# ${title}`,
-    '',
-    ...sections.flatMap((section) => [
-      `## ${section.name}`,
-      `- Page budget: ${section.pageBudget}`,
-      `- Purpose: ${section.purpose}`,
-      `- Narrative word ceiling: ${section.maxWordCount} (a ceiling, not a target)`,
-      section.visualComponents.length ? `- Required visual/data components: ${section.visualComponents.join(', ')}` : '- Required visual/data components: narrative only',
-      '',
-    ]),
-    compassStyleRules,
-  ].join('\n');
-}
+/*
+ * The structure guide — every section's budget, purpose, ceiling and visuals,
+ * then the document's rules — used to be built here and PREPENDED to the base
+ * prompt, where `generateReportSection`'s head-tail trim cut it on every
+ * section of every run (24 Sep 2026: all 32 calls `trimmed true`, the head
+ * keeping 8.5–11.6 KB of an 18.7 KB guide). The rules and each section's own
+ * entry travel untrimmed in the system message now, and the base carries an
+ * outline; both are composed in `_shared/compassSectionContract.ts`.
+ */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compass-40 content sanitizer
@@ -1405,6 +1359,19 @@ function validateSectionContent(
     issues.push('No data tables found');
     score -= 10;
   }
+
+  // The SHAPE the registry declares, where it declares one — today the Risk
+  // Dashboard's summary register. Every rule above measures length, headings
+  // or words; none asks whether the section is the thing it was asked to be,
+  // which is how five Compass reports in a row shipped a Risk Dashboard with
+  // no declared register and a passing score. 45 is chosen so that no other
+  // merit can carry such a section past the threshold (100 − 45 < 60): it is
+  // retried once, with the correction carried, when the run has the window.
+  const shapeShortfall = sectionShapeShortfall(sectionDef.registryId, content || '');
+  if (shapeShortfall) {
+    issues.push(shapeShortfall);
+    score -= 45;
+  }
   
   return {
     isValid: score >= 60, // Threshold for acceptable content
@@ -1832,6 +1799,11 @@ async function generateReportSection(
   maxRetries: number = 2,
   /** Absolute time (ms) by which every model call for this section must be over; null = unbounded. */
   deadlineAt: number | null = null,
+  /**
+   * What a rejected draft of this section left out (`sectionRepairNote`),
+   * carried after the section's contract. Null on a first attempt.
+   */
+  correction: string | null = null,
 ): Promise<{ content: string; citations: any[]; error?: string }> {
   // For section10 (Projections & SWOT), inject explicit investment score data
   let investmentScoreContext = '';
@@ -1948,7 +1920,32 @@ Generate the ${sectionDef.name} sections now:`;
     console.warn(`⚠️ Section instructions alone are close to Perplexity's message limit for ${sectionDef.name}; applying final tail-preserving trim.`);
     sectionPrompt = limitPromptContext(sectionPrompt, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Final section prompt for ${sectionDef.name}`, 'tail');
   }
-  const safeSystemMessage = limitPromptContext(systemMessage, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES, 'System prompt', 'head');
+  /*
+   * This section's own instructions and the document's rules travel in the
+   * SYSTEM message, budgeted first and never trimmed.
+   *
+   * Before 24 Sep 2026 they were the head of the base prompt and were cut on
+   * every call — see `compassSectionContract.ts` for what never reached the
+   * model. They go here rather than into the user message's pin because the
+   * user message is full: the pinned evidence reached 45.6 KB on a NSW run,
+   * where a 7.4 KB Risk Dashboard contract would have pushed the final
+   * safety trim into the planning controls table — §6's defect, caused by
+   * its own remedy. The system message had 31 KB unused (3.5 KB of 35 KB),
+   * and document rules are what a system message is for. A correction a
+   * rejected draft earned follows the contract.
+   */
+  const sectionContractBlock = [sectionDef.contract ?? '', correction ?? '']
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n\n---\n\n');
+  const withSectionContract = (system: string): string =>
+    sectionContractBlock ? `${system}\n\n---\n\n${sectionContractBlock}` : system;
+  const safeSystemMessage = withSectionContract(limitPromptContext(
+    systemMessage,
+    Math.max(2_000, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES - byteLength(sectionContractBlock) - 200),
+    'System prompt',
+    'head',
+  ));
   const emergencySectionPromptUnbounded = `Generate ONLY this investment report section for ${propertyAddress}: ${sectionDef.name}.
 
 Required headings:
@@ -1968,7 +1965,7 @@ Start now with the first heading.`;
   const emergencySectionPrompt = byteLength(emergencySectionPromptUnbounded) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES
     ? limitPromptContext(emergencySectionPromptUnbounded, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Emergency section prompt for ${sectionDef.name}`, 'head-tail')
     : emergencySectionPromptUnbounded;
-  console.log(`📏 Prompt size for ${sectionDef.name}: user=${byteLength(sectionPrompt)} bytes, system=${byteLength(safeSystemMessage)} bytes`);
+  console.log(`📏 Prompt size for ${sectionDef.name}: user=${byteLength(sectionPrompt)} bytes, system=${byteLength(safeSystemMessage)} bytes (section contract ${byteLength(sectionContractBlock)} bytes, never trimmed)`);
 
   // Retry loop with improved backoff and jitter
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -1999,8 +1996,10 @@ Start now with the first heading.`;
         console.log(`🧯 Using emergency compact prompt for ${sectionDef.name}: ${byteLength(userPromptForAttempt)} bytes`);
       }
       
+      // The compact prompt is the one that runs when the full one was refused,
+      // so it is exactly where a section's instructions must not go missing.
       const systemPromptForAttempt = useCompactPrompt
-        ? 'You are an Australian property investment analyst. Produce concise, sourced markdown and never invent exact figures.'
+        ? withSectionContract('You are an Australian property investment analyst. Produce concise, sourced markdown and never invent exact figures.')
         : safeSystemMessage;
       const response = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
         method: 'POST',
@@ -6930,7 +6929,11 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
       // against the cap it is a multiple of.
       if (compass40OverlayActive) {
         REPORT_SECTIONS = getCanonicalSectionsForTier('compass-40');
-        templateContext = buildCanonicalTemplateContext('compass-40');
+        // An OUTLINE, not the guide: each section's own entry and the
+        // document's rules travel untrimmed on its own call (`contract`), and
+        // the other sections' purposes sat at the head of the base — the part
+        // the trim keeps — where they displaced the method and the evidence.
+        templateContext = documentOutline('compass-40');
         templateContextIsCanonical = true;
         console.log(`✓ Compass-40: using canonical ${REPORT_SECTIONS.length}-section registry (legacy template bypassed)`);
       } else {
@@ -7021,6 +7024,14 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
        * Two of those controls had just been carried over from the deleted
        * COMPASS-40 overlay on the ground that removing a ceremony must not
        * remove a control. They were being removed by arithmetic.
+       *
+       * And then by a second arithmetic this cap never saw: the whole base
+       * prompt is trimmed head-tail in `generateReportSection`, and by 24 Sep
+       * 2026 the pinned evidence had grown to 33–46 KB, leaving the base
+       * 14–19 KB of which the guide's first 8.5–11.6 KB survived — never the
+       * rules, never a late section's purpose. The canonical string is an
+       * OUTLINE now, and what it used to carry travels untrimmed per section,
+       * in the system message (`compassSectionContract.ts`).
        */
       const limitedTemplateContext = templateContextIsCanonical
         ? templateContext
@@ -7056,8 +7067,9 @@ ${limitedTemplateContext}
      * not contain it.
      *
      * REMOVING A CEREMONY MUST NOT REMOVE A CONTROL, and every control they
-     * held is in `buildCanonicalTemplateContext` above, which is injected on
-     * the same runs: the forbidden editorial labels in all three forms with no
+     * held is in `documentRules` (`compassSectionContract.ts`), which reaches
+     * every section call of the same runs untrimmed, in the system message:
+     * the forbidden editorial labels in all three forms with no
      * permitted number, the financial exclusions, the placeholder and citation
      * prohibitions, render-each-topic-once, no transition paragraphs, the word
      * ceiling with its sub-heading and visualisation caps, the bed/bath/car/
@@ -7461,6 +7473,10 @@ YOUR DEDICATED PROPERTY PARTNER
       // section, because what follows the last section has to fit too.
       const sectionDeadlineAt = runStartedAt + SECTION_CALL_HARD_STOP_MS
         - (isLastSection ? POST_PROCESSING_RESERVE_MS : 0);
+      // What a rejected attempt left out, carried on the next one. Only a
+      // declared shape earns one (`sectionShapeShortfall`); every other retry
+      // asks the same question again, as it always has.
+      let sectionCorrection: string | null = null;
       
       for (let attempt = 1; attempt <= maxSectionAttempts; attempt++) {
         sectionAttempts = attempt;
@@ -7480,6 +7496,7 @@ YOUR DEDICATED PROPERTY PARTNER
           enhancedData,
           2,
           sectionDeadlineAt,
+          sectionCorrection,
         );
         
         if (result.error === SECTION_BUDGET_DEFERRED) {
@@ -7535,6 +7552,10 @@ YOUR DEDICATED PROPERTY PARTNER
             console.log(`✓ Section ${sectionDef.name} passed validation with score ${validation.score}`);
             break;
           } else if (attempt < maxSectionAttempts) {
+            if (sectionShapeShortfall(sectionDef.registryId, cleanContent)) {
+              sectionCorrection = sectionRepairNote(sectionDef.registryId);
+              if (sectionCorrection) console.log(`🩹 ${sectionDef.name}: declared shape missing — the retry carries the correction.`);
+            }
             console.log(`⚠️ Section ${sectionDef.name} below threshold (score: ${validation.score}), retrying...`);
             await new Promise(resolve => setTimeout(resolve, 2000)); // Wait before retry
           }
@@ -8356,47 +8377,25 @@ YOUR DEDICATED PROPERTY PARTNER
     console.log('Report generated successfully, content length:', reportContent.length);
     console.log('Citations found:', citations.length);
 
-    // Validate report structure against schema
-    console.log('🔍 Validating report structure...');
-    let schemaValidationFlags: any[] = [];
-    
-    try {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL');
-      const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-      
-      if (supabaseUrl && supabaseAnonKey) {
-        const schemaValidatorClient = createClient(supabaseUrl, supabaseAnonKey);
-        
-        const { data: schemaValidation, error: schemaError } = await schemaValidatorClient.functions.invoke(
-          'report-schema-validator',
-          {
-            body: { reportContent }
-          }
-        );
-        
-        if (schemaError) {
-          console.error('Schema validation error:', schemaError);
-        } else if (schemaValidation) {
-          console.log('✓ Schema validation complete');
-          console.log('Schema valid:', schemaValidation.valid);
-          console.log('Schema issues found:', schemaValidation.issues?.length || 0);
-          
-          // Convert schema issues to validation flags
-          if (schemaValidation.issues && schemaValidation.issues.length > 0) {
-            schemaValidationFlags = schemaValidation.issues.map((issue: any) => ({
-              type: 'schema',
-              severity: issue.severity || 'medium',
-              field: issue.section || 'structure',
-              message: issue.message,
-              value: issue.details || null
-            }));
-          }
-        }
-      }
-    } catch (validationError) {
-      console.error('Error during schema validation:', validationError);
-      // Continue without blocking report generation
-    }
+    // No call to `report-schema-validator`, deliberately.
+    //
+    // It was called here on every finalisation and had never contributed a
+    // flag to any report, for three independent reasons each sufficient on
+    // its own: it was invoked through an ANON client while the validator
+    // requires a user session, so it answered 401 — five of five generator
+    // calls between 23 Sep 13:30Z and 24 Sep 05:32Z, logged as "Schema
+    // validation error" beside every finished report; its answer is
+    // `{ success, data: { issues } }` and this read `.issues` off the top
+    // level, so a 200 would still have produced nothing; and the nine
+    // sections it requires are the LEGACY layout (Executive Summary, Financial
+    // Analysis, Investment Score, Projections …), none of which is a Compass
+    // section name, so a working call would have filed "critical" flags
+    // against every Compass, which deliberately carries no financial
+    // modelling. A Compass's structure is judged by
+    // `runQAValidation` above, against the registry it was generated from;
+    // the legacy engine had no working structure check before this change and
+    // has none after it — removing a call that never ran changes no report.
+    const schemaValidationFlags: any[] = [];
 
     // Update database if reportId provided
     if (reportId && supabaseClient) {

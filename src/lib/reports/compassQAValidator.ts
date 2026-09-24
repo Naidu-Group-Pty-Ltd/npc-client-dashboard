@@ -57,6 +57,7 @@ import {
   FINANCIAL_ANALYSIS_SECTIONS,
   COMPASS_PAGE_BAND,
   PROTECTED_SECTION_IDS,
+  compassSections,
   type CompassSectionDefinition,
 } from './compassSectionRegistry';
 import { countWords, estimatePages, findEditorialLabels } from './compassPostProcessor';
@@ -145,6 +146,19 @@ export interface QAReport {
   findings: QAFinding[];
 }
 
+/**
+ * The ANALYSIS of a purchase, which the Compass does not carry.
+ *
+ * Not the price and not the rent. TIER_FRAMEWORK.md Decision E (17 Sep 2026):
+ * "Withholding the modelling is not withholding the price … the asking price
+ * and the indicative rent are facts about the asset in the way its land size
+ * is. What leaves the Compass is the analysis of a PURCHASE — yield, LVR, loan
+ * structure, cash flow, sensitivity, the ten-year series." `/weekly rent/` and
+ * `/purchase price/` predated that decision and kept reporting the facts it
+ * keeps as errors — 9 Hollow Street, 24 Sep 2026, two `financial-exclusion`
+ * errors on a Compass stating its own price and rent. A check that fires on
+ * what the tier is meant to say cannot report what it is meant not to.
+ */
 const FINANCIAL_KEYWORDS = [
   /\bgross yield\b/i,
   /\bnet yield\b/i,
@@ -152,8 +166,6 @@ const FINANCIAL_KEYWORDS = [
   /\bLVR\b/,
   /\bLMI\b/,
   /\bP&I\b/,
-  /\bweekly rent\b/i,
-  /\bpurchase price\b/i,
   /\bstamp duty\b/i,
   /\bloan amount\b/i,
   /\bmonthly repayment/i,
@@ -169,6 +181,11 @@ const FINANCIAL_KEYWORDS = [
   /\bequity after\s+\d+\s+years?\b/i,
   /\bcapital growth (assumption|rate)\b/i,
 ];
+
+/** Protected sections the generator writes — the ones a Compass must carry. */
+export const REQUIRED_PROTECTED_SECTION_IDS: ReadonlySet<string> = new Set(
+  compassSections().map((s) => s.id).filter((id) => PROTECTED_SECTION_IDS.has(id)),
+);
 
 const FORBIDDEN_PLACEHOLDERS = [
   /\[citation\]/i,
@@ -508,11 +525,18 @@ export function runQAValidation(
   }
 
   // 6 — Protected sections must be present (Compass only)
+  //
+  // Only those the generator WRITES. `compass.cover` is Protected (nothing may
+  // trim it) and `includeInCompass: false` (the template draws the cover; the
+  // generator writes no cover section), so requiring every Protected id made
+  // this an error on every Compass ever produced — five of five on 23–24 Sep
+  // 2026 — and a check that always fails can never report a true one. The
+  // required set is DERIVED from the list that is generated, never restated.
   if (tier === 'compass-40') {
     const presentDefs = new Set(
       sections.map((s) => findDef(s.heading, registry)?.id).filter(Boolean),
     );
-    for (const protectedId of PROTECTED_SECTION_IDS) {
+    for (const protectedId of REQUIRED_PROTECTED_SECTION_IDS) {
       if (!presentDefs.has(protectedId)) {
         findings.push({
           rule: 'missing-protected-section',

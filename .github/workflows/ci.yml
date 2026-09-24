@@ -67,6 +67,12 @@ jobs:
       - name: This deployment ships its own backend identity
         run: npx vitest run src/lib/__tests__/shippedBackendIdentity.spec.ts
 
+      # The identity every non-recovery email is sent under. The contract spec
+      # classifies every Resend send site and fails on one it cannot classify,
+      # so it only guards anything if it runs here.
+      - name: A clone's email is sent as the clone
+        run: npx vitest run src/lib/__tests__/emailIdentity.spec.ts src/lib/__tests__/emailIdentityRead.spec.ts src/lib/__tests__/emailIdentity.contract.spec.ts
+
       # Every build-time variable is read in the one form the bundler replaces.
       #
       # Vite substitutes the literal `import.meta.env.VITE_X` and nothing else.

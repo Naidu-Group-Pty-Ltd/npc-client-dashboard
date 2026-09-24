@@ -44,6 +44,23 @@ function env(name: string): string | null {
   }
 }
 
+/**
+ * What this module asks of a client, and deliberately nothing more.
+ *
+ * Typing this as supabase-js's own `SupabaseClient` would make the CALLER'S
+ * import specifier part of this module's contract. Deno reads every esm.sh
+ * URL as its own module, so `SupabaseClient` from `@2` is a different type
+ * from `SupabaseClient` from `@2.55.0` — and these functions import
+ * supabase-js from four URLs (`@2`, `@2.39.3`, `@2.45.0`, `@2.55.0`). Six
+ * call sites across five functions failed to type-check for exactly that,
+ * while the two that happened to import `@2` passed: a contract nobody
+ * declared, enforced by which URL a caller had copied.
+ *
+ * A method signature rather than a function-typed property, so the parameter
+ * is checked bivariantly and a real client's generic `from` satisfies it.
+ */
+type SettingsReader = { from(table: string): unknown };
+
 type Read<T> = { value: T | null; failed: boolean };
 
 async function readContactDetails(client: SupabaseClient): Promise<Read<ContactDetailsLike>> {
@@ -88,16 +105,18 @@ async function readWhitelabel(client: SupabaseClient): Promise<Read<WhitelabelLi
 /**
  * The identity every non-recovery Resend email is sent under.
  *
- * Pass the function's own service-role client where it has one; without one,
- * a client is made from this deployment's environment, as `getBrandConfig()`
- * does.
+ * Pass the function's own service-role client where it has one — from any
+ * supabase-js version, see `SettingsReader` — and without one a client is made
+ * from this deployment's environment, as `getBrandConfig()` does.
  */
-export async function getEmailIdentity(supabase?: SupabaseClient): Promise<EmailIdentity> {
+export async function getEmailIdentity(supabase?: SettingsReader): Promise<EmailIdentity> {
   const now = Date.now();
   if (cached && now - cached.at < CACHE_TTL_MS) return cached.identity;
 
-  const client: SupabaseClient =
-    supabase ?? createClient(env('SUPABASE_URL')!, env('SUPABASE_SERVICE_ROLE_KEY')!);
+  // Narrowed once, here: everything below reads the client as supabase-js
+  // declares it, and only this line is exposed to the caller's own version.
+  const client = (supabase
+    ?? createClient(env('SUPABASE_URL')!, env('SUPABASE_SERVICE_ROLE_KEY')!)) as unknown as SupabaseClient;
 
   const [brand, contact, whitelabel] = await Promise.all([
     getBrandConfig(client),

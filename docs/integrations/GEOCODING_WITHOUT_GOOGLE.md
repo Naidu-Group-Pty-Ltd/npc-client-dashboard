@@ -615,3 +615,88 @@ the programme remains unverified. One operator note: Mapillary's
 capture dates vary by street (this one is 2019); the panel shows the
 date, and an operator who prefers Google's fresher imagery for a
 deployment simply reorders `STREET_IMAGERY_PROVIDERS`.
+
+## 16. An address the chain could not read (24 Sep 2026)
+
+Report `79d677d6` (93 Schofields Farm Road, created from a realestate.com.au
+listing) was written with its geography unresolved: eight evidence sources
+missing, data completeness 33%, grade withheld. The address never placed, and
+the production log said why in two lines:
+
+```
+07:46:18  [geocoder] location-intelligence-service/geocode: nominatim: 0 candidate(s), none an address
+07:46:18  [geocoder] location-intelligence-service/geocode: abs_locality: no suburb named (tallawong) in NSW
+```
+
+Four faults, stacked:
+
+1. **The composer dropped the suburb** (`src/lib/reports/propertyAddress.pure.ts`).
+   The scrape returned the street `93 Schofields Farm Road (tallawong)`, the
+   suburb `Schofields`, `NSW` and `2762`; "never repeat a part the address
+   already carries" found the word *Schofields* inside the **street name** and
+   left the suburb out. A suburb is now judged by POSITION — a later
+   comma-separated part, or the words the address ends with once its state and
+   postcode are set aside — so a street named after its suburb (Schofields Road,
+   Blacktown Road, Rouse Hill Drive) keeps it.
+2. **A bracketed note sat where the suburb is read.** `(tallawong)` is the
+   listing agent's note of the neighbouring suburb: the development is split,
+   some of it Schofields and some Tallawong (the owner's own reading of the
+   listing). `stripAddressAnnotations` removes a bracketed note before anything
+   reads the address, the cache key included.
+3. **A comma-less address handed Nominatim its state and postcode as the
+   street.** `streetLineOf` sets aside a trailing postcode, state abbreviation
+   (or a full state name followed by a postcode) and country — and the suburb
+   where one is known — from the first part. A state's full name on its own is
+   not stripped: "12 Victoria" is a street line.
+4. **A suburb is a filter the street may not need.** On a development split the
+   listing's suburb and the one OpenStreetMap files the street under can
+   differ, and a structured search with the wrong `city` finds nothing. Where
+   the street and the postal area are both known the plan asks once more
+   WITHOUT the suburb. That question is there to find the STREET, so
+   `suburblessAnswerRefusal` accepts only the house or the street, and only
+   where the answer names the postal area asked: a suburb or postcode centroid
+   is the locality fallback's job under the suburb's own name, a different
+   postal area is a different street of the same name, and an answer naming
+   none cannot show it is on this one. The bracketed place name is kept as
+   the locality fallback's **second** candidate (`annotatedLocalities`), tried
+   only after the first finds nothing.
+
+Where the caller names no state, the plan reads it from the text, and that
+read had its own fault, found alongside these rather than observed: the first
+state name ANYWHERE, so `5 Victoria Street, Brisbane QLD 4000` was asked in
+Victoria. It is now the state word in the locality position
+(`localityStateOf` — followed by nothing but a postcode and the country), the
+same rule the report generator's intake reads by.
+
+What is asked is decided in `geocodePlan.pure.ts` and tested without a network;
+`geocoder.ts` does the I/O and follows the plan. **The suburb a report's
+evidence is keyed on is not decided here at all** — once a point is found the
+report resolves its geography from the point, so a house on either side of a
+split is described by the suburb it actually stands in. Under an ASGS edition
+that predates a new suburb, that is the older suburb, which is what the edition
+says.
+
+The chain was driven against a stubbed Nominatim and ABS (the sandbox reaches
+neither): on the code before this change it asked `street=93 Schofields Farm
+Road (tallawong) NSW 2762 city=(tallawong)` and then the ABS for
+`(TALLAWONG)` — the production failure, reproduced — and after it, the stored
+address resolves at address precision on the first question, the composed one
+on the second, and with OpenStreetMap silent the ABS is asked for Tallawong.
+A second-question answer in another postal area, one that is only the
+postcode's centroid, and one that names no postcode are each refused, and the
+ABS suburb centroid answers instead. An ordinary comma address asks exactly
+the question it asked before, under the same cache key (asserted in
+`geocodePlan.spec.ts`).
+
+**The composer had the mirror-image fault.** Judging the suburb by position
+reads each comma-separated part with its locality tail set aside, and set
+aside to the END, `Mount Victoria NSW 2786` loses the word that makes it
+(`victoria` is a state name) and reads as "mount" — so the suburb would have
+been added a second time. Every reading along the way is kept and compared,
+not only the last (`propertyAddress.spec.ts`, Mount Victoria and Port
+Victoria).
+
+**Not verified until deploy:** that Nominatim itself holds 93 Schofields Farm
+Road. The harness proves the question; the answer is OpenStreetMap's. If it
+does not, the ABS suburb centroid is the floor, which resolves the geography
+at suburb grain.

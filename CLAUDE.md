@@ -192,6 +192,24 @@ network call. The three orders (`AMENITY_PROVIDERS`, `COMMUTE_PROVIDERS`,
 than absent — a register that has not had its first ingest, a token nobody
 has minted, must degrade to yesterday's behaviour, not to nulls.
 
+**An address the chain cannot read is not a place that does not exist.** Read
+§16 of the same doc before touching `geocodePlan.pure.ts`, `streetLineOf`,
+`stripAddressAnnotations` or `composePropertyAddress`. Report `79d677d6`
+(93 Schofields Farm Road, from a listing) was written with eight evidence
+sources missing because the composer dropped the suburb — it found
+"Schofields" inside the STREET name — and the geocoder then took the agent's
+note `(tallawong)` for the suburb. Three rules. **A suburb is judged by
+position**, never by the word appearing somewhere: streets are named after the
+suburbs they run through. **A bracketed note is not address** but a bracketed
+place name is kept as the locality fallback's second candidate — on a
+development split (Schofields/Tallawong) the listing may name either. And
+**the suburb is a filter the street may not need**: where street and postal
+area are known the plan asks once more without it, and accepts only the
+street, in that postal area — never a centroid, never an answer naming no
+postcode (`suburblessAnswerRefusal`). The suburb evidence is keyed on is decided by the POINT,
+never by any of these names. `geocodePlan.pure.ts` holds the decisions so
+they are tested without a network.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,
@@ -3502,6 +3520,20 @@ second pump can rewind a counter the generator reported complete. And **a run
 that wrote nothing stamps nothing**. A report stamped before this recovers by
 **Regenerate**: with every section banked the hook calls no generator and only
 re-runs the finishing step, pinned on the hook both before and after.
+
+**And a continuation carries no subject facts.** Read §13 of the same doc
+before touching `subjectFacts.pure.ts`, the early persistence or the
+`extractedOverrides` of the final write. Only the FIRST invocation receives
+`propertyDetails`; the facts were written to `manual_overrides` only by the
+final write — itself a continuation, with nothing to write — so a listing's
+4 bedrooms reached sections 1-5 and sections 6-16 said "not held" (report
+`79d677d6`, QA `attribute-asserted-and-withheld` twice). They are banked in the
+early persistence now, extracted facts as the floor under anything the row or
+the operator holds. The intake postcode is `parseAddressText`'s (the last
+four-digit token that agrees with the state): the first-token parse read
+`1408/5 SECOND AVE, Blacktown NSW 2148` as postcode 1408. The state is the
+state word in the LOCALITY position (`localityStateOf`), never the first state
+name anywhere — that read `5 Victoria Street, Brisbane QLD 4000` as VIC.
 
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),

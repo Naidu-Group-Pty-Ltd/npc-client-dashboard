@@ -41,6 +41,8 @@ import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { amenityFactBlocks, transportFactBlocks } from '../_shared/reports/location/amenityFactBlocks.pure.ts';
 import { approvalsFactBlocks, summariseApprovals } from '../_shared/reports/market/approvalsFactBlocks.pure.ts';
+import { parseAddressText } from '../_shared/reports/market/addressGeography.pure.ts';
+import { extractedSubjectOverrides, overridesWithSubjectFacts } from '../_shared/reports/investment/subjectFacts.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
@@ -2861,27 +2863,28 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     let detectedPostcode = null;
     let detectedState = null;
     
-    // Extract postcode and state from input
+    // Extract postcode and state from input.
+    //
+    // The postal area an address names is its LAST four-digit token, and only
+    // where it agrees with the state (`parseAddressText`, the rule the
+    // geocoder already reads by) — never the FIRST. On 24 Sep 2026
+    // `1408/5 SECOND AVE, Blacktown NSW 2148` (report de783a4b) parsed the
+    // unit number 1408 here; the ABS calls were re-keyed once the geography
+    // resolved, but the school, risk, rent, climate and location calls all
+    // went out on 1408. `postcodeMatch` survives only for the postcode-only
+    // mode below, where the input IS the postcode.
+    //
+    // The state is the same: the state word in the LOCALITY position
+    // (`localityStateOf`), never the first state name anywhere — which read
+    // `5 Victoria Street, Brisbane QLD 4000` as VIC and sent the geocoder to
+    // look for a Brisbane street in Victoria.
     const postcodeMatch = propertyAddress.match(/\b(\d{4})\b/);
-    const stateMatch = propertyAddress.match(/\b(NSW|VIC|QLD|WA|SA|TAS|NT|ACT|Western Australia|New South Wales|Victoria|Queensland|South Australia|Tasmania|Northern Territory|Australian Capital Territory)\b/i);
-    
-    if (postcodeMatch) {
-      detectedPostcode = postcodeMatch[1];
+    const parsedAddress = parseAddressText(propertyAddress);
+    if (parsedAddress.postcode) {
+      detectedPostcode = parsedAddress.postcode;
     }
-    if (stateMatch) {
-      const stateInput = stateMatch[1].toUpperCase();
-      // Convert full state names to abbreviations
-      const stateMap: Record<string, string> = {
-        'WESTERN AUSTRALIA': 'WA',
-        'NEW SOUTH WALES': 'NSW',
-        'VICTORIA': 'VIC',
-        'QUEENSLAND': 'QLD',
-        'SOUTH AUSTRALIA': 'SA',
-        'TASMANIA': 'TAS',
-        'NORTHERN TERRITORY': 'NT',
-        'AUSTRALIAN CAPITAL TERRITORY': 'ACT'
-      };
-      detectedState = stateMap[stateInput] || stateInput;
+    if (parsedAddress.state) {
+      detectedState = parsedAddress.state;
     }
     
     // Detect analysis mode
@@ -3044,9 +3047,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
     // RF-7.2B.1B1 — which postcode may SELECT client-facing crime evidence.
     //
-    // `detectedPostcode` is `propertyAddress.match(/\b(\d{4})\b/)` — the first
-    // four-digit token in a free-text string, which cannot tell a postcode from
-    // a builder-stock lot number and has no way to say it is unsure.
+    // `detectedPostcode` is read from the free text (the last four-digit token
+    // that agrees with the state, since 24 Sep 2026 — it was the FIRST, which
+    // read a builder-stock lot number or a unit number as a postcode). Either
+    // way it is a parse of a typed string and has no way to say it is unsure.
     // `propertyDetails.postcode` is a field the caller filled in; the generator
     // has always received it and logged it, and has never read it for this.
     //
@@ -3072,12 +3076,13 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       
       // If not detected earlier, try to extract from formatted input
       if (!postcode) {
-        const postcodeMatch = formattedInput.match(/\b(\d{4})\b/);
-        postcode = postcodeMatch ? postcodeMatch[1] : null;
+        // The same rule as at intake: the last four-digit token that agrees
+        // with the state, never a unit or lot number.
+        postcode = parseAddressText(formattedInput).postcode;
       }
       if (!state || state === 'NSW') {
-        const stateMatch = formattedInput.match(/\b(NSW|VIC|QLD|WA|SA|TAS|NT|ACT)\b/i);
-        if (stateMatch) state = stateMatch[1].toUpperCase();
+        const parsedState = parseAddressText(formattedInput).state;
+        if (parsedState) state = parsedState;
       }
       if (!suburb) {
         // Extract suburb from address (everything between street and state/postcode)
@@ -7306,6 +7311,20 @@ YOUR DEDICATED PROPERTY PARTNER
         // had already put in front of a reader.
         earlyUpdate.market_fact_snapshot = safeGeneration.snapshot;
 
+        // The subject facts the caller supplied (a listing scrape, a PDF, the
+        // form) are banked NOW, by the invocation that has them. Every
+        // continuation reads the subject back from `manual_overrides` and
+        // carries none of its own, and the final write — itself a
+        // continuation — has nothing to write them from, so a listing's
+        // bedrooms were stated by the first five sections and "not held" by
+        // the other eleven (report 79d677d6, 24 Sep 2026). Same precedence as
+        // the final write: extracted facts are the floor. `subjectFacts.pure.ts`.
+        const subjectOverrides = overridesWithSubjectFacts(extractedSubjectOverrides(propertyDetails), mergedOverrides);
+        if (subjectOverrides) {
+          earlyUpdate.manual_overrides = subjectOverrides;
+          console.log('🏠 Subject facts banked for continuations:', Object.keys(extractedSubjectOverrides(propertyDetails)).join(', '));
+        }
+
         // Counted BEFORE the write so a zero-progress hand-off can tell the
         // truth about what this invocation banked. `updated_at` is always in
         // the payload, so it never counts as a field.
@@ -8707,20 +8726,11 @@ YOUR DEDICATED PROPERTY PARTNER
       };
       
       // Build initial manual overrides from extracted property data
-      // This applies to ALL input methods (manual, URL scrape, PDF upload)
-      const extractedOverrides: any = {};
-      
-      if (propertyDetails?.price) extractedOverrides.purchasePrice = propertyDetails.price;
-      if (propertyDetails?.weeklyRent) extractedOverrides.weeklyRent = propertyDetails.weeklyRent;
-      if (propertyDetails?.landSizeSqm) extractedOverrides.landSizeSqm = propertyDetails.landSizeSqm;
-      if (propertyDetails?.buildSizeSqm) extractedOverrides.buildSizeSqm = propertyDetails.buildSizeSqm;
-      if (propertyDetails?.landPrice) extractedOverrides.landPrice = propertyDetails.landPrice;
-      if (propertyDetails?.buildPrice) extractedOverrides.buildPrice = propertyDetails.buildPrice;
-      if (propertyDetails?.beds) extractedOverrides.bedrooms = propertyDetails.beds;
-      if (propertyDetails?.baths) extractedOverrides.bathrooms = propertyDetails.baths;
-      if (propertyDetails?.carSpaces) extractedOverrides.carSpaces = propertyDetails.carSpaces;
-      if (propertyDetails?.isNewBuild !== undefined) extractedOverrides.isNewBuild = propertyDetails.isNewBuild;
-      if (propertyDetails?.buildType) extractedOverrides.buildType = propertyDetails.buildType;
+      // This applies to ALL input methods (manual, URL scrape, PDF upload).
+      // One definition with the early write (`subjectFacts.pure.ts`), which is
+      // the one that actually reaches a continuation — this write usually runs
+      // in a continuation with no `propertyDetails` at all.
+      const extractedOverrides: any = extractedSubjectOverrides(propertyDetails);
       
       // Merge all overrides: extracted < existing DB < frontend (priority order)
       // Frontend overrides (mergedOverrides already contains frontend + existing DB)

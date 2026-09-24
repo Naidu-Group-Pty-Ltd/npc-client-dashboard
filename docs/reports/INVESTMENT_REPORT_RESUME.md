@@ -656,3 +656,66 @@ any of them: every Compass section's own instructions and the document's rules
 were cut from its prompt on every call. That is recorded in
 [`INVESTMENT_STRUCTURE.md`](./INVESTMENT_STRUCTURE.md) under *What a section is
 told*. 
+
+## §13 The first invocation's facts reach the last section (24 Sep 2026)
+
+Measured on the regeneration test the same afternoon, from production logs.
+
+**A listing's facts reached five sections of sixteen.** A report is written
+over many invocations; the first carries what the caller extracted
+(`propertyDetails`: a listing scrape, a parsed PDF, the form), every later one
+is a continuation that carries a report id and nothing else, and reads the
+subject back from the row's `manual_overrides`. The extracted facts were
+written to `manual_overrides` only by the FINAL write — which is itself a
+continuation, with no `propertyDetails` to write from — so a Compass generated
+from a listing never persisted them at all. On `79d677d6` (93 Schofields Farm
+Road) the first invocation logged `Beds: 4`, `Baths: 2`, `Land size: 401` and
+wrote sections 1-5; the eleven continuations logged `From URL scrape: false`
+and no facts, sections 6-16 said the counts were not held, the scoring service
+was sent the modelling default of 3 bedrooms, and Compass QA failed the
+document twice with `attribute-asserted-and-withheld`. `de783a4b` (a
+one-bedroom APARTMENT) lost its property type the same way — the final write's
+list never carried `propertyType`.
+
+The facts are now banked by the invocation that has them, in the early
+persistence, before the first section is written (`subjectFacts.pure.ts`), under
+the precedence the final write always used: what the caller extracted is the
+floor, and anything the row or the operator already holds wins. The final write
+builds its set from the same definition. The listing's descriptive TEXT still
+reaches only the first invocation's sections — there is no column for it and it
+is not carried in `manual_overrides`.
+
+**A unit number was the postcode.** The intake parse took the FIRST four-digit
+token, so `1408/5 SECOND AVE, Blacktown NSW 2148` became postcode 1408. The ABS
+calls were re-keyed once the geography resolved (POA 2148), but the school,
+risk, rent, climate and location calls went out on 1408 (`Found 20 schools in
+1408`). The postcode is now `parseAddressText`'s — the last four-digit token
+that agrees with the state, the rule the geocoder already reads by.
+
+**The state was the first state name anywhere, which reads as a street.** Found
+while fixing the postcode, not observed on a report: the intake took the first
+of `NSW|VIC|…|Victoria|Queensland|…` in the address, so `5 Victoria Street,
+Brisbane QLD 4000` read VIC — its postcode then disagreed with VIC and was
+dropped, and the location calls went out for a Brisbane street in Victoria —
+and `12 Main St, Victoria Point QLD 4165` lost its suburb to the same word. The
+state is now the state word in the LOCALITY position (`localityStateOf`: one
+followed by nothing but a postcode and the country), which is where every form
+this product composes puts it; a state's name inside a street or suburb is part
+of the address.
+
+**The library said what it was told when the page opened.** The owner's
+screenshot showed Schofields "processing" and Lawley "failed" after the rows
+were `completed` (07:56:07 and 08:00:35); a reload showed the truth. The list
+was fetched once. It now re-reads itself quietly every 30 s while any listed
+report is `pending` or `processing` (a visible tab only), and when a generation
+starts or is stopped (`libraryRefresh.pure.ts`), through a ref so an interval
+never applies an earlier render's filters, and without raising an error or a
+toast over a good list.
+
+**And the 503 window came back, and did no harm.** At 08:00:15–08:00:31 the
+edge runtime refused `get-investment-reports` twice, `financial-validation-service`
+and `internal-messaging` (5-13 ms, no function version — nothing reached a
+worker), during 60 Lawley Street's last section: the situation that stamped it
+failed at 05:31. This time the hook's reads retried through it, the finishing
+step ran at 08:00:45, no failure stamp was written, and the card reads
+`completed` at A+ 89 — §12's fix, observed under a real outage.

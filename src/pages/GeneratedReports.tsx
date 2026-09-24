@@ -33,6 +33,8 @@ import { ReportLibrarySkeleton } from '@/components/reports/library/ReportLibrar
 import { ReportLibraryPagination } from '@/components/reports/library/ReportLibraryPagination';
 import type { ComparisonAnalysis, InvestmentReport } from '@/components/reports/library/types';
 import { buildGeneratedReportGroups, type GeneratedReportGroup } from '@/lib/reports/generatedReportGroups';
+import { hasReportInFlight, LIBRARY_REFRESH_INTERVAL_MS } from '@/lib/reports/libraryRefresh.pure';
+import { REPORT_GENERATION_CANCELLED_EVENT, REPORT_GENERATION_STARTED_EVENT } from '@/lib/reports/generationSignals.pure';
 import { getCanonicalReportType, normalizeComparableReportType } from '@/lib/reports/reportVariants';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
@@ -462,11 +464,15 @@ export default function GeneratedReports() {
     };
   }, [investmentReports]); // Keep this separate for event handling
 
-  const fetchInvestmentReports = async () => {
+  const fetchInvestmentReports = async (options: { silent?: boolean } = {}) => {
     const requestId = ++investmentRequestSequence.current;
     const hadSuccessfulData = investmentLastSuccessfulLoad !== null;
-    if (hadSuccessfulData) setInvestmentRefreshing(true);
-    else setInvestmentLoading(true);
+    // A quiet re-read (below) neither flashes the loading state nor, if it
+    // fails, replaces a good list with an error: the next one tries again.
+    if (!options.silent) {
+      if (hadSuccessfulData) setInvestmentRefreshing(true);
+      else setInvestmentLoading(true);
+    }
     try {
       const listOptions: Record<string, unknown> = {
         isArchived: false,
@@ -493,6 +499,7 @@ export default function GeneratedReports() {
       }
 
       if (error || !data?.success) {
+        if (options.silent) return;
         const correlationId = data?.correlationId || error?.correlationId;
         const message = data?.details || data?.error || error?.message || 'Please try again.';
         setInvestmentError({ message, correlationId });
@@ -510,6 +517,7 @@ export default function GeneratedReports() {
       setInvestmentLastSuccessfulLoad(new Date());
     } catch (error) {
       if (requestId !== investmentRequestSequence.current) return;
+      if (options.silent) return;
       const message = error instanceof Error ? error.message : 'Please try again.';
       setInvestmentError({ message });
       toast({ title: 'Investment reports could not be loaded', description: message, variant: 'destructive' });
@@ -521,6 +529,34 @@ export default function GeneratedReports() {
     }
   };
   
+  // The library re-reads itself while a report is still being written, and
+  // when a generation starts or is stopped — it used to be read once, so a
+  // finished report went on reading "processing" and a regenerating one
+  // "failed" until the page was reloaded (`libraryRefresh.pure.ts`). The ref
+  // keeps each re-read on the CURRENT filters: an interval holding the
+  // function from an earlier render would overwrite a changed filter's list.
+  const fetchInvestmentReportsRef = useRef(fetchInvestmentReports);
+  useEffect(() => {
+    fetchInvestmentReportsRef.current = fetchInvestmentReports;
+  });
+  const investmentReportInFlight = hasReportInFlight(investmentReports);
+  useEffect(() => {
+    if (!investmentReportInFlight) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchInvestmentReportsRef.current({ silent: true });
+    }, LIBRARY_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [investmentReportInFlight]);
+  useEffect(() => {
+    const onGenerationChanged = () => { void fetchInvestmentReportsRef.current({ silent: true }); };
+    window.addEventListener(REPORT_GENERATION_STARTED_EVENT, onGenerationChanged);
+    window.addEventListener(REPORT_GENERATION_CANCELLED_EVENT, onGenerationChanged);
+    return () => {
+      window.removeEventListener(REPORT_GENERATION_STARTED_EVENT, onGenerationChanged);
+      window.removeEventListener(REPORT_GENERATION_CANCELLED_EVENT, onGenerationChanged);
+    };
+  }, []);
+
   // Fetch archived reports separately when needed
   const fetchArchivedReports = async () => {
     setArchivedInvestmentLoading(true);

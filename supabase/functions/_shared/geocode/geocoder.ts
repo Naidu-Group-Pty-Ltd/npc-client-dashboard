@@ -44,7 +44,7 @@ import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from '../googleMapsBody.pu
 import { meteredFetch } from '../meteredFetch.ts';
 import { fetchWithTimeout } from '../publicAbuseControls.ts';
 import { normaliseAuState, normalisePostcode, type AuState } from '../auLocality.pure.ts';
-import { parseAddressText } from '../reports/market/addressGeography.pure.ts';
+import { planGeocode, suburblessAnswerRefusal } from './geocodePlan.pure.ts';
 import { stripLocalityQualifier } from '../geography/asgsGeography.pure.ts';
 import {
   ABS_ATTRIBUTION,
@@ -68,7 +68,6 @@ import {
   chooseNominatimPlace,
   fromNominatim,
   nominatimSearchUrl,
-  streetLineOf,
   type NominatimPlace,
 } from './osmGeocode.pure.ts';
 import { awaitOsmTurn, consumeOsmDailyAllowance } from './osmAllowance.ts';
@@ -220,8 +219,17 @@ function gated(result: GeocodeResult): Attempt {
   return { ok: true, result };
 }
 
-// deno-lint-ignore no-explicit-any
-async function askNominatim(supabase: any, ask: GeocodeAsk, opts: Required<Pick<GeocodeOptions, 'timeoutMs' | 'env'>>): Promise<Attempt> {
+async function askNominatim(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  ask: GeocodeAsk,
+  opts: Required<Pick<GeocodeOptions, 'timeoutMs' | 'env'>>,
+  /**
+   * Set for the question asked WITHOUT the suburb: the answer must then be
+   * the street and name this postal area (`suburblessAnswerRefusal`).
+   */
+  withinPostcode: string | null = null,
+): Promise<Attempt> {
   // One unit of the day's allowance, immediately before the one request it
   // is for; fail-closed, because a limiter nobody can read is a ceiling
   // nobody can enforce and the public service's goodwill is what it protects.
@@ -246,6 +254,10 @@ async function askNominatim(supabase: any, ask: GeocodeAsk, opts: Required<Pick<
   const chosen = chooseNominatimPlace(places, asksForStreet(ask));
   const mapped = chosen ? fromNominatim(chosen) : null;
   if (!mapped) return { ok: false, reason: 'no_match', providerRefused: false, detail: `nominatim: ${places.length} candidate(s), none an address` };
+  if (withinPostcode) {
+    const refusal = suburblessAnswerRefusal(mapped, withinPostcode);
+    if (refusal) return { ok: false, reason: 'no_match', providerRefused: false, detail: `nominatim: ${refusal}` };
+  }
   return gated(mapped);
 }
 
@@ -369,14 +381,14 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
   const allowLocality = options.allowLocalityFallback ?? true;
   const tried: GeocodeProvider[] = [];
 
-  const address = (ask.address ?? '').replace(/\s+/g, ' ').trim();
-  if (!address) return { ok: false, reason: 'no_match', providerRefused: false, detail: 'no address', tried };
-
-  const parsed = parseAddressText(address);
-  const suburb = (typeof ask.suburb === 'string' && ask.suburb.trim()) ? ask.suburb.trim() : parsed.suburb;
-  const state = normaliseAuState(ask.state) ?? parsed.state;
-  const postcode = normalisePostcode(ask.postcode) ?? parsed.postcode;
-  const fullAsk: GeocodeAsk = { address, street: ask.street ?? streetLineOf({ address }), suburb, state, postcode };
+  // What is asked — the address with its bracketed notes removed, the street
+  // line, the suburb, the second question without the suburb and the
+  // locality candidates — is decided in `geocodePlan.pure.ts`, where it is
+  // tested without a network. This function does the asking.
+  const plan = planGeocode(ask);
+  if (!plan) return { ok: false, reason: 'no_match', providerRefused: false, detail: 'no address', tried };
+  const { address, ask: fullAsk } = plan;
+  const { state, postcode } = fullAsk;
 
   const key = geocodeCacheKey(fullAsk);
   const cached = await readCache(supabase, key);
@@ -388,10 +400,27 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
     if (provider === 'nominatim') {
       tried.push(provider);
       attempt = await askNominatim(supabase, fullAsk, { timeoutMs, env });
+      // A suburb OpenStreetMap files differently (a development split runs
+      // one street through two) makes the structured search find nothing, so
+      // the plan's second question drops it — and accepts only the street,
+      // in the postal area asked (`suburblessAnswerRefusal`).
+      if (!attempt.ok && attempt.reason === 'no_match' && plan.withoutSuburb) {
+        const second = await askNominatim(supabase, plan.withoutSuburb, { timeoutMs, env }, plan.withoutSuburb.postcode ?? null);
+        if (second.ok || second.reason !== 'no_match') attempt = second;
+      }
     } else if (provider === 'abs_locality') {
       if (!allowLocality) continue;
       tried.push(provider);
-      attempt = await askAbsLocality(fullAsk, suburb, state, postcode, timeoutMs);
+      // The suburb, then the listing's bracketed place name, each only after
+      // the one before it found nothing. With no candidate at all the
+      // provider says so rather than asking the ABS for nothing.
+      const [first, ...rest] = plan.localityCandidates;
+      attempt = await askAbsLocality(fullAsk, first ?? null, state, postcode, timeoutMs);
+      for (const alternative of rest) {
+        if (attempt.ok || attempt.reason !== 'no_match') break;
+        const next = await askAbsLocality(fullAsk, alternative, state, postcode, timeoutMs);
+        if (next.ok || next.reason !== 'no_match') attempt = next;
+      }
     } else {
       tried.push(provider);
       attempt = await askGoogle(supabase, fullAsk, { timeoutMs, env, feature });

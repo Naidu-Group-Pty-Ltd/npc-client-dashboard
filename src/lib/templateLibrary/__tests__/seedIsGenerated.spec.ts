@@ -88,4 +88,35 @@ describe('the seeded catalogue is compared to what generates it', () => {
     const drift = builder.slice(builder.indexOf('function reportDrift'));
     expect(drift.slice(0, drift.indexOf('\nfunction main'))).toContain('process.exit(1)');
   });
+
+  it('stands only the currency comparison down where the seed is carried, not authored', () => {
+    const builder = read('scripts/template-library/buildSeedCatalogue.ts');
+    // The marker the object index and the seed skeletons stand down on. A seed
+    // past what a cascade carries in one file never reaches a clone, so this
+    // comparison said "never written" about a seed the prime wrote — the one
+    // red check on npc-client-dashboard#245 on 24 Sep 2026, and Mission
+    // Control merges no cascade pull request with a red check. It FAILS
+    // CLOSED: an equality on the one value, so unset means assert.
+    expect(builder).toContain("env.BACKEND_DEPLOYED_BY === 'mission-control'");
+
+    // The templates are still validated on every repository: the refusal on
+    // a problem comes before the stand-down, and the stand-down comes before
+    // the comparison it skips.
+    const main = builder.slice(builder.indexOf('\nfunction main'));
+    const refusal = main.indexOf('problems.length > 0');
+    const standDown = main.indexOf('seedIsCarriedNotAuthored()');
+    const comparison = main.indexOf('reportDrift(sql)');
+    expect(refusal).toBeGreaterThan(-1);
+    expect(standDown).toBeGreaterThan(refusal);
+    expect(comparison).toBeGreaterThan(standDown);
+
+    // And the step hands it the value, or it reads `undefined` and fails
+    // closed on every clone — the starvation the object index shipped with.
+    // `check-gate-env-wiring.mjs` holds the same line from the security job.
+    const ci = read('.github/workflows/ci.yml');
+    expect(ci).toContain(
+      'BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}\n'
+      + '        run: npm run templates:library:seed:check',
+    );
+  });
 });

@@ -34,7 +34,7 @@ describe('a load is refused, never emptied', () => {
   it('refuses a parse that found nothing', () => {
     const g = guardProjectionRows([]);
     expect(g.ok).toBe(false);
-    if (!g.ok) expect(g.reason).toMatch(/publisher that published nothing/);
+    if (g.ok === false) expect(g.reason).toMatch(/publisher that published nothing/);
   });
 
   it('accepts a base and its projected years, and reports what it holds', () => {
@@ -58,7 +58,7 @@ describe('a misread column is caught by magnitude, per grain', () => {
   it('refuses a year read as a population and a code read as one', () => {
     const g = guardProjectionRows([row({ value: 401011001 })]);
     expect(g.ok).toBe(false);
-    if (!g.ok) expect(g.reason).toMatch(/unit or column drift/);
+    if (g.ok === false) expect(g.reason).toMatch(/unit or column drift/);
   });
 
   it('lets a state hold what an SA2 cannot', () => {
@@ -78,7 +78,7 @@ describe('an estimate is not a projection', () => {
   it('refuses a series that holds only its base', () => {
     const g = guardProjectionRows([row({ year: 2021, year_kind: 'base' })]);
     expect(g.ok).toBe(false);
-    if (!g.ok) expect(g.reason).toMatch(/an estimate is not a projection/);
+    if (g.ok === false) expect(g.reason).toMatch(/an estimate is not a projection/);
   });
 
   it('refuses two bases, and a projected year at or before the base', () => {
@@ -93,7 +93,7 @@ describe('one figure, one row', () => {
   it('refuses a key read twice', () => {
     const g = guardProjectionRows([row({}), row({ value: 20_500 })]);
     expect(g.ok).toBe(false);
-    if (!g.ok) expect(g.reason).toMatch(/read twice/);
+    if (g.ok === false) expect(g.reason).toMatch(/read twice/);
   });
 
   it('upserts on the table’s own key, in bounded batches', () => {

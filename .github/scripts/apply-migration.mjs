@@ -5,7 +5,8 @@
  * for why this exists rather than `supabase db push`. The short version: the
  * migration ledger in this project does not record what has been applied, so
  * "apply everything pending" is not a safe instruction here. This applies the
- * single file it is given.
+ * single file it is given, after the workflow's preflight
+ * (`.github/scripts/apply-preflight.mjs`) has checked it against the ledger.
  *
  * The only clever part is the chunker, and it is deliberately narrow. It
  * recognises exactly one shape — a single `INSERT INTO … VALUES (…),(…) ON
@@ -20,6 +21,8 @@
  * thing that makes this safe to point at production.
  */
 import { readFileSync } from 'node:fs';
+import { ledgerQuery } from '../../scripts/lib/ledgerQuery.mjs';
+import { recordAppliedMigration } from '../../scripts/security/ledgerRecord.mjs';
 
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const REF = process.env.PROJECT_REF;
@@ -204,17 +207,27 @@ for (const s of statements) {
 
 const after = await countRows('after');
 
+// The row, and the proof of it, come from the same module the psql route
+// uses (`.github/scripts/record-migration.mjs`), so both routes write the same
+// row: the version, the name, and the file itself as the CLI would record it.
+// It is sent as its own request after the file, never appended to the file's
+// last statement: statements in one request share an implicit transaction,
+// and a file using CREATE INDEX CONCURRENTLY cannot run inside one.
+let recordLine = '';
 if (RECORD_VERSION) {
-  const version = FILE.match(/(\d{14})_/)?.[1];
-  const name = FILE.replace(/.*\/\d{14}_/, '').replace(/\.sql$/, '');
-  if (version) {
-    await run(
-      `insert into supabase_migrations.schema_migrations (version, name)
-       select '${version}', '${name.replace(/'/g, "''")}'
-       where not exists (select 1 from supabase_migrations.schema_migrations where version = '${version}');`,
-      'record version',
-    );
-    console.log(`Recorded ${version} in schema_migrations.`);
+  if (DRY_RUN) {
+    recordLine = 'would record the version, and the body where it can be stored';
+    console.log(`  [dry-run] ${recordLine}`);
+  } else {
+    const result = await recordAppliedMigration({
+      path: FILE,
+      bytes: readFileSync(FILE),
+      q: ledgerQuery({ route: 'api', token: TOKEN, ref: REF }),
+    });
+    recordLine = result.recorded
+      ? `Recorded ${result.version} in schema_migrations${result.bodyStored ? ', with its body' : ` without its body: ${result.reason}`}.`
+      : `${result.version} was already recorded; the ledger keeps its first row and nothing was written.`;
+    console.log(recordLine);
   }
 }
 
@@ -223,6 +236,7 @@ const summary = [
   '',
   `- ${statements.length} statement(s)`,
   target ? `- \`${target}\`: ${before ?? 'absent'} → ${after ?? 'absent'} rows` : '',
+  recordLine ? `- ${recordLine}` : '',
   '',
 ].filter(Boolean).join('\n');
 console.log(summary);

@@ -26,6 +26,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { migrationNames, migrationText } from '../../testSupport/migrationCorpus';
+import { TREE_IS_PRIME } from '../../testSupport/primeTree';
 
 const REPO = resolve(__dirname, '../../../..');
 const MIGRATIONS = resolve(REPO, 'supabase/migrations');
@@ -42,7 +43,11 @@ const releaseId = (() => {
 
 const seedFile = `${releaseId}.sql`;
 
-describe('the seed migration declares what it did', () => {
+// The committed seed is the prime's alone. Seed v20 is 42.2 MB and GitHub
+// refuses the cascade's write of it, so a clone holds the generator this reads
+// and never the file (see `testSupport/primeTree.ts`). The generator half below
+// holds wherever it is carried.
+describe.runIf(TREE_IS_PRIME)('the seed migration declares what it did', () => {
   it('is named for the release the generator declares', () => {
     expect(migrationNames()).toContain(seedFile);
   });

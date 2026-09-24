@@ -992,7 +992,7 @@ export function parseProjectionFile(
   // beside the result rather than refusing to look.
   if (file.licence !== null) {
     const verdict = termsAgreeWith(file.licence, statedTerms(grids));
-    if (!verdict.ok) {
+    if (verdict.ok === false) {
       refuse(file.key, `the workbook states terms of its own that ${verdict.why} (${JSON.stringify(verdict.line.slice(0, 160))}) — `
         + 'read what it says before loading it');
     }

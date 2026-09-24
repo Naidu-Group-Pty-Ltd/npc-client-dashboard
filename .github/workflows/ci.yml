@@ -124,6 +124,13 @@ jobs:
       - name: Security invariant suites (WP-29)
         run: npx vitest run src/lib/security
 
+      # The specs for the migration tooling itself ran in no workflow: the
+      # applied-body manifest, the drift reporter, the withdrawals manifest and
+      # the seed skeletons each had a spec, and CI names its vitest paths one by
+      # one, so none of them was named. An unrun spec guards nothing.
+      - name: Migration tooling suites
+        run: npx vitest run src/lib/deploy src/lib/ops src/lib/__tests__/migrationSeedSkeletons.spec.ts
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as
@@ -293,6 +300,16 @@ jobs:
       # as path substrings, which is why a bare prefix picks up every file.
       - name: Unit tests (Builder Stock images)
         run: npx vitest run src/lib/__tests__/builderStock
+
+      # The listing photographs' tests sit directly in `src/lib`, where no other
+      # step's filter reaches them — so the thresholds `listingImageVision.test.ts`
+      # calls "the measurement, not an illustration of it" were never measured
+      # here, and neither was the guard that stops one oversized floor plan from
+      # killing the `analyse` sweep on every run (`listingImageDecode.test.ts`).
+      # A bare prefix, for the reason given above: a new test beside them is
+      # picked up without editing this line.
+      - name: Unit tests (listing photographs)
+        run: npx vitest run src/lib/listingImage
 
       # The style contracts live directly in `src/styles` (never under a
       # `__tests__/`), so no other step's filter reaches them. The Builder /
@@ -591,6 +608,22 @@ jobs:
       # from the prime while the ledger said their version had run.
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
+      # A migration declared withdrawn in MIGRATION_WITHDRAWN.json stays in the
+      # tree as history, and three readers act on the declaration: drift reports
+      # it as WITHDRAWN instead of NOT APPLIED, "Apply a migration" refuses it,
+      # and Mission Control stops counting it as a hole that holds back every
+      # later file. An entry that names nothing checkable would silence all three.
+      - name: A withdrawn migration names what stays absent
+        run: node scripts/security/check-migration-withdrawals.mjs
+      # The migration ledger is written by whatever APPLIES a migration and by
+      # nothing else. A migration runs on every database it is delivered to, so
+      # one that edits the ledger edits rows it does not own: 20260921100000
+      # deleted five rows to make the prime's record match the prime, and on the
+      # clones the same DELETE met four different ledgers and left the Quick
+      # Send columns present on two and absent on two, decided by delivery
+      # order rather than by anyone.
+      - name: A migration never writes the migration ledger
+        run: node scripts/security/check-migration-ledger-writes.mjs
       # A migration this deployment has already RUN must not change here. Mission
       # Control decides what a clone may be sent by asking whether the prime's
       # ledger holds the file's BYTES — 690 of 1,002 files clear that way against
@@ -630,6 +663,23 @@ jobs:
         env:
           BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run migrations:index:check
+
+      # Mission Control reads a migration's dependency facts from its body, and
+      # reads no body over 256 KiB — so every template-library seed was a file
+      # that might create anything, and held everything behind it on every
+      # clone. The skeleton manifest publishes each seed's statements without
+      # its rows, pinned to the file's git blob, and Mission Control reads the
+      # facts from that. Generated, never hand-edited; a stale entry is
+      # ignored there, and caught here.
+      #
+      # It stands itself down where Mission Control owns the backend, on the
+      # same marker as the index above and for the same reason: a clone cannot
+      # hold the seeds it describes. `check-gate-env-wiring.mjs` fails if this
+      # mapping goes.
+      - name: The migration seed skeletons are current
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
+        run: npm run migrations:seed-skeletons:check
 
       # WP-18: 329 catch blocks across 275 functions returned the caught error
       # to the caller. A Postgres message names tables, columns and constraints;
@@ -1212,8 +1262,18 @@ jobs:
       #
       # `always()` so a stale seed and a geometry failure are both reported by
       # one run rather than the first hiding the second.
+      #
+      # The currency half stands itself down where Mission Control owns the
+      # backend, on the same marker as the object index and the seed skeletons:
+      # a seed past what a cascade carries in one file never reaches a clone, so
+      # the comparison said "never written" about a seed the prime wrote, and
+      # Mission Control merges no cascade pull request with a red check. Every
+      # template is still validated on every repository.
+      # `check-gate-env-wiring.mjs` fails if this mapping goes.
       - name: The seed migration is what the template definitions produce
         if: always()
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run templates:library:seed:check
 
       # The renders themselves, when it fails: a reviewer should be able to

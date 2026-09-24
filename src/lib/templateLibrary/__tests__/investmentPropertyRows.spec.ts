@@ -111,10 +111,16 @@ function render(row: unknown): string {
    * about how the masters BIND a stored record, so they project the tier that
    * has every binding; `investmentCompassCatalogue.spec.ts` asserts the drop.
    */
+  //
+  // As the COMPOSITE since seed v20: the tiers produced today draw their
+  // front matter as one flowing summary (`frontMatterFlagsFor`), and the
+  // typed pages these bindings live on — the property page, the equity
+  // chart, the scorecard — are the stored pre-tier report's, which is the
+  // one tier that carries both the location case and the modelling.
   const data = applyInvestmentProjection(
     { report: {}, brand: {} } as Record<string, unknown>,
     row as never,
-    { tier: 'financial' },
+    { tier: 'composite' },
   );
   // The spacious variants are the ones that give the property its own page; one
   // of each arrangement is enough for a binding question.

@@ -25,6 +25,7 @@ import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-libra
 import {
   COMPASS_DEPTH_PAGES,
   DERIVED_TIERS,
+  frontMatterFlagsFor,
 } from '../../../../supabase/functions/_shared/reports/investment/tierPageSequence.pure';
 
 const compassSections = COMPASS_40_SECTIONS.filter((s) => s.includeInCompass);
@@ -96,9 +97,16 @@ describe('the narrative geometry fixture', () => {
       for (const depth of COMPASS_DEPTH_PAGES) expect(drawn).not.toContain(depth);
       expect(drawn.length).toBeGreaterThan(0);
     }
-    // And the Compass keeps them, so the assertion above is about the tier
-    // rule rather than about a page nothing draws.
-    const compassDrawn = renderedPages(schema, compass.data);
-    expect(compassDrawn.some((n) => COMPASS_DEPTH_PAGES.includes(n))).toBe(true);
+    // And a document that does not flow keeps them, so the assertion above is
+    // about the tier rule rather than about a page nothing draws. Since seed
+    // v20 that is the stored pre-tier report; the Compass itself flows, and
+    // draws its summary instead.
+    const legacy = {
+      ...(compass.data as Record<string, any>),
+      report: { ...(compass.data as Record<string, any>).report, ...frontMatterFlagsFor('composite') },
+    };
+    const legacyDrawn = renderedPages(schema, legacy);
+    expect(legacyDrawn.some((n) => COMPASS_DEPTH_PAGES.includes(n))).toBe(true);
+    expect(renderedPages(schema, compass.data)).toContain('Executive summary');
   });
 });

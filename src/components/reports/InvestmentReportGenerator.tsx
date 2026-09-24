@@ -1807,9 +1807,29 @@ export function InvestmentReportGenerator() {
                     onLandSizeChange={handleLandSizeChange}
                     onBuildSizeChange={handleBuildSizeChange}
                     onLandPriceChange={setLandPrice}
-                    onBuildPriceChange={setBuildPrice}
-                    hideBuildTypeSelector
-                  />
+                     onBuildPriceChange={setBuildPrice}
+                     hideBuildTypeSelector
+                     action={
+                       <Button
+                         onClick={handleGenerate}
+                         disabled={isGenerating || !query.trim() || (isPropertySpecific && (!propertyPrice || parseFloat(propertyPrice) <= 0))}
+                         size="sm"
+                         className="h-9 w-full rounded-xl font-semibold shadow-lg shadow-primary/20 sm:w-auto"
+                       >
+                         {isGenerating ? (
+                           <>
+                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                             Generating...
+                           </>
+                         ) : (
+                           <>
+                             <TrendingUp className="h-4 w-4 mr-2" />
+                             Generate Investment Report
+                           </>
+                         )}
+                       </Button>
+                     }
+                   />
                 </>
               )}
 
@@ -1885,25 +1905,6 @@ export function InvestmentReportGenerator() {
                 </div>
               </div>
 
-              {/* Generate Button */}
-              <Button
-                onClick={handleGenerate}
-                disabled={isGenerating || !query.trim() || (isPropertySpecific && (!propertyPrice || parseFloat(propertyPrice) <= 0))}
-                size="lg"
-                className="w-full h-12 shadow-lg shadow-primary/20 disabled:cursor-not-allowed disabled:border disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Generating Analysis...
-                  </>
-                ) : (
-                  <>
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Generate Investment Report
-                  </>
-                )}
-              </Button>
 
               {isGenerating && (
                 <div className="reports-processing-state text-center space-y-2">
@@ -2102,9 +2103,29 @@ export function InvestmentReportGenerator() {
                     onLandSizeChange={handleLandSizeChange}
                     onBuildSizeChange={handleBuildSizeChange}
                     onLandPriceChange={setLandPrice}
-                    onBuildPriceChange={setBuildPrice}
-                    hideBuildTypeSelector
-                  />
+                     onBuildPriceChange={setBuildPrice}
+                     hideBuildTypeSelector
+                     action={
+                       <Button
+                         onClick={handleGenerateFromUrl}
+                         disabled={isUrlGenerating || !urlScrapedData || !propertyPrice || parseFloat(propertyPrice) <= 0}
+                         size="sm"
+                         className="h-9 w-full rounded-xl font-semibold shadow-lg shadow-primary/20 sm:w-auto"
+                       >
+                         {isUrlGenerating ? (
+                           <>
+                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                             Generating Report...
+                           </>
+                         ) : (
+                           <>
+                             <TrendingUp className="h-4 w-4 mr-2" />
+                             Generate Report
+                           </>
+                         )}
+                       </Button>
+                     }
+                   />
 
                   {/* Info for URL mode */}
                   <div className="reports-supported-sites-panel space-y-2">
@@ -2139,25 +2160,6 @@ export function InvestmentReportGenerator() {
                     />
                   </div>
 
-                  {/* Generate Button - At bottom after overrides */}
-                  <Button
-                    onClick={handleGenerateFromUrl}
-                    disabled={isUrlGenerating || !urlScrapedData || !propertyPrice || parseFloat(propertyPrice) <= 0}
-                    size="lg"
-                    className="w-full shadow-lg shadow-primary/20"
-                  >
-                    {isUrlGenerating ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Generating Report...
-                      </>
-                    ) : (
-                      <>
-                        <TrendingUp className="h-4 w-4 mr-2" />
-                        Generate Report
-                      </>
-                    )}
-                  </Button>
                 </TabsContent>
                 )}
 
@@ -2350,9 +2352,29 @@ export function InvestmentReportGenerator() {
                     onLandSizeChange={handleLandSizeChange}
                     onBuildSizeChange={handleBuildSizeChange}
                     onLandPriceChange={setLandPrice}
-                    onBuildPriceChange={setBuildPrice}
-                    hideBuildTypeSelector
-                  />
+                     onBuildPriceChange={setBuildPrice}
+                     hideBuildTypeSelector
+                     action={
+                       <Button
+                         onClick={handleGenerateFromPdf}
+                         disabled={isPdfGenerating || !pdfParsedData || !propertyPrice || parseFloat(propertyPrice) <= 0}
+                         size="sm"
+                         className="h-9 w-full rounded-xl font-semibold shadow-lg shadow-primary/20 sm:w-auto"
+                       >
+                         {isPdfGenerating ? (
+                           <>
+                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                             Generating Report...
+                           </>
+                         ) : (
+                           <>
+                             <TrendingUp className="h-4 w-4 mr-2" />
+                             Generate Report
+                           </>
+                         )}
+                       </Button>
+                     }
+                   />
 
                   {/* Info for PDF mode */}
                   <div className="reports-supported-sites-panel space-y-2">
@@ -2387,25 +2409,6 @@ export function InvestmentReportGenerator() {
                     />
                   </div>
 
-                  {/* Generate Button - At bottom after overrides */}
-                  <Button
-                    onClick={handleGenerateFromPdf}
-                    disabled={isPdfGenerating || !pdfParsedData || !propertyPrice || parseFloat(propertyPrice) <= 0}
-                    size="lg"
-                    className="w-full shadow-lg shadow-primary/20"
-                  >
-                    {isPdfGenerating ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Generating Report...
-                      </>
-                    ) : (
-                      <>
-                        <TrendingUp className="h-4 w-4 mr-2" />
-                        Generate Report
-                      </>
-                    )}
-                  </Button>
                 </TabsContent>
                 )}
 

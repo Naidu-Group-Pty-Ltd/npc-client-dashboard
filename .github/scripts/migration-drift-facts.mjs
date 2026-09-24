@@ -13,11 +13,11 @@
  * so the classifier stays pure and testable, which is the same split
  * `apply-migration.yml` already makes between the route and the decision.
  */
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { effectProbeIn } from '../../scripts/build-migration-object-index.mjs';
 import { probeIsReadOnly } from '../../scripts/ops/migrationDrift.pure.mjs';
+import { ledgerQuery, ledgerRoute } from '../../scripts/lib/ledgerQuery.mjs';
 
 /*
  * Two routes, chosen the same way `apply-migration.yml` chooses one, and for
@@ -38,40 +38,24 @@ import { probeIsReadOnly } from '../../scripts/ops/migrationDrift.pure.mjs';
  * SELECT, and a declared `@effect` probe reaches neither route unless
  * `probeIsReadOnly` admits it.
  */
-const CONN = process.env.SUPABASE_DB_URL;
-const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
-const REF = process.env.SUPABASE_PROJECT_REF;
-const ROUTE = CONN ? 'psql' : (TOKEN && REF) ? 'api' : null;
+const ROUTE = ledgerRoute({
+  SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
+  SUPABASE_ACCESS_TOKEN: process.env.SUPABASE_ACCESS_TOKEN,
+  SUPABASE_PROJECT_REF: process.env.SUPABASE_PROJECT_REF,
+});
 if (!ROUTE) {
   console.error('Neither SUPABASE_DB_URL nor SUPABASE_ACCESS_TOKEN + SUPABASE_PROJECT_REF is set.');
   process.exit(2);
 }
-console.error(`route: ${ROUTE}`);
+console.error(`route: ${ROUTE.route}`);
 
-/** One query, first column only, trimmed, empties dropped. */
-async function q(sql) {
-  if (ROUTE === 'psql') {
-    return execFileSync('psql', [CONN, '-v', 'ON_ERROR_STOP=1', '-At', '-c', sql], {
-      encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-    })
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-  }
-  const res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: sql }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} — ${text.slice(0, 400)}`);
-  const rows = JSON.parse(text);
-  if (!Array.isArray(rows)) throw new Error('the Management API answered something that is not a row set');
-  return rows
-    .map((r) => Object.values(r ?? {})[0])
-    .map((v) => (v === null || v === undefined ? '' : String(v).trim()))
-    .filter(Boolean);
-}
+/**
+ * One query, first column only, trimmed, empties dropped. The reader is
+ * `scripts/lib/ledgerQuery.mjs`, shared with `apply-migration.yml`'s preflight,
+ * ledger record and applied-body re-check, so there is one way of reading this
+ * table rather than one per workflow.
+ */
+const q = ledgerQuery(ROUTE);
 
 const appliedVersions = await q(
   'select version from supabase_migrations.schema_migrations order by version',

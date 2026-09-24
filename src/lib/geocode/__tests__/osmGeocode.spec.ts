@@ -153,11 +153,11 @@ describe('the shared shape', () => {
   });
 
   it('parses the provider order and defaults to no Google', () => {
-    expect(parseProviderOrder(undefined)).toEqual(['nominatim', 'abs_locality']);
-    expect(parseProviderOrder('')).toEqual(['nominatim', 'abs_locality']);
+    expect(parseProviderOrder(undefined)).toEqual(['gnaf', 'nominatim', 'photon', 'abs_locality']);
+    expect(parseProviderOrder('')).toEqual(['gnaf', 'nominatim', 'photon', 'abs_locality']);
     expect(parseProviderOrder('nominatim, abs_locality, google')).toEqual(['nominatim', 'abs_locality', 'google']);
     expect(parseProviderOrder('google,nominatim,google')).toEqual(['google', 'nominatim']);
-    expect(parseProviderOrder('bing')).toEqual(['nominatim', 'abs_locality']);
+    expect(parseProviderOrder('bing')).toEqual(['gnaf', 'nominatim', 'photon', 'abs_locality']);
   });
 
   it('labels a pin by provider and precision, keeping Google\'s own words for Google', () => {

@@ -210,6 +210,74 @@ postcode (`suburblessAnswerRefusal`). The suburb evidence is keyed on is decided
 never by any of these names. `geocodePlan.pure.ts` holds the decisions so
 they are tested without a network.
 
+**A suburb's centre is not the property, and the chain now says which it
+has.** Read §17 of the same doc and §15 of
+[`PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `geocodeChainPolicy.pure.ts`, `photonGeocode.pure.ts`,
+`enrichmentPoint.pure.ts`, `enrichmentCoordinate` or the cache write in
+`geocoder.ts`.
+
+From 07:51 UTC on 24 Sep 2026 the public Nominatim answered 403 to the
+production egress. The chain fell to the ABS suburb centroid, and then:
+
+- it wrote that centroid into `geocode_cache` as the address's permanent answer;
+- the location service dropped the geocoder's `precision: 'locality'`;
+- `enrichmentCoordinate` stamped the point `address`.
+
+So Blacktown's report printed "R2 — Low Density Residential" for a
+fourteenth-floor apartment, and the centre's walk score and commute scored the
+grade.
+
+Four rules bite.
+
+- **An answer coarser than a street is never remembered while a street-level
+  provider could not be asked.** A remembered one is provisional: it is re-asked
+  after an hour.
+- **A refusal pauses its provider**, and its own words are logged — the day it
+  mattered, nobody could say why.
+- **The point's precision travels** on the acquisition stamp, and one reader
+  (`enrichmentPoint.pure.ts`) decides:
+  - `address` and `street` read planning (a street reading SAYS it is one — the
+    owner's decision);
+  - an area centre reads no planning, is not scored, and is disclosed where its
+    figures are used.
+- **Reuse asks what the point was.** An unrecorded point is re-acquired, and a
+  planning answer that records no point is asked again.
+
+Photon is the chain's second street-level provider, held to a stricter match
+than the address field's. Migration `20261220090000` lets the cache remember
+its answers.
+
+**The address register is a service, not a table.** Read
+[`ADDRESS_SERVICE.md`](./docs/integrations/ADDRESS_SERVICE.md) before touching
+`gnafShard.pure.ts`, `askGnaf`, `scripts/gnaf/`, `address-service/` or its
+workflow.
+
+G-NAF (15.9M addresses, 98% geocoded at the address itself) and our own Photon
+run on one Fly machine. The register is static files, one per postal area. It
+is **not** in the database: that would add sixty per cent to it, needs a
+credential the repository does not hold, and would never reach a clone.
+
+Three rules bite.
+
+- **A 404 is the only answer about an address.** A postal area with no
+  addresses has no file. A missing manifest is an outage, and the provider
+  rests; it never reads as "no such address".
+- **The match is shown, never scored.** Number and street must agree through
+  one normalisation, a lot is never a street number, and the answer must stand
+  in the suburb asked, or in one locality where none was asked: a postal area
+  covers several towns.
+- **Nothing serves unproved.** CI builds the register from the catalogue's
+  current release and refuses a partial one. It asks the chain's own matcher
+  for a sample of the register's own addresses, runs the image in the runner,
+  and pushes that same image, never a rebuild.
+- **One postal area at a time.** The build and its check both work that way.
+  The first real build computed a window over all 16.3M addresses at once and
+  ran out of memory.
+
+A deploy is a person's dispatch, at ≈ A$19–24 a month. The planning page
+prints G-NAF's attribution wherever its point came from the register.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,

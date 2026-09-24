@@ -20,6 +20,7 @@ import {
   REUSABLE_ACQUISITIONS,
   acquisitionStamp,
   planReuse,
+  planningPointIsRecorded,
   type AcquisitionSubject,
 } from '../investment/acquisitionReuse.pure';
 
@@ -34,7 +35,7 @@ const NOW = Date.parse('2026-09-19T15:00:00.000Z');
 
 function packet(overrides: Record<string, unknown> = {}, ageHours = 0.2) {
   return {
-    planningData: { zone: 'R2' },
+    planningData: { zone: 'R2', pointBasis: { precision: 'address', source: 'enrichment', provider: 'nominatim' } },
     climateData: { rainfall: 900 },
     domainData: { evidence: {} },
     [ACQUISITION_STAMP_KEY]: acquisitionStamp(
@@ -140,6 +141,39 @@ describe('planReuse adopts what it may, and prices the shelf life per class', ()
       nowMs: NOW,
     });
     expect(plan.values).toHaveProperty('planningData');
+  });
+});
+
+describe('a planning answer is a reading at a point', () => {
+  /*
+   * 24 Sep 2026: two reports read their planning at the centre of a suburb
+   * while the public geocoder refused us, and the answers carried no record of
+   * the point. With a thirty-day `cadastral` shelf life, every regeneration
+   * would have served "R2 — Low Density Residential" for a fourteenth-floor
+   * apartment from the stored packet.
+   */
+  it('is refused when it records no point — every answer stored before the rule', () => {
+    const plan = planReuse({ storedPacket: packet({ planningData: { zone: 'R2' } }), subject: SUBJECT, nowMs: NOW });
+    expect(plan.values).not.toHaveProperty('planningData');
+    expect(plan.entries.find((e) => e.key === 'planningData')?.decision).toMatchObject({
+      reuse: false,
+      reason: 'point_not_recorded',
+    });
+    // …and only the planning answer: a climate reading is not a parcel attribute.
+    expect(plan.values).toHaveProperty('climateData');
+  });
+
+  it.each(['locality', 'postcode'])('is refused when the point was a %s centre', (precision) => {
+    const plan = planReuse({
+      storedPacket: packet({ planningData: { zone: 'R2', pointBasis: { precision } } }),
+      subject: SUBJECT,
+      nowMs: NOW,
+    });
+    expect(plan.values).not.toHaveProperty('planningData');
+  });
+
+  it.each(['address', 'street'])('is reusable when the point was the %s', (precision) => {
+    expect(planningPointIsRecorded({ pointBasis: { precision } })).toBe(true);
   });
 });
 

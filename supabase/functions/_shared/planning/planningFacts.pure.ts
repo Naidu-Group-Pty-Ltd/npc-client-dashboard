@@ -63,6 +63,7 @@
  */
 
 import { auDate } from './auDate.pure.ts';
+import { GNAF_ATTRIBUTION } from '../geocode/gnafShard.pure.ts';
 
 import {
   VERIFICATION_INSTRUMENT,
@@ -213,6 +214,27 @@ export interface PlanningFacts {
   /** The sentence that says what settles the question. */
   verification: string;
   retrievedAt: string | null;
+  /**
+   * Where the registers were asked: at the property itself (`address`), at a
+   * point on its street (`street`), or unrecorded (every answer stored before
+   * 24 Sep 2026). A street reading is stated as one on the page — a zone
+   * boundary along the street can put the lot on the other side of it.
+   */
+  pointPrecision: 'address' | 'street' | null;
+  /**
+   * Who placed that point (`gnaf`, `nominatim`, `photon`, …), off the same
+   * `pointBasis`. G-NAF's licence asks for its attribution wherever material
+   * developed from it is shared, and the page that says where the registers
+   * were asked is where that point is described.
+   */
+  pointProvider: string | null;
+  /**
+   * True where the registers were NOT asked because the address could be
+   * placed only at the centre of its suburb or postal area — a zone read
+   * there describes a different property. Named so the page can say which
+   * absence it is.
+   */
+  pointNotPlaced: boolean;
   /** True when at least one cell carries a value. */
   anyStated: boolean;
   /** True when the enrichment was never reached at all. */
@@ -294,6 +316,12 @@ export interface PlanningFactsInput {
   planningData?: unknown;
   /** The audited manual overrides, which outrank a layer (rule 2). */
   overrides?: PlanningOverrides;
+  /**
+   * The registers were not asked because the only point this run could place
+   * was the centre of the suburb or postal area (`planningCoordinate`'s
+   * `too_coarse`). Absent or false otherwise.
+   */
+  pointNotPlaced?: boolean;
 }
 
 /** `R2 Low Density Residential`, from whichever parts the reading carries. */
@@ -676,9 +704,36 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
         ? `A spatial layer is indicative; what settles the question is ${VERIFICATION_INSTRUMENT[jurisdiction]}.`
         : 'A spatial layer is indicative; verify with the relevant council or planning authority.'),
     retrievedAt,
+    pointPrecision: pointPrecisionOf(data),
+    pointProvider: pointProviderOf(data),
+    pointNotPlaced: !data && input.pointNotPlaced === true,
     anyStated: cells.some((c) => c.status === 'stated' || c.status === 'operator_stated'),
     enrichmentMissing: !data,
   };
+}
+
+/** Where the answering registers were asked, off the answer's own `pointBasis`. */
+function pointPrecisionOf(data: Record<string, unknown> | null): 'address' | 'street' | null {
+  const basis = isRecord(data?.pointBasis) ? data!.pointBasis as Record<string, unknown> : null;
+  const p = str(basis?.precision);
+  return p === 'address' || p === 'street' ? p : null;
+}
+
+/** Who placed the point the registers were asked at, off the answer's own `pointBasis`. */
+function pointProviderOf(data: Record<string, unknown> | null): string | null {
+  const basis = isRecord(data?.pointBasis) ? data!.pointBasis as Record<string, unknown> : null;
+  return str(basis?.provider);
+}
+
+/** The sentence under the table that says where the readings were taken. */
+export function pointBasisSentence(facts: Pick<PlanningFacts, 'pointPrecision'>): string {
+  if (facts.pointPrecision === 'street') {
+    return 'retrieved automatically at a point on the property\u2019s street — the address could be placed on its '
+      + 'street but not on its lot, so where a zone or overlay boundary runs along the street the lot itself may '
+      + 'read differently';
+  }
+  if (facts.pointPrecision === 'address') return 'retrieved automatically at the property\u2019s own address point';
+  return 'retrieved automatically at the coordinate this report resolved for the property';
 }
 
 // ---------------------------------------------------------------------------
@@ -1124,9 +1179,13 @@ export function renderPlanningControls(facts: PlanningFacts): string {
   // Rules 3 and 6, said on the page rather than left to a reader to infer.
   lines.push(
     `**What this is.** These readings are desktop research against the jurisdiction's published spatial layers, `
-    + `retrieved automatically at the property's verified coordinate. They are not a planning certificate and do not `
+    + `${pointBasisSentence(facts)}. They are not a planning certificate and do not `
     + `substitute for one. ${facts.verification}`,
   );
+  if (facts.pointProvider === 'gnaf') {
+    lines.push('');
+    lines.push(`**Where the address point comes from.** The national address register, G-NAF. ${GNAF_ATTRIBUTION}`);
+  }
   lines.push('');
   lines.push(
     '**What a zone is not.** A zone that admits a use is not consent for it. Any development potential described here '
@@ -1202,6 +1261,17 @@ function landUseRule(facts: PlanningFacts): string {
 }
 
 export function planningFactBlocks(facts: PlanningFacts): string {
+  if (facts.enrichmentMissing && facts.pointNotPlaced) {
+    return 'PLANNING RULES FOR THE WHOLE REPORT — the planning registers were NOT asked about this property: the '
+      + 'address could only be placed at the centre of its suburb, and a zone, overlay or control read there would '
+      + 'describe a different lot. State that in one sentence — zoning and planning controls were not retrieved '
+      + 'because the property could not be located precisely enough to read them, and must be confirmed with the '
+      + 'local planning authority or on the planning certificate. Do NOT print a zoning table, a control table, a '
+      + 'minimum lot size, a height limit, a floor space ratio, a setback, a site coverage figure or an overlay '
+      + 'finding. Do NOT name a zone or a planning instrument, and do NOT infer one from the suburb\u2019s character. '
+      + 'This holds in every section, and a figure found by live web search is still a figure this report did not '
+      + 'retrieve.';
+  }
   if (facts.enrichmentMissing) {
     return 'PLANNING RULES FOR THE WHOLE REPORT — no planning enrichment ran. State in one sentence that '
       + 'zoning and planning controls were not retrieved and must be confirmed with the local planning '
@@ -1288,6 +1358,12 @@ export function planningFactBlocks(facts: PlanningFacts): string {
      */
     landUseRule(facts),
     '6. Say plainly that this is desktop research and that the verification instrument is what settles it.',
+    ...(facts.pointPrecision === 'street'
+      ? ['6a. These registers were asked at a point on the property\u2019s STREET, not on its lot — the address could '
+        + 'not be placed more precisely. Wherever you state the zone or a control, say it was read at the street, and '
+        + 'never call it the lot\u2019s confirmed zoning: a boundary along the street can put the lot in a different '
+        + 'zone, and the certificate is what settles it.']
+      : []),
     /*
      * Rule 4 closes the STATEMENT; this closes the RATING.
      *

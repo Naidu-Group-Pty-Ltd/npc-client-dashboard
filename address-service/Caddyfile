@@ -1,0 +1,51 @@
+# The address service's one front door (:8080).
+#
+#   /healthz                         Photon's own /status — 200 only once its
+#                                    index is open. The only path without the
+#                                    token, and it reveals nothing but that.
+#   /<token>/photon/*                Photon (OpenStreetMap), prefix removed:
+#                                    `/<token>/photon/api/?q=…` is Photon's `/api/?q=…`.
+#   /<token>/gnaf/*                  The G-NAF register as static files:
+#                                    `v1/manifest.json`, `v1/localities.json.gz`,
+#                                    `v1/<STATE>/<postcode>.psv.gz`. A postal area
+#                                    the register holds no address in has no
+#                                    file, and answers 404 — the one answer here
+#                                    that is about an address.
+#   /<token>/anything-else           400: the right token and a wrong path is a
+#                                    configuration error, and says so, rather
+#                                    than a 404 that reads as "no such address".
+#   everything else                  403.
+#
+# The token is ADDRESS_SERVICE_TOKEN (a Fly secret); `start.sh` refuses to
+# start without one, because an empty token would put both services at `//`.
+# The data is public — G-NAF and OpenStreetMap are both open licences — so the
+# token protects the machine's capacity, not a secret.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	handle /healthz {
+		rewrite * /status
+		reverse_proxy 127.0.0.1:2322
+	}
+
+	handle_path /{$ADDRESS_SERVICE_TOKEN}/photon/* {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:2322
+	}
+
+	handle_path /{$ADDRESS_SERVICE_TOKEN}/gnaf/* {
+		root * {$GNAF_DIR:/srv/gnaf}
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	handle /{$ADDRESS_SERVICE_TOKEN}/* {
+		respond "Not a path this service serves: use /photon/ or /gnaf/" 400
+	}
+
+	respond 403
+}

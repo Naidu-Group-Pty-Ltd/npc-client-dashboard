@@ -4221,7 +4221,21 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           if (planningResponse.ok) {
             const planningBody = await planningResponse.json();
             if (planningBody.success && planningBody.data) {
-              enhancedData = { ...enhancedData, planningData: planningBody.data };
+              // Where the registers were asked travels WITH their answer: the
+              // page says whether the zone was read at the property or on its
+              // street, and a later invocation reusing this answer
+              // (`acquisitionReuse`) can tell which it holds.
+              enhancedData = {
+                ...enhancedData,
+                planningData: {
+                  ...planningBody.data,
+                  pointBasis: {
+                    precision: planningCoords!.precision,
+                    source: planningCoords!.source,
+                    provider: planningCoords!.provider,
+                  },
+                },
+              };
               console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
               acquisition.record({
                 producer: 'planning',
@@ -5750,6 +5764,10 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // which absence it is rather than a number.
     const planningFacts = buildPlanningFacts({
       planningData: enhancedData.planningData,
+      // The registers were not asked because the only point this run could
+      // place was an area's centre — a different sentence from "no planning
+      // enrichment ran", and the page says which.
+      pointNotPlaced: coordinateRefusal?.refusal === 'too_coarse',
       overrides: {
         zoningCode: mergedOverrides.zoningCode,
         zoningDescription: mergedOverrides.zoningDescription,

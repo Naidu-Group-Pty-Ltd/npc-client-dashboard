@@ -441,6 +441,26 @@ so, rather than rendering this deployment's widget on another tenant's page. And
 `turnstileIdentity.spec.ts`. Aurixa Mission Control mints each clone its own
 widget and publishes `VITE_TURNSTILE_SITE_KEY`.
 
+## A clone's email is sent as the clone
+Read [`docs/integrations/CLONE_EMAIL_IDENTITY.md`](./docs/integrations/CLONE_EMAIL_IDENTITY.md)
+before adding a Resend send site, writing a `from:`, building a link into an
+email, or touching `_shared/emailIdentity*.ts`. Measured 24 Sep 2026, every
+clone's mail introduced it as somebody else: three clones with empty settings
+sent as "Property Consulting", the finance and solicitor invites were pinned to
+the prime's domain so a clone's partners were sent into another tenant's
+application, and the portal notifier and the AML step-up code sent from a
+literal address on the prime's domain, which a clone's domain-scoped key
+cannot send from, so Resend refused them. Every non-recovery send now goes
+through `getEmailIdentity()` and `resendAddressing()`. Three rules bite. **The
+name is the tenant's, then the workspace's**
+(`MISSION_CONTROL_AGENCY_NAME`), and the generic word only when neither exists.
+**A clone never falls back to the prime**: the prime is recognised only by its
+own `SUPABASE_URL`, and a clone with no provisioned origin gets no link, so an
+invitation is refused before anything is written. And **password recovery is
+deliberately left on `getBrandConfig()`**, which is unchanged.
+`emailIdentity.contract.spec.ts` fails on any Resend send site it cannot
+classify.
+
 ## The activation gate (a clone may be locked until it pays)
 Read [`docs/billing/ACTIVATION_GATE.md`](./docs/billing/ACTIVATION_GATE.md)
 before touching `_shared/paymentGate*.ts`, `mission-control-gate`,

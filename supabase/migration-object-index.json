@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1026,
+  "migration_files": 1034,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -2960,6 +2960,7 @@
     "table:_v16_classified",
     "table:_v18_classified",
     "table:_v19_classified",
+    "table:_v20_classified",
     "table:aml.analyst_recommendations",
     "table:aml.arrangement_assessments",
     "table:aml.biometric_access_log",

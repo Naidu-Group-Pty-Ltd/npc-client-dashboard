@@ -52,6 +52,11 @@ import {
 } from '../_shared/listingImageChrome.pure.ts';
 import { canonicalAssetKey } from '../_shared/listingImageAsset.pure.ts';
 import { analyseImageBytes } from '../_shared/listingImageAnalyse.ts';
+import {
+  decideDecode,
+  readDecodableDimensions,
+  resolveDecodePixelAllowance,
+} from '../_shared/listingImageDecode.pure.ts';
 import type { VisualAnalysis } from '../_shared/listingImageAnalyse.ts';
 import {
   partitionListingImageCopies,
@@ -130,6 +135,18 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ANALYSIS_BUDGET_MS = Number(Deno.env.get('LISTING_IMAGE_ANALYSIS_BUDGET_MS') ?? 1_200);
 /** Images the `analyse` sweep claims per invocation, before the budget bites. */
 const MAX_ANALYSED_PER_SWEEP = Number(Deno.env.get('LISTING_IMAGE_ANALYSIS_BATCH') ?? 40);
+/*
+ * How many pixels one request may decode, summed over every image it decodes.
+ *
+ * Time is not the only thing a decode spends: the decoder holds every pixel
+ * before it downscales, 13 to 17.5 bytes each, and a worker that runs out of
+ * memory is ended by the platform without anything here able to catch it. One
+ * floor plan did that to every `analyse` run for eleven days. The measurement
+ * and the default are in `listingImageDecode.pure.ts`.
+ */
+const DECODE_PIXEL_ALLOWANCE = resolveDecodePixelAllowance(
+  Deno.env.get('LISTING_IMAGE_ANALYSIS_MAX_PIXELS'),
+);
 
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/jpeg',
@@ -180,14 +197,38 @@ function imageAgeAnchor(capturedAt: unknown, listedAt: unknown): number | null {
  */
 interface AnalysisBudget {
   until: number;
+  /** Pixels this request may still decode. */
+  pixelsLeft: number;
 }
 
 function newAnalysisBudget(ms: number = ANALYSIS_BUDGET_MS): AnalysisBudget {
-  return { until: Date.now() + Math.max(0, ms) };
+  return { until: Date.now() + Math.max(0, ms), pixelsLeft: DECODE_PIXEL_ALLOWANCE };
 }
 
 function hasBudget(budget: AnalysisBudget | null | undefined): boolean {
   return Boolean(budget) && Date.now() < budget!.until;
+}
+
+/**
+ * Looks at one image if this request can still afford it, in time and in pixels.
+ *
+ * `null`, with nothing spent, when it cannot. The row is then stored with no
+ * verdict and `op: 'analyse'` picks it up, in a request with the whole
+ * allowance to itself, which either affords it or records that none can.
+ */
+async function analyseWithinBudget(
+  budget: AnalysisBudget | null,
+  bytes: Uint8Array,
+): Promise<VisualAnalysis | null> {
+  if (!budget || !hasBudget(budget)) return null;
+  const decision = decideDecode(
+    readDecodableDimensions(bytes),
+    budget.pixelsLeft,
+    DECODE_PIXEL_ALLOWANCE,
+  );
+  if (!decision.decode) return null;
+  budget.pixelsLeft -= decision.pixels;
+  return analyseImageBytes(bytes, DECODE_PIXEL_ALLOWANCE);
 }
 
 /**
@@ -592,11 +633,12 @@ async function harvestListing(
      * This is the only moment the server ever holds the decoded image for free,
      * and the verdict is what stops a floor plan leading a card — six of
      * sixteen sampled listings led with one, and five of those six are served
-     * from opaque Google Drive ids that no URL rule can read. Budgeted, because
-     * a decode is ~116 ms of CPU and an Edge Function has seconds; whatever
-     * this pass cannot afford is picked up by `op: 'analyse'`.
+     * from opaque Google Drive ids that no URL rule can read. Budgeted, in time
+     * and in pixels, because a decode is ~116 ms of CPU and 13 to 17.5 bytes of
+     * memory a pixel; whatever this pass cannot afford is picked up by
+     * `op: 'analyse'`.
      */
-    const visual = hasBudget(budget) ? await analyseImageBytes(fetched.bytes) : null;
+    const visual = await analyseWithinBudget(budget, fetched.bytes);
 
     const path = await storagePathFor(listingId, identity, fetched.contentType);
 
@@ -1238,15 +1280,31 @@ async function syncAirtable(
  * leading image is settled before any listing's fifth one — a backfill that is
  * only a third done has still fixed every card in the marketplace.
  *
- * Bounded twice over: a row count, and a wall-clock budget, because a decode is
- * ~116 ms of CPU and an Edge Function's allowance is measured in seconds. It is
- * safe to call repeatedly and safe to call concurrently — the worst case is two
- * workers analysing the same image and writing the same answer.
+ * Bounded three times over: a row count, a wall-clock budget, and a pixel
+ * allowance, because a decode is ~116 ms of CPU and 13 to 17.5 bytes of memory
+ * a pixel, and an Edge Function has seconds and 256 MB. It is safe to call
+ * repeatedly and safe to call concurrently — the worst case is two workers
+ * analysing the same image and writing the same answer.
+ *
+ * **A row is stamped before its image is decoded.** A worker the platform ends
+ * mid-decode — out of memory, out of CPU — cannot be caught, and a row it left
+ * unstamped is back at the head of this position-ordered queue on the next run,
+ * and the one after. That is how one floor plan stopped this sweep, every five
+ * minutes, for eleven days. Stamped first, a kill costs that image its verdict
+ * and nothing else. A stamp with no verdict is exactly "no evidence", which
+ * leaves the image where the agent put it.
  */
 async function analyseStoredImages(
   supabase: ListingImagesClient,
   limit: number,
-): Promise<{ analysed: number; failed: number; remaining: number | null }> {
+): Promise<{
+  analysed: number;
+  failed: number;
+  tooLarge: number;
+  unsupported: number;
+  deferred: boolean;
+  remaining: number | null;
+}> {
   const budget = newAnalysisBudget();
 
   const { data, error } = await supabase
@@ -1261,7 +1319,14 @@ async function analyseStoredImages(
   if (error) {
     if (isMissingVisualColumn(error)) {
       visualColumnsMissing = true;
-      return { analysed: 0, failed: 0, remaining: null };
+      return {
+        analysed: 0,
+        failed: 0,
+        tooLarge: 0,
+        unsupported: 0,
+        deferred: false,
+        remaining: null,
+      };
     }
     throw error;
   }
@@ -1274,6 +1339,9 @@ async function analyseStoredImages(
 
   let analysed = 0;
   let failed = 0;
+  let tooLarge = 0;
+  let unsupported = 0;
+  let deferred = false;
 
   for (const row of queue) {
     if (!hasBudget(budget)) break;
@@ -1284,22 +1352,45 @@ async function analyseStoredImages(
       failed += 1;
       continue;
     }
-    const analysis = await analyseImageBytes(new Uint8Array(await blob.arrayBuffer()));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+
+    // Read from the image's own header before anything is decoded.
+    const decision = decideDecode(
+      readDecodableDimensions(bytes),
+      budget.pixelsLeft,
+      DECODE_PIXEL_ALLOWANCE,
+    );
+    if (!decision.decode && decision.reason === 'deferred') {
+      // It fits a request, just not what is left of this one. The next run
+      // starts with the whole allowance, so the head of the queue always fits.
+      deferred = true;
+      break;
+    }
+
+    const { error: stampError } = await supabase
+      .from('listing_images')
+      .update({ visual_analysed_at: new Date().toISOString() })
+      .eq('listing_id', row.listing_id)
+      .eq('image_identity', row.image_identity);
+    if (stampError) {
+      // Never decode a row that is not stamped: that is the whole guarantee.
+      failed += 1;
+      continue;
+    }
+
+    if (!decision.decode) {
+      // Nothing this worker can afford, or nothing the decoder can make a still
+      // of. Stamped with no verdict, which is what the decoder would have said.
+      if (decision.reason === 'too_large') tooLarge += 1;
+      else unsupported += 1;
+      continue;
+    }
+
+    budget.pixelsLeft -= decision.pixels;
+    const analysis = await analyseImageBytes(bytes, DECODE_PIXEL_ALLOWANCE);
     if (!analysis) {
-      /*
-       * An image the decoder cannot read.
-       *
-       * Stamped as analysed anyway, with no verdict. Leaving it null would put
-       * it back at the head of a queue ordered by position and the sweep would
-       * spend its whole budget on the same handful of unreadable files for
-       * ever. A null `visual_kind` is exactly "no evidence", which is what it
-       * is.
-       */
-      await supabase
-        .from('listing_images')
-        .update({ visual_analysed_at: new Date().toISOString() })
-        .eq('listing_id', row.listing_id)
-        .eq('image_identity', row.image_identity);
+      // An image the decoder cannot read. Already stamped, so it does not come
+      // back to the head of the queue; a null `visual_kind` is "no evidence".
       failed += 1;
       continue;
     }
@@ -1314,7 +1405,15 @@ async function analyseStoredImages(
     .eq('status', 'stored')
     .is('visual_analysed_at', null);
 
-  return { analysed, failed, remaining: count ?? null };
+  // One line a run. This sweep is called by cron, which reads no response, so
+  // a run that did nothing for eleven days said so to nobody.
+  console.log(
+    `[listing-images] analyse: analysed=${analysed} failed=${failed} ` +
+      `too_large=${tooLarge} unsupported=${unsupported} deferred=${deferred} ` +
+      `remaining=${count ?? 'unknown'}`,
+  );
+
+  return { analysed, failed, tooLarge, unsupported, deferred, remaining: count ?? null };
 }
 
 /* -------------------------------------------------------------------------- */

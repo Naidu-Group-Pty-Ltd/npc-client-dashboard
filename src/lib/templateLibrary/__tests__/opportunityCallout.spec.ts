@@ -37,7 +37,10 @@ function render(opportunities: string[] | undefined): string {
   const data = applyInvestmentProjection(
     { report: {}, brand: {} } as Record<string, unknown>,
     row(opportunities) as never,
-    { tier: 'financial' },
+    // The composite: since seed v20 the typed "Risk and recommendation" page
+    // is drawn by the stored pre-tier report, and every tier produced today
+    // carries its risks and recommendation in the flowing body instead.
+    { tier: 'composite' },
   );
   return INVESTMENT_COMPASS_TEMPLATES
     .map((t) => renderTemplateToHtml((t as unknown as { schema: never }).schema, { data }).html)

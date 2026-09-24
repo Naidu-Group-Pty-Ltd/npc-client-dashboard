@@ -79,7 +79,15 @@ those served from opaque Google Drive ids no URL rule can read.
 thresholds are measured (21 labelled production images, 21 correct), and the
 verdict is stored so every surface gets it before the first paint. Decoding is
 **budgeted, not counted** — ~116 ms of CPU each against an Edge Function's
-allowance — and the decoder import is lazy so `resolve` pays nothing.
+allowance — and the decoder import is lazy so `resolve` pays nothing. **The
+budget is in pixels as well as time**: the decoder holds every pixel before it
+downscales (13–17.5 bytes each, measured), and one floor plan too large for a
+worker killed every `op: 'analyse'` run, every five minutes, from at least
+12 Sep to 23 Sep 2026 — 546 on each, and nothing in the function said so. So
+`listingImageDecode.pure.ts` reads the size from the image's own header before
+anything is decoded, and the sweep **stamps a row before it decodes it**,
+because a worker the platform ends cannot be caught and an unstamped row is
+back at the head of a position-ordered queue on the next run.
 
 The other half is a question no single image can answer: **is this photograph
 even of this property?** 3,035 of 4,841 rows are a picture some other listing
@@ -377,6 +385,19 @@ the check, because a guard you can clear by regenerating is not a guard. And
 **an empty body is never evidence** — a ledger row with no SQL and a file that
 is nothing but comments hash to the same thing, so both sides are excluded by
 name.
+
+## Applying a migration, and what the ledger may say
+Read [`docs/operations/MIGRATION_LEDGER_SANITISATION.md`](./docs/operations/MIGRATION_LEDGER_SANITISATION.md)
+before dispatching "Apply a migration" or touching `applyPreflight.pure.mjs`,
+`ledgerRecord.mjs`, `ledgerQuery.mjs` or `MIGRATION_WITHDRAWN.json`.
+- The workflow refuses any ref but the default branch.
+- It refuses a withdrawn file, a shared version and a file edited after it
+  applied.
+- It re-runs a recorded version only with `reapply: true`.
+- It stores the body of what it applies, and says "Recorded" only when a row
+  came back.
+- **A migration never writes the ledger.** A DELETE that "fixes" the prime's
+  record runs on every clone's different ledger.
 
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
@@ -1767,6 +1788,31 @@ fork alone: **the document being PRODUCED decides**, and keying it on the row
 being READ would hand a Snapshot's prompt a Compass parent with no modelling in
 it. Shipped as seed **v14** plus the active-master refresh.
 
+## Who a report is written for — investor, owner-occupier or both
+
+Read [`docs/reports/AUDIENCE.md`](./docs/reports/AUDIENCE.md) before touching
+`_shared/reports/investment/audienceContent.pure.ts`,
+`_shared/reports/location/ownerOccupierLens.pure.ts`, the `audience` option on
+`projectInvestmentReport`, or the dashboard's two KPI bands in the Investment
+masters. `tierContent.pure.ts` decides which QUESTION a document answers; the
+audience decides who it answers it FOR, chosen on the report page's export
+panel and applied once, above the choice of presentation. Three rules bite.
+**It decides what is PUBLISHED, never what is COMPUTED** — an owner-occupier's
+copy withholds every figure that describes a letting (the rent, the yields,
+the weekly position, a landlord's insurance, the investor cost total) and
+prints everything true of both as the record holds it; an owner-occupier's
+cash flow is a different model and no figure is recalculated to fake one.
+**A mixed section is never cut into** — only the four sections whose whole
+subject is a letting leave, named by section id through the registry, and two
+tenant headings that speak to a buyer as well are kept by name. And **the
+investor is byte-identical**: the body, the projection and every master draw
+exactly what they drew before, which is what lets the choice reach all stored
+reports at once. The owner-occupier's section is composed from the record and
+nothing else — the Census only where `isCensusProjectionSource` recognises it,
+a commute only to this property's own centre, no count that saturates, no
+rating. The prose the model wrote is still the investor's; framing it needs a
+stored audience, which is a migration for the owner to approve.
+
 ## The Compass prompt was 96% a different report
 
 Read the header of
@@ -2109,6 +2155,26 @@ acquisition stamp** (`locationInputVerification.pure.ts`) — subject-matched
 and stage-proven readings count, a stampless legacy enrichment verifies
 nothing, and a request field asserting verification is never read; Risk stays
 null under `propertyRiskSchema.pure.ts`'s recorded decision.
+
+**The letter is the band of the score (eligibility 5.0.0, 24 Sep 2026).**
+Read the *5.0.0* section of
+[`SCORING_V2_METHODOLOGY.md`](./docs/reports/SCORING_V2_METHODOLOGY.md) before
+touching `applyEligibility`, `GRADE_THRESHOLDS`, `gradeThresholdsFor` or
+anything that prints a grade. The owner's list showed 60 Lawley Street at
+**B+ · 89** beside 9 Hollow Street at **A · 77**: Lawley's growth came from the
+ABS state series for WA, and a state series scores **44** on growth
+confidence at best — one under the A test — so every property graded on one
+(all of WA, TAS, NT and the ACT) was held at B+ whatever it scored, with the
+number beside the letter saying otherwise. Three rules. **A higher score
+never prints a lower letter**: `grade === scoreGrade`, pinned by a sweep
+across grain, dwelling match, yield and location, and the evidence test now
+decides only whether `evidenceCaution` travels with the grade — one sentence
+saying what the evidence is, drawn on every surface that prints a grade and
+handed to the model with it. **A+ is from 80** (the owner's decision; A spans
+75–79). And **a stored grade is read by the line it was issued against** —
+`gradeThresholdsFor` reads the record's eligibility version, so a pre-5.0.0
+82 issued as an A is never re-labelled a cap, and Lawley's stored B+ keeps
+the explanation of the rule that capped it until it is regenerated.
 
 **A renormalised weight is not a nominal one, and all five dimensions are
 always drawn.** Read
@@ -3329,6 +3395,46 @@ ledger is last-write-wins and a reused dependency still passes its own call
 site, which records a skip. And **reuse can never fail a report**: the read is
 wrapped and a failure just costs the calls again.
 
+**One generation, one evidence basis — and the location call gets the ceiling
+of what it is.** Read §8 of the same doc and §11 of
+[`INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
+before touching `_shared/reports/investment/evidenceBasis.pure.ts`,
+`_shared/reports/location/locationEnrichmentCall.pure.ts`,
+`_shared/transportStopRead.ts`, `storedRowDescribesPoint`, the early write's
+`investment_score` or `nextSectionIndex`. 60 Lawley Street (24 Sep 2026) was
+written from two bases: the location call was abandoned at the `vendor`
+class's 12 s — at +9.9 s of a 125 s run, three seconds before its answer
+arrived — so sections 1-9 had no coordinate, no geography, no demographics and
+a withheld grade, and sections 10-16 were written on B+ 89 after the next
+invocation's identical call took 6 s. Nothing compared the two, and the row kept
+`withheld` until the final write stamped the last invocation's grade, because
+early persistence wrote the score only when the row had none. Four rules bite.
+**The location call is `composite`** (30 s, still under the run clock), gets
+**one retry** for what a retry cures (timeout, reset, 5xx, the provider
+envelope — never a geocoder refusal, a no-match or a no-window), and its three
+readings (transport, amenities, commute) are taken **together**; the transport
+reading is no longer a 6.3 s-cold HTTP hop but the same two indexed reads
+`public-transport-service` makes, through one shared module. **A later
+invocation cannot lose what an earlier one placed**: a failed re-fetch keeps a
+stored partial enrichment, and the ABS resolution answers from the report's own
+row when it already places the same point (a later outage used to overwrite it
+with `unresolved`). **The sections on the row and the score on the row are one
+basis**: the first section-writing invocation records its score with a marker,
+a later one rewrites every section from the first only on STRICTLY more
+evidence, resetting the counter in the same update, and anything else — a lost
+reading, the same evidence at a different figure, a scoring call that failed —
+keeps the written score for the prompts and the record. An unmarked score is
+never kept, because it may be another generation's, and **a marker never
+outlives its document**: a stopped generation leaves one on the row, so a new
+document's first pass that cannot score CLEARS it (`clear_marker`) — the
+simulation that pins the rule found a stale grade held over a new document the
+moment the clear was removed. The early write also reads its own `{ error }`
+now: a refused write was taken as saved, so the first section's fallback that
+carries the basis never ran. And **the browser follows the row**: a restart
+writes section 1 when section 10 was asked for, which `sectionWasWritten` alone
+reads as no progress, so `useChunkedRegeneration` follows `nextSectionIndex`
+and bounds the whole run.
+
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
@@ -3850,7 +3956,12 @@ absorbs one change arriving as another leaves — `check-edge-functions.mjs`'
 lesson), and **a migration that was never written is drift, not a pass**. It is
 `investmentCompassSource.spec.ts`' rule one layer out, and it was measured both
 ways before it was trusted — exit 1 on the stale file, exit 0 on the fresh
-one.
+one. **It asserts only where the seed is AUTHORED**: where Mission Control owns
+the backend (`BACKEND_DEPLOYED_BY`) the comparison stands down, on the marker
+the object index and the seed skeletons read, because a seed past what a
+cascade carries in one file never reaches a clone — there it said "never
+written" about a seed the prime wrote, and the cascade merges no pull request
+with a red check. The templates are still validated everywhere.
 
 It carries **two authoring systems over one renderer**. The 43 *voice* templates
 come from `scripts/template-library/designSystem.ts` — five voices keyed to the

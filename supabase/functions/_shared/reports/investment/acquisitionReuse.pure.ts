@@ -105,7 +105,8 @@ export type ReuseDecision =
         | 'schema_changed'
         | 'expired'
         | 'previous_attempt_failed'
-        | 'no_stored_value';
+        | 'no_stored_value'
+        | 'point_not_recorded';
     };
 
 function normaliseAddress(value: string): string {
@@ -277,6 +278,19 @@ export const REUSABLE_ACQUISITIONS: Record<string, ReusableDependency> = {
   economics:       { producer: 'economics',       sensitivity: 'geography', reuseClass: 'market' },
 };
 
+/**
+ * Does a stored planning answer record that it was read at the property or on
+ * its street? `pointBasis` rides on the answer from the generator's own
+ * request (`planningCoordinate.pure.ts` decides the point).
+ */
+export function planningPointIsRecorded(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const basis = (value as Record<string, unknown>).pointBasis;
+  if (!basis || typeof basis !== 'object') return false;
+  const precision = (basis as Record<string, unknown>).precision;
+  return precision === 'address' || precision === 'street';
+}
+
 /** Compose the stamp a run writes beside what it acquired. */
 export function acquisitionStamp(subject: AcquisitionSubject, nowIso: string): AcquisitionStamp {
   return {
@@ -328,7 +342,7 @@ export function planReuse(args: {
 
   for (const [key, policy] of Object.entries(REUSABLE_ACQUISITIONS)) {
     const storedValue = storedPacket?.[key];
-    const decision = assessReuse({
+    let decision = assessReuse({
       storedValue,
       stamp,
       subject,
@@ -336,6 +350,14 @@ export function planReuse(args: {
       currentSchemaVersion: ACQUISITION_SCHEMA_VERSION,
       nowMs,
     });
+    // A planning answer is a reading AT A POINT, and it is reusable only where
+    // it records that the point was the property or its street. Every answer
+    // stored before 24 Sep 2026 records nothing — and on that day two were
+    // read at the centre of a suburb and would otherwise have been served for
+    // thirty days (`cadastral`) on every regeneration.
+    if (decision.reuse && key === 'planningData' && !planningPointIsRecorded(storedValue)) {
+      decision = { reuse: false, reason: 'point_not_recorded' };
+    }
     entries.push({ key, producer: policy.producer, decision });
     if (decision.reuse) values[key] = storedValue;
   }

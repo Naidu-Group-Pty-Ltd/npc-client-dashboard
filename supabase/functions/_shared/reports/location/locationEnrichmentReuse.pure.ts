@@ -91,6 +91,16 @@ export interface EnrichmentStages {
   readonly amenityRegisterLoadedAt?: Readonly<Record<string, string>>;
   /** Which provider measured the commute, when one did. */
   readonly commuteProvider?: string;
+  /**
+   * How finely the geocode placed the address every reading was measured
+   * from: the property (`address`), its street, or only the centre of its
+   * suburb (`locality`) or postal area. Absent on every stamp written before
+   * 24 Sep 2026 and on a supplied coordinate. `enrichmentPoint.pure.ts` is
+   * the one reader.
+   */
+  readonly geocodePrecision?: 'address' | 'street' | 'locality' | 'postcode';
+  /** Who placed it (`nominatim`, `photon`, `gnaf`, `abs_locality`, `google`). */
+  readonly geocodeProvider?: string;
 }
 
 export interface EnrichmentAcquisition {
@@ -123,6 +133,17 @@ export interface EnrichmentAcquisition {
  * acquisition. What is exhausted is the re-buying, not the honesty.
  */
 export const MAX_PARTIAL_ACQUISITIONS = 3;
+
+/**
+ * How long an enrichment measured from an AREA's centre may be reused.
+ *
+ * Long enough to cover one generation's continuations, which arrive every
+ * thirty seconds for a few minutes and must all read the same point; short
+ * enough that a regeneration the next day asks the geocoder again, because an
+ * area centre is what the chain answers when the providers that place a street
+ * could not be asked — on 24 Sep 2026 that was an outage, not the address.
+ */
+export const AREA_CENTRE_REUSE_HOURS = 6;
 
 /** The attempt number a fresh acquisition for this subject should carry. */
 export function nextAcquisitionAttempt(stored: unknown, subject: EnrichmentSubject): number {
@@ -239,7 +260,9 @@ export type ReuseVerdict =
   | 'incomplete_acquisition'
   | 'partial_retry_exhausted'
   | 'readings_missing'
-  | 'commute_destination_unrecorded';
+  | 'commute_destination_unrecorded'
+  | 'point_precision_unrecorded'
+  | 'area_centre_stale';
 
 export interface ReuseDecision {
   readonly reuse: boolean;
@@ -269,6 +292,8 @@ const finiteCoords = (stored: Record<string, unknown>): boolean => {
 export function assessEnrichmentReuse(
   stored: unknown,
   subject: EnrichmentSubject,
+  /** The clock the area-centre shelf life is measured on; the wall clock unless a spec pins it. */
+  nowMs: number = Date.now(),
 ): ReuseDecision {
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
     return refuse('nothing_stored', 'No location enrichment is stored for this report.');
@@ -302,6 +327,35 @@ export function assessEnrichmentReuse(
       'The stored enrichment carries no usable coordinate, so nothing downstream '
       + 'can be built from it. Re-acquiring.',
     );
+  }
+
+  // What the point IS. A geocoded enrichment stamped before the precision was
+  // recorded cannot say whether it was measured from the property or from the
+  // middle of its suburb — on 24 Sep 2026 two reports were measured from the
+  // middle of their suburbs and nothing downstream could tell. Refused rather
+  // than guessed at; the next generation re-acquires with the precision on
+  // the stamp, which is the remedy every other refusal here already uses.
+  const stages = (acquisition.stages ?? {}) as EnrichmentStages;
+  if (stages.geocode !== 'supplied' && !stages.geocodePrecision) {
+    return refuse(
+      'point_precision_unrecorded',
+      'The stored enrichment does not record how precisely its address was placed, '
+      + 'so it cannot show it was measured from the property rather than the centre '
+      + 'of its suburb. Re-acquiring.',
+    );
+  }
+  if (stages.geocodePrecision === 'locality' || stages.geocodePrecision === 'postcode') {
+    const acquiredMs = Date.parse(acquisition.acquiredAt);
+    const ageHours = Number.isFinite(acquiredMs) ? (nowMs - acquiredMs) / 3_600_000 : Number.POSITIVE_INFINITY;
+    if (!(ageHours >= 0 && ageHours <= AREA_CENTRE_REUSE_HOURS)) {
+      return refuse(
+        'area_centre_stale',
+        `The stored enrichment was measured from the centre of the ${stages.geocodePrecision === 'postcode' ? 'postal area' : 'suburb'}, `
+        + `not the property, more than ${AREA_CENTRE_REUSE_HOURS} hours ago. Asking the geocoder `
+        + 'again: an area centre is what the chain answers when the providers that place a street '
+        + 'could not be asked.',
+      );
+    }
   }
 
   // S2 — a stamp vouches for the ACQUISITION, not for a field somebody

@@ -66,12 +66,18 @@
  *    absence wherever it appears.
  * 6. Both blocks carry `webSearchIsNotARetrieval`, which is what the five
  *    register blocks already carry and these two never had.
+ * 7. **A reading measured from an area's centre says so, first.** On 24 Sep
+ *    2026 the geocoder could place two properties no finer than their
+ *    suburbs, and every count and distance here was the suburb centre's,
+ *    presented as the property's. `areaCentreDisclosure` leads both blocks
+ *    whenever the stamp records a `locality` or `postcode` point.
  *
  * Nothing here measures anything or changes a stored value. It decides only
  * what the prompt is entitled to put in front of the model.
  */
 
 import { webSearchIsNotARetrieval } from '../registerAuthority.pure.ts';
+import { areaCentreDisclosure, enrichmentPointOf } from './enrichmentPoint.pure.ts';
 import type { TransportVerdict } from '../../transportReading.pure.ts';
 import { formatIsoDate } from '../reportDate.pure.ts';
 
@@ -256,6 +262,7 @@ export function amenityFactBlocks(li: unknown): string {
     .map((f) => f.label.toLowerCase());
 
   return list([
+    areaCentreDisclosure(enrichmentPointOf(li).precision),
     table,
     provenanceSentence(sources, rows.map((r) => r.key), loadedAt),
     'A count of zero here is a measurement and may be reported as one — a rural address with no '
@@ -354,6 +361,7 @@ export function transportFactBlocks(li: unknown): string {
     : null;
 
   return list([
+    areaCentreDisclosure(enrichmentPointOf(li).precision),
     ...parts,
     provenance,
     'Mode and service frequency are NOT measured: a stops file carries neither, so no line, no '

@@ -1,0 +1,415 @@
+name: Address service (G-NAF + Photon)
+
+# Builds the product's own address service, proves it, and — only when a
+# person asks — ships it to Fly.io and points the geocoding chain at it.
+# Read docs/integrations/ADDRESS_SERVICE.md first.
+#
+# ── What every run does (pull request or dispatch) ───────────────────────────
+#   1. Resolves the CURRENT G-NAF release from data.gov.au's own catalogue
+#      (never a hard-coded URL: the resource id changes every quarter).
+#   2. Downloads it, verifies its size against the catalogue, and builds the
+#      register the chain reads — one file per postal area — REFUSING a
+#      partial release (scripts/gnaf/build_gnaf_shards.py).
+#   3. Checks the register against itself: every row counted against the
+#      manifest, and a seeded sample of the register's own addresses asked
+#      through the chain's own matcher, which must find them
+#      (scripts/gnaf/verify-gnaf-shards.ts).
+#   4. Builds the image (Photon 1.3.0 + the Australia–Oceania index + the
+#      register), runs it IN THE RUNNER, and asks it through the real
+#      geocoding chain (src/lib/geocode/__tests__/addressServiceLive.spec.ts).
+#   Nothing leaves the runner. No secret is read.
+#
+# ── What a dispatch with deploy: true adds ───────────────────────────────────
+#   5. Pushes THAT image — the one just proved, not a rebuild — to Fly, one
+#      always-on machine in Sydney, bluegreen.
+#   6. Proves the Fly machine the same way.
+#   7. Only then writes GEOCODER_GNAF_URL, GEOCODER_PHOTON_URL and (where it is
+#      not already pointing at another Photon) AUTOCOMPLETE_PHOTON_URL into
+#      the Supabase project, so the edge functions use it from their next
+#      cold start.
+#
+# ── What it costs ────────────────────────────────────────────────────────────
+#   One shared-cpu-2x / 2 GB machine, always on: ≈ US$13–17 a month (≈ A$19–24)
+#   at Fly's rates from 1 Oct 2026. A pull-request run costs Actions minutes
+#   only. A deploy is never automatic.
+
+on:
+  pull_request:
+    paths:
+      - 'address-service/**'
+      - 'scripts/gnaf/**'
+      - 'supabase/functions/_shared/geocode/gnafShard.pure.ts'
+      - 'src/lib/geocode/__tests__/addressServiceLive.spec.ts'
+      - '.github/workflows/address-service.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'After the proof, deploy to Fly.io (one always-on machine, ≈ A$19–24/month).'
+        required: false
+        default: false
+        type: boolean
+      repoint:
+        description: 'After the Fly machine proves itself, point the edge functions at it.'
+        required: false
+        default: true
+        type: boolean
+      app:
+        description: 'Fly app name (globally unique). Created if it does not exist.'
+        required: false
+        default: aurixa-address-service
+        type: string
+      region:
+        description: 'Fly region.'
+        required: false
+        default: syd
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: address-service-${{ github.event_name == 'workflow_dispatch' && 'deploy' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  APP: ${{ inputs.app || 'aurixa-address-service' }}
+  REGION: ${{ inputs.region || 'syd' }}
+  UA: 'npc-property-dashboard/1.0 (+https://github.com/Naidu-Group-Pty-Ltd)'
+  PHOTON_DB_URL: https://download1.graphhopper.com/public/australia-oceania/photon-db-australia-oceania-1.0-latest.tar.bz2
+  DEPLOYING: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy == true }}
+
+jobs:
+  address-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The release unpacks to ~5 GB and the image carries ~3–4 GB more; the
+      # runner's toolchains we do not use are the room for it.
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo mkdir -p /mnt/gnaf && sudo chown "$(id -u):$(id -g)" /mnt/gnaf
+          df -h / /mnt
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the builder's one dependency
+        run: pip install duckdb==1.5.5
+
+      - name: The builder's own tests (a miniature release with the real layout)
+        run: python -m unittest scripts/gnaf/test_build_gnaf_shards.py
+
+      # Their side vs ours: on a pull request an unreachable publisher is
+      # reported and the proof is skipped — a build must not be decided by
+      # another party's uptime. On a deploy it fails: nothing ships unproved.
+      - id: release
+        name: Resolve the current G-NAF release from data.gov.au
+        run: |
+          set -uo pipefail
+          if python scripts/gnaf/build_gnaf_shards.py resolve --out /mnt/gnaf/release.json; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "url=$(jq -r .url /mnt/gnaf/release.json)" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo '### data.gov.au did not answer'
+              echo
+              echo 'The G-NAF catalogue could not be read, so the register was not built and nothing below ran.'
+              echo 'This is a statement about the retrieval, not about the code.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$DEPLOYING" = "true" ]; then echo '::error::cannot deploy an unproved service'; exit 1; fi
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the release
+        if: steps.release.outputs.reachable == 'true'
+        env:
+          URL: ${{ steps.release.outputs.url }}
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-all-errors --retry-delay 15 -C - -A "$UA" -o /mnt/gnaf/gnaf.zip "$URL"
+          ls -l /mnt/gnaf/gnaf.zip
+
+      - id: build
+        name: Build the register (refuses a partial release)
+        if: steps.release.outputs.reachable == 'true'
+        run: |
+          set -euo pipefail
+          python scripts/gnaf/build_gnaf_shards.py build \
+            --zip /mnt/gnaf/gnaf.zip --release /mnt/gnaf/release.json \
+            --out address-service/gnaf --work /mnt/gnaf/work --memory 5GB \
+            --summary "$GITHUB_STEP_SUMMARY"
+          rm -rf /mnt/gnaf/work /mnt/gnaf/gnaf.zip
+          du -sh address-service/gnaf
+
+      - uses: actions/setup-node@v7
+        if: steps.release.outputs.reachable == 'true'
+        with:
+          node-version: 20
+          cache: npm
+
+      - if: steps.release.outputs.reachable == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - id: verify
+        name: Check the register against itself
+        if: steps.release.outputs.reachable == 'true'
+        run: npx tsx scripts/gnaf/verify-gnaf-shards.ts address-service/gnaf
+
+      - id: photon
+        name: Read the Photon index's date (and that it is there)
+        if: steps.release.outputs.reachable == 'true'
+        run: |
+          set -uo pipefail
+          if headers=$(curl -fsSI -A "$UA" "$PHOTON_DB_URL"); then
+            stamp=$(printf '%s' "$headers" | tr -d '\r' | awk -F': ' 'tolower($1)=="last-modified"{print $2}')
+            size=$(printf '%s' "$headers" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{print $2}')
+            echo "Photon index: ${size:-?} bytes, last modified ${stamp:-?}"
+            echo "stamp=${stamp:-unknown}" >> "$GITHUB_OUTPUT"
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "### The Photon index host did not answer — the image was not built" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$DEPLOYING" = "true" ]; then echo '::error::cannot deploy without the index'; exit 1; fi
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the image
+        if: steps.photon.outputs.reachable == 'true'
+        env:
+          STAMP: ${{ steps.photon.outputs.stamp }}
+        run: |
+          set -euo pipefail
+          docker build --progress=plain -t address-service:ci --build-arg "PHOTON_DB_STAMP=$STAMP" address-service
+          docker image ls address-service:ci
+          # Fly unpacks an image onto the machine's root filesystem and refuses
+          # one past ~8 GB uncompressed. Both readings are taken — the layers as
+          # stored (a file changed in a later layer is stored twice) and the
+          # filesystem the machine would see — and either past 7.5 GB fails the
+          # run here, rather than the deploy after the proof.
+          layers=$(docker image inspect -f '{{.Size}}' address-service:ci)
+          rootfs=$(docker run --rm --user 0 --entrypoint du address-service:ci -sxb / 2>/dev/null | cut -f1 || true)
+          rootfs=${rootfs:-0}
+          echo "image: layers ${layers} bytes; unpacked filesystem ${rootfs} bytes"
+          echo "- image: layers $((layers / 1048576)) MiB, unpacked filesystem $((rootfs / 1048576)) MiB" >> "$GITHUB_STEP_SUMMARY"
+          ceiling=7500000000
+          for size in "$layers" "$rootfs"; do
+            if [ "$size" -gt "$ceiling" ]; then
+              echo "::error::the image is ${size} bytes; Fly refuses an image past ~8 GB uncompressed"
+              exit 1
+            fi
+          done
+
+      # A token for this runner only; the deployed one is derived below.
+      - id: local
+        name: Run the image in the runner
+        if: steps.photon.outputs.reachable == 'true'
+        run: |
+          set -euo pipefail
+          token=$(openssl rand -hex 24)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          docker run -d --name addr -p 8080:8080 -e "ADDRESS_SERVICE_TOKEN=$token" address-service:ci
+          # A service that has EXITED is not a slow one. The first real run
+          # died seven seconds in and this loop waited out its five minutes,
+          # so it stops the moment the container is gone and says which it was.
+          code=000
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz || echo 000)
+            [ "$code" = "200" ] && { echo "healthy after $((i * 5))s"; break; }
+            if [ "$(docker inspect -f '{{.State.Running}}' addr 2>/dev/null)" != "true" ]; then
+              echo "::error::the service exited within ~$((i * 5))s (exit code $(docker inspect -f '{{.State.ExitCode}}' addr 2>/dev/null || echo unknown))"
+              break
+            fi
+            sleep 5
+          done
+          [ "$code" = "200" ] || { docker logs addr 2>&1 | tail -80; echo '::error::the service never became healthy'; exit 1; }
+
+      - id: doors
+        name: Prove the doors, in the runner
+        if: steps.photon.outputs.reachable == 'true'
+        env:
+          BASE: http://127.0.0.1:8080
+          TOKEN: ${{ steps.local.outputs.token }}
+        run: bash address-service/prove-doors.sh
+
+      - id: chain
+        name: Prove the chain, in the runner
+        if: steps.photon.outputs.reachable == 'true'
+        env:
+          ADDRESS_SERVICE_BASE: http://127.0.0.1:8080/${{ steps.local.outputs.token }}
+        run: npx vitest run src/lib/geocode/__tests__/addressServiceLive.spec.ts
+
+      - name: The service's own log
+        if: always() && steps.local.outcome != 'skipped'
+        run: docker logs addr 2>&1 | tail -60 || true
+
+      # ── Deploy: a dispatch with deploy: true, and nothing else ─────────────
+
+      - id: gate
+        name: Check for the two credentials
+        if: env.DEPLOYING == 'true'
+        env:
+          FLY: ${{ secrets.FLY_API_TOKEN }}
+          SUPA: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=''
+          [ -n "${FLY:-}" ]  || missing="$missing FLY_API_TOKEN"
+          [ -n "${SUPA:-}" ] || missing="$missing SUPABASE_ACCESS_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "### Not deployed: missing repository secrets:$missing" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::missing:$missing"; exit 1
+          fi
+
+      - id: project
+        name: Resolve this deployment's Supabase project
+        if: env.DEPLOYING == 'true'
+        env:
+          PROJECT_REF_VAR: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -uo pipefail
+          ref="${PROJECT_REF_VAR:-}"
+          if [ -z "$ref" ] && [ -f supabase/config.toml ]; then
+            ref=$(sed -n '/^\[/q; s/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"\([a-z]\{20\}\)".*/\1/p' supabase/config.toml | head -1)
+          fi
+          [ -n "$ref" ] || { echo '::error::no Supabase project ref'; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: env.DEPLOYING == 'true'
+
+      # The path token the edge functions present. DERIVED rather than minted,
+      # so a redeploy keeps the URL the edge functions already hold: a fresh
+      # token every run would break every geocode between the switch and the
+      # repoint. Rotating FLY_API_TOKEN rotates it, and the repoint follows.
+      - id: token
+        name: Derive the service token
+        if: env.DEPLOYING == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          value=$(printf '%s' "address-service:$APP" | openssl dgst -sha256 -hmac "$FLY_API_TOKEN" -r | cut -c1-48)
+          echo "::add-mask::$value"
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
+      - name: Create the app if it does not exist, and give it its token
+        if: env.DEPLOYING == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_ORG: ${{ vars.FLY_ORG }}
+          TOKEN: ${{ steps.token.outputs.value }}
+        run: |
+          set -euo pipefail
+          if flyctl apps list --json | jq -e --arg a "$APP" '.[] | select(.Name == $a)' >/dev/null; then
+            echo "app $APP exists"
+          else
+            flyctl apps create "$APP" --org "${FLY_ORG:-personal}"
+          fi
+          flyctl secrets set --app "$APP" --stage "ADDRESS_SERVICE_TOKEN=$TOKEN"
+
+      # The image the runner just proved, pushed as it is — never a rebuild.
+      - name: Push the proved image and deploy it
+        if: env.DEPLOYING == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="registry.fly.io/$APP:${GITHUB_SHA::12}-${GITHUB_RUN_ID}"
+          flyctl auth docker
+          docker tag address-service:ci "$tag"
+          docker push "$tag"
+          flyctl deploy --app "$APP" --config address-service/fly.toml --image "$tag" \
+            --ha=false --regions "$REGION" --wait-timeout 20m --yes
+          echo "url=https://$APP.fly.dev" >> "$GITHUB_ENV"
+
+      - name: Prove the doors, on Fly
+        if: env.DEPLOYING == 'true'
+        env:
+          BASE: https://${{ env.APP }}.fly.dev
+          TOKEN: ${{ steps.token.outputs.value }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/healthz" || echo 000)
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
+          bash address-service/prove-doors.sh
+
+      - name: Prove the chain, on Fly
+        if: env.DEPLOYING == 'true'
+        env:
+          ADDRESS_SERVICE_BASE: https://${{ env.APP }}.fly.dev/${{ steps.token.outputs.value }}
+        run: npx vitest run src/lib/geocode/__tests__/addressServiceLive.spec.ts
+
+      - uses: supabase/setup-cli@v3
+        if: env.DEPLOYING == 'true' && inputs.repoint != false
+        with:
+          version: latest
+
+      # Only now do the edge functions learn about it. AUTOCOMPLETE_PHOTON_URL
+      # is written only where it is unset or already ours: an operator who
+      # pointed the address field at another Photon is not overruled.
+      - name: Point the geocoding chain at the service
+        if: env.DEPLOYING == 'true' && inputs.repoint != false
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
+          TOKEN: ${{ steps.token.outputs.value }}
+        run: |
+          set -euo pipefail
+          gnaf="https://$APP.fly.dev/$TOKEN/gnaf"
+          photon="https://$APP.fly.dev/$TOKEN/photon"
+          set_args=("GEOCODER_GNAF_URL=$gnaf" "GEOCODER_PHOTON_URL=$photon")
+          existing=$(supabase secrets list --project-ref "$PROJECT_REF" -o json 2>/dev/null || echo 'unreadable')
+          ours=$(printf '%s' "$photon" | sha256sum | cut -d' ' -f1)
+          # The list carries each secret's SHA-256, never its value. Unset →
+          # write; set to exactly ours → rewrite; anything else, including a
+          # listing this step cannot read → leave it.
+          if [ "$existing" = "unreadable" ]; then
+            echo "::warning::the secret list could not be read; AUTOCOMPLETE_PHOTON_URL left as it is"
+          elif ! printf '%s' "$existing" | grep -q 'AUTOCOMPLETE_PHOTON_URL'; then
+            set_args+=("AUTOCOMPLETE_PHOTON_URL=$photon")
+          else
+            current=$(printf '%s' "$existing" | jq -r '.[] | select(.name == "AUTOCOMPLETE_PHOTON_URL") | .value // empty' 2>/dev/null || true)
+            if [ "$current" = "$ours" ]; then
+              set_args+=("AUTOCOMPLETE_PHOTON_URL=$photon")
+            else
+              echo "::warning::AUTOCOMPLETE_PHOTON_URL already points somewhere else; left as it is"
+            fi
+          fi
+          # An explicit order is an operator's decision and is not rewritten
+          # here — but an order without gnaf would never ask the register.
+          if [ "$existing" != "unreadable" ] && printf '%s' "$existing" | grep -q '"GEOCODER_PROVIDERS"'; then
+            echo "::warning::GEOCODER_PROVIDERS is set explicitly on this project; it must name gnaf (first) for the register to be asked"
+          fi
+          supabase secrets set --project-ref "$PROJECT_REF" "${set_args[@]}"
+          echo "written: ${set_args[*]%%=*}"
+
+      - name: Say what is live
+        if: always()
+        run: |
+          {
+            echo '### Address service'
+            echo
+            # Each line reads its step's OUTCOME: a failed build once printed
+            # "register built and checked: yes" because this read reachability.
+            echo "- data.gov.au answered: ${{ steps.release.outputs.reachable == 'true' && 'yes' || 'no' }}"
+            echo "- register built: ${{ steps.build.outcome || 'skipped' }}; checked against itself: ${{ steps.verify.outcome || 'skipped' }}"
+            echo "- image proved in the runner — doors: ${{ steps.doors.outcome || 'skipped' }}; chain: ${{ steps.chain.outcome || 'skipped' }}"
+            if [ "$DEPLOYING" = "true" ]; then
+              echo "- deployed: https://$APP.fly.dev (one always-on shared-cpu-2x / 2 GB machine in $REGION)"
+              echo "- edge functions repointed: ${{ inputs.repoint != false && 'yes' || 'no' }}"
+              echo
+              echo 'Prove it by effect: the next report generation logs `placed at address precision by gnaf`'
+              echo 'in location-intelligence-service, and the planning page reads "at the property'"'"'s own address point".'
+            else
+              echo '- deployed: no (a pull-request run, or a dispatch without deploy: true)'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

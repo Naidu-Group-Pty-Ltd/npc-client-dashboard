@@ -97,7 +97,10 @@ allowance holds only if a repeat costs nothing. `geocode_cache` is keyed by the
 folded address text (case and punctuation folded; spelling variants such as
 `Rd`/`Road` deliberately NOT folded, because a key that guesses equivalence
 serves the wrong cached answer). A wrong answer that was cached is removed by
-deleting its row; nothing expires, because an address does not move.
+deleting its row; a street or address answer never expires, because an address
+does not move. An answer coarser than a street is different (§17): it is never
+remembered while a street-level provider could not be asked, and a remembered
+one is asked again of the street-level providers once it is an hour old.
 
 **The free providers spend no credential, so they are never metered.** They
 are fetched through `fetchWithTimeout`, never `meteredFetch`, and
@@ -227,9 +230,11 @@ geocodes correctly.
 
 | Name | Default | Meaning |
 |---|---|---|
-| `GEOCODER_PROVIDERS` | `nominatim,abs_locality` | The order. Add `google` to make Google a last resort. A misspelt value falls back to the default, never to "no providers". |
+| `GEOCODER_PROVIDERS` | `gnaf,nominatim,photon,abs_locality` | The order. Add `google` to make Google a last resort. A misspelt value falls back to the default, never to "no providers". Photon joined the default on 24 Sep 2026 (§17), and G-NAF leads it wherever a register is configured (§18). |
+| `GEOCODER_GNAF_URL` | unset | The G-NAF register the product's own address service serves (§18) — `https://<app>.fly.dev/<token>/gnaf`, written by the deploy workflow once the service has proved itself. Unset, the `gnaf` provider is skipped without a request. |
 | `GEOCODER_OSM_URL` | `https://nominatim.openstreetmap.org` | A self-hosted Nominatim (§10). |
-| `OSM_GEOCODING_DAILY_LIMIT` | `2000` | The day's Nominatim allowance across the deployment. |
+| `GEOCODER_PHOTON_URL` | `https://photon.komoot.io` | The Photon the chain asks for a street address (§17). Falls back to `AUTOCOMPLETE_PHOTON_URL`, then the public instance — so pointing the address field at a self-hosted copy points the chain at it too. |
+| `OSM_GEOCODING_DAILY_LIMIT` | `2000` | The day's geocoding allowance across the deployment, shared by Nominatim and Photon. |
 | `ADDRESS_AUTOCOMPLETE_PROVIDER` | `osm` | `osm` or `google`. Any other spelling is `osm`. |
 | `AUTOCOMPLETE_PHOTON_URL` | `https://photon.komoot.io` | A self-hosted Photon (§10). |
 | `OSM_AUTOCOMPLETE_DAILY_LIMIT` | `5000` | The day's Photon allowance. |
@@ -700,3 +705,130 @@ Victoria).
 Road. The harness proves the question; the answer is OpenStreetMap's. If it
 does not, the ABS suburb centroid is the floor, which resolves the geography
 at suburb grain.
+
+## 17. The day OpenStreetMap said no (24 Sep 2026)
+
+From **07:51:29 UTC** the public Nominatim answered **HTTP 403** to every
+request from the production egress. Measured from the function logs, the last
+success was at 07:49:25 (`estimate-capital-growth`, `1408/5 SECOND AVE,
+Blacktown NSW 2148`, street precision). The eight minutes before the refusal
+held about a dozen requests, most of them one question asked over and over:
+report `79d677d6`'s continuations re-asked the unfindable `93 Schofields Farm
+Road (tallawong) NSW 2762` every thirty seconds. The six hours before that held
+two. Our functions share outbound addresses with other Supabase customers, and
+Nominatim blocks by address, so **the cause is not established**. The log
+carried `nominatim answered 403` and nothing else, and the refusal page — which
+says why — was discarded unread.
+
+The chain then did exactly what §2 designed it to do. It fell through to the
+ABS suburb centroid, and so it placed two properties in the middle of their
+suburbs. Five faults turned that fallback into wrong reports.
+
+1. **The centroid was remembered as the address.** `geocode_cache` held that "a
+   hit is the answer; nothing expires, because an address does not move". The
+   centroid was written there, so neither a regeneration nor the refusal lifting
+   could ever have placed these two properties again.
+2. **The precision was dropped.** The geocoder's answer said
+   `precision: 'locality'`. `location-intelligence-service` returned the point
+   and discarded that field.
+3. **Every enrichment point was called a parcel.** `enrichmentCoordinate`
+   stamped every enrichment point `address`, the one precision its own module
+   says may select a planning control. So Blacktown's planning registers were
+   asked at the middle of Blacktown. The report stated **"R2 — Low Density
+   Residential" for a fourteenth-floor apartment**, under a sentence calling the
+   point "the property's verified coordinate".
+4. **The centroid's readings scored the property.** Its walk score, commute and
+   school count verified as the property's own and scored Location.
+5. **The planning answer would have been reused.** It carried no record of
+   where it was read. Reuse keeps a `cadastral` answer for thirty days, so every
+   regeneration would have been served the same wrong zone.
+
+What each became:
+
+- **Photon is the chain's second street-level provider**
+  (`photonGeocode.pure.ts`; default order `nominatim,photon,abs_locality`;
+  `GEOCODER_PHOTON_URL`, falling back to `AUTOCOMPLETE_PHOTON_URL`). It reads
+  the same OpenStreetMap data behind a different operator, so one operator's
+  refusal no longer drops the chain to a suburb.
+  - It is held to a stricter match than the address field's suggestions,
+    because nobody chooses between its candidates.
+  - A house is accepted only when its number AND street agree with the ask.
+  - Either way, the answer must stand in the postal area asked (or in the
+    suburb, where no postcode can be compared).
+  - A lot number is never read as a street number.
+- **A refusal pauses the provider that sent it**
+  (`geocodeChainPolicy.pure.ts`: 403 → 30 min, 429 → its `Retry-After` inside
+  1 min–6 h, a failing 5xx → 1 min). The refusal's own first words and its
+  `Retry-After` are logged.
+- **An answer coarser than a street is never remembered while a street-level
+  provider could not be asked** (`cacheVerdict`).
+- **A remembered answer coarser than a street is provisional.** Where the
+  question names a street, the street-level providers are asked again once the
+  row is an hour old.
+  - A finer answer replaces it.
+  - A finer "no such street" re-dates it.
+  - A finer outage leaves it standing.
+
+  That is what repairs the rows the outage wrote, with no migration and no row
+  deleted by hand. A caller that refuses a suburb-level answer (the PDF import)
+  is no longer handed one from the cache.
+- **The point's precision travels with everything measured from it.**
+  - The location service stamps `stages.geocodePrecision` / `geocodeProvider`.
+  - `enrichmentPoint.pure.ts` is the one reader.
+  - `enrichmentCoordinate` and `recoveredCoordinate` share one rule: `address`
+    reads planning; `street` reads it and the page says "at a point on the
+    property's street"; a suburb or postal-area centre is `too_coarse`.
+  - The page then says the registers were not asked, and why, rather than
+    printing a neighbouring zone.
+- **An area centre's readings are neither scored nor stated as the property's.**
+  - `locationInputVerification` has a rule 4, and the grade's gap reads
+    `LOCATION_MEASURED_AT_AREA_CENTRE`.
+  - The amenity and transport blocks open with where the figures were measured
+    from.
+- **Reuse asks what the point was.**
+  - An enrichment with no recorded precision is re-acquired.
+  - One measured at an area centre is reused only within six hours — one
+    generation's continuations.
+  - A planning answer is reused only where it records a point at the property
+    or its street (`planningPointIsRecorded`).
+
+**Migration `20261220090000`** widens `geocode_cache.provider`'s CHECK to admit
+`photon` and `gnaf`. Without it, a Photon answer is served but refused at the
+insert, which is the repeated question this section exists to stop. The code
+ships in either order: a refused cache write logs and the answer still stands.
+
+**What stays unverified until deploy:**
+
+- whether Photon answers the production egress (the address field's own
+  Photon calls do not appear in today's logs);
+- whether it holds `5 Second Avenue` as a house;
+- what the refusal page says. The next 403 will log it.
+
+The durable answer to "a public service can refuse us at any time" is the one
+§10 already names: our own copy of the lookup service, and G-NAF as the
+provider that places every real address on its own block. The owner approved
+both on 24 Sep 2026.
+
+## 18. Our own address service (G-NAF + Photon)
+
+Both durable answers §17 names are built, as one service:
+[`ADDRESS_SERVICE.md`](./ADDRESS_SERVICE.md).
+
+- **G-NAF** is the national address register: 15.9M addresses, 98% of them
+  geocoded at the address itself. It is served as static files, one per postal
+  area, and read by the `gnaf` provider (`gnafShard.pure.ts`), which leads the
+  default order and is skipped without a request where `GEOCODER_GNAF_URL` is
+  unset.
+- **Photon** runs on the same machine over the Australia–Oceania index, behind
+  `GEOCODER_PHOTON_URL` and, where it is unset or already ours,
+  `AUTOCOMPLETE_PHOTON_URL`.
+- **A copy this product runs is never held to the public allowance or the
+  one-a-second turn** (`isPublicPhotonBase`, one rule for the address field
+  and the chain).
+
+The register is **not** in the database, because it would add sixty per cent
+to it, needs a credential the repository does not hold, and would never reach
+a clone. Every build is proved in CI before anything serves it: the register
+checked against itself, the image run in the runner, the real chain asked for
+the owner's addresses. A deploy is a person's dispatch, at ≈ A$19–24 a month
+for one always-on machine.

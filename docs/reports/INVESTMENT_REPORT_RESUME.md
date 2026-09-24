@@ -517,3 +517,142 @@ product decision, not one to take inside this fix. The progressive save after
 each section also still discards its own `{ error }` (the early write no
 longer does); a refused save there is re-written by the next pass rather than
 lost, and fixing it is a separate change.
+
+## §12 A read that failed is not a failed report
+
+§8 and §9 were two reasons a complete run reported itself failed, and §9 closed
+with *the third time it will not be able to*. It was able to, on 24 Sep 2026,
+for a third reason — and it was the rule written in §9 to be the guarantee
+that did it.
+
+### The measurement
+
+`function_edge_logs` and `function_logs`, project `dduzbchuswwbefdunfct`,
+60 Lawley Street, Spalding (report `5d8bc97e-…`), regenerated beside
+9 Hollow Street:
+
+```
+05:30:59.8  generator   section 16/16 saved, last_completed_section=16
+05:31:01.6  generator   final write — status 'completed' — "Report successfully updated"
+05:31:05.1  generator   POST returns 200 (55.9 s) with isComplete
+05:31:05.2  OPTIONS condense-investment-report   503  SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED  11 ms
+05:31:07.1  POST    get-investment-reports       503  SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED   6 ms
+05:31:08.2  manage-investment-reports  action: update  → status 'failed'
+05:31:27.0  "token release for failed report" — jobsReleased 16, tokensReleased 316
+```
+
+Four requests across the whole project met the 503 between 05:31:04.5 and
+05:31:07.1, in 6–81 ms and with no `function_id` — the platform refused them
+before any worker ran. Two were this browser's. Hollow's run finalised at
+05:32:03, after the window, and completed normally; that is the only reason one
+of the two reports failed and the other did not.
+
+### Why every guard passed
+
+The hook's final status check destructured `{ data }` and dropped the error.
+With the read failed, `data.report` was undefined and the check compared
+`Number(undefined) >= 16` — `NaN`, false — and threw *"the record holds 0 of
+16 sections"* about a record it had never seen. The catch asked the row again,
+could not read it either, and `shouldMarkRunFailed(null)` answered as §9
+designed: *a row that could not be read at all still records the failure*. The
+condense step's `try`/`catch` was dead code for the same reason —
+`invokeSecureFunction` returns its failures rather than throwing them — so the
+preflight 503 was never tried again.
+
+Nothing about the document was uncertain. The generator's own answer to this
+very run had said `isComplete`, and the row said `completed`. What followed:
+the widget read `Failed · 16/16 sections · 100%` for good (`isResumable`
+excludes a report whose sections are all banked, so nothing resumes it), the
+card reads "Unable to calculate" once the list refreshes
+(`InvestmentGradeSummary` maps that from `status === 'failed'`, §9), and the
+finished report was refunded as a failed one.
+
+### The fix
+
+**The server decides from the row it can read.** `manage-investment-reports`
+reads `status, last_completed_section, total_sections` before any
+`status: 'failed'` write and refuses — HTTP 409 `report_complete`, with the
+reason in words, nothing written and nothing released — when the row holds a
+finished document. A row it cannot read is not stamped either (503
+`row_unreadable`, retryable): an unread row is not evidence of a failure, and
+the stamp cannot be taken back. This is the half that protects every browser,
+including one running a build from before this section, and it ships with the
+edge functions on merge rather than waiting for a frontend publish. The rule is
+`rowHoldsCompleteDocument` in `_shared/reports/investment/failureStamp.pure.ts`,
+read by the browser through a bridge — one rule, because the server now
+enforces what the browser asks.
+
+**The browser tells a failed read from an answer.** `runRowRead.pure.ts`:
+`readRunRow` repeats a transient failure (network, 5xx, 408, 429) at 1 s,
+2.5 s and 5 s — more than twice the measured window — and says which of three
+things happened: `row`, `absent` or `unreadable`, never "a row of zero".
+`settleRunOutcome` reads the row whenever it can, and the row wins, including
+against the generator (§9: a second pump can rewind a counter the generator
+reported complete). Where the row cannot be read, the generator's `isComplete`
+stands and the run is reported finished with the status "not re-read yet"; with
+no such answer the outcome is `unknown`, said as unknown.
+
+**`shouldMarkRunFailed` learns what the run already knows.** An unreadable row
+no longer overrules `serverReportedComplete` (the generator said `isComplete`,
+or the kickoff read found every section banked), and a run that failed before
+it wrote anything — the kickoff read — stamps nothing, because the row is
+exactly as it found it and may be mid-run under another driver. A run that
+threw with its state genuinely unknown still fails VISIBLE, and now the server
+decides whether that stamp lands.
+
+**The condense step is repeated through a blip**, bounded, and never after a
+timeout — a condense that ran for 180 s is not a blip.
+
+What is unchanged, on purpose: a row short of its sections is still stamped (a
+section that failed twice, a Stop mid-run); the Stop re-assert is untouched; a
+Stop pressed on a report that has already finished is now refused with the
+reason instead of destroying it — the hook's own comment already said *marking
+a completed report failed destroys it*.
+
+`failedReadIsNotAFailedReport.spec.ts` drives the real hook with the transport
+scripted to answer as production did. Three of its replays fail on the hook as
+it was — the incident itself, a blip shorter than the retries, and a kickoff
+read that cannot be made — and pass now.
+
+### Recovering a report stamped before this
+
+A finished report already stamped failed is recovered by **Regenerate**. With
+every section banked, the hook takes its post-processing path: it writes
+`processing` without resetting the counter, calls **no** generator (no section
+is rewritten, no model is paid for), runs the condense step — which writes
+`completed` — and confirms. The replay spec pins that path and it passes on
+the hook both before and after this change, so it works on the build that is
+live today.
+
+### What is not done
+
+* **The 316-token refund for 60 Lawley Street's finished run is not reversed.**
+  It is a Mission Control ledger entry; nothing here touches billing records.
+
+Three things this section first named as not done were then fixed in the same
+change, each measured from the same logs:
+
+* **`report-schema-validator` is no longer called.** It answered 401 to every
+  generator call — five of five between 23 Sep 13:30 and 24 Sep 05:32 — because
+  the generator invoked it through an ANON client and it requires a user
+  session. Two more reasons, each sufficient: its answer sits under `data` while
+  the reader took `.issues` from the top level, so a 200 would still have
+  produced nothing; and its nine required sections are the legacy layout, none
+  of them a Compass section name. It had never contributed a flag to any report,
+  so removing the call changes no document. A Compass's structure is judged by
+  `runQAValidation`, against the registry it was generated from.
+* **Compass QA requires only the Protected sections the generator writes.**
+  `missing-protected-section compass.cover` fired on every Compass (five of
+  five): the cover is Protected and `includeInCompass: false`, drawn by the
+  template and never written. `REQUIRED_PROTECTED_SECTION_IDS` is derived from
+  `compassSections()`, never restated.
+* **QA no longer calls the price and the rent financial modelling.**
+  `/weekly rent/` and `/purchase price/` predated TIER_FRAMEWORK Decision E and
+  filed two `financial-exclusion` errors on 9 Hollow Street for stating facts
+  the tier keeps. Yield, LVR, the loan and the cash flow are still refused.
+
+And a fourth, found while fixing the missing risk register, which is larger than
+any of them: every Compass section's own instructions and the document's rules
+were cut from its prompt on every call. That is recorded in
+[`INVESTMENT_STRUCTURE.md`](./INVESTMENT_STRUCTURE.md) under *What a section is
+told*. 

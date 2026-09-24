@@ -7,6 +7,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
 import { healFinanceIdentity } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { refuseFailureStamp } from '../_shared/reports/investment/failureStamp.pure.ts';
 /**
  * CORS comes from `_shared/auth.ts`, like every other function's.
  *
@@ -125,6 +126,56 @@ Deno.serve(async (req) => {
             JSON.stringify({ error: 'reportId and data are required for update' }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
+        }
+
+        // A failure stamp is a statement about the ROW, so the row decides.
+        //
+        // On 24 Sep 2026 a browser whose final status read hit a three-second
+        // platform 503 stamped 60 Lawley Street failed eight seconds after
+        // the generator had written it `completed` with 16 of 16 sections —
+        // and the release below refunded the finished report as a failed
+        // one. The browser could not read the row; this function can, so it
+        // refuses to record a failure over a document the record shows was
+        // finished, and releases nothing. A row it cannot read is not
+        // stamped either: an unread row is not evidence of a failure, and
+        // the stamp cannot be taken back. See `failureStamp.pure.ts`.
+        if (String(data.status || '').toLowerCase() === 'failed') {
+          const { data: current, error: currentError } = await supabase
+            .from('investment_reports')
+            .select('id, status, last_completed_section, total_sections')
+            .eq('id', reportId)
+            .maybeSingle();
+          if (currentError) {
+            console.warn('[manage-investment-reports] failure stamp not recorded — the row could not be read', {
+              reportId,
+              error: currentError.message,
+            });
+            return new Response(
+              JSON.stringify({
+                error: 'The report could not be read, so it was not marked as failed. Try again in a moment.',
+                code: 'row_unreadable',
+                retryable: true,
+              }),
+              { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+          const refusal = refuseFailureStamp(current);
+          if (refusal) {
+            console.warn('[manage-investment-reports] failure stamp refused — the report is complete', {
+              reportId,
+              status: current?.status ?? null,
+              lastCompletedSection: current?.last_completed_section ?? null,
+              totalSections: current?.total_sections ?? null,
+            });
+            return new Response(
+              JSON.stringify({
+                error: refusal.message,
+                code: refusal.code,
+                refused: true,
+              }),
+              { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
         }
 
         // A save that carries manual overrides recomputes the financials

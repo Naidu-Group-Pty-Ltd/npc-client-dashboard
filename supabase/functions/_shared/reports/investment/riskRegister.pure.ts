@@ -282,3 +282,28 @@ export function riskRegisterInstruction(): string {
     'and no block for a row that carries no finding. NO financial figures.',
   ].join(' ');
 }
+
+/**
+ * The correction a Risk Dashboard earns when it was written without its
+ * register, carried on the one further attempt the generator makes.
+ *
+ * Not a restatement of `riskRegisterInstruction()` — that reaches every call
+ * already, untrimmed — but the one thing the rejected draft left out, said first and
+ * shown in markup, because a register nobody wrote cannot be repaired on the
+ * read path: composing one would mean inventing an exposure and an evidence
+ * reading for every row. The model has no memory of the draft, so this names
+ * what was missing rather than referring to "your" earlier answer.
+ */
+export function riskRegisterRepairNote(): string {
+  const cols = RISK_REGISTER_COLUMNS.join(' | ');
+  const rule = RISK_REGISTER_COLUMNS.map(() => '---').join(' | ');
+  return [
+    '# A DRAFT OF THIS SECTION WAS REJECTED — IT HAD NO SUMMARY REGISTER',
+    '',
+    `Open the section with the register: a markdown table of exactly these three columns — ${cols} —`,
+    `written as "| ${cols} |", then "| ${rule} |", then one row per risk. Exposure is one of`,
+    `${RISK_EXPOSURE_LEVELS.join(' / ')}; Evidence is one of ${RISK_EVIDENCE_READINGS.join(' / ')}; every cell is`,
+    `a phrase of at most ${RISK_REGISTER_CELL_MAX_WORDS} words. The detail blocks follow the table, as the`,
+    "section's instructions set out.",
+  ].join('\n');
+}

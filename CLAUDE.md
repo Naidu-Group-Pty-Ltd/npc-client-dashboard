@@ -1866,6 +1866,27 @@ rating you invented may not be drawn in ANY primitive**; `bars`, `heatmap` and
 `radar` are judged where the directive declares `max=100`, measured at 383 of
 611 with no legitimate counter-example in the 25 most frequent titles.
 
+**And then the contract stopped arriving.** Read *What a section is told* in
+[`INVESTMENT_STRUCTURE.md`](./docs/reports/INVESTMENT_STRUCTURE.md) before
+touching `_shared/compassSectionContract.ts`, `generateReportSection`'s system
+message, the pinned context's size or anything prepended to the base prompt.
+`generateReportSection` trims the base head-tail to what the pin and the
+instructions leave of 70 KB, and the pin grew to 33–46 KB, so on 24 Sep 2026
+**all 32 section calls logged `trimmed true`** and the head kept 8.5–11.6 KB of
+an 18.7 KB structure guide. The document's rules (15 KB in) and the last four
+sections' own instructions — the Risk Dashboard's register among them — never
+reached the model, nor did the method contract behind the guide: none of five
+Compass reports carried the declared register. Three rules. **A section's
+instructions and the document's rules travel in the SYSTEM message**, budgeted
+first and never trimmed, on the full and the compact prompt alike — not in the
+user message's pin, which is full (45.6 KB on a NSW run), where adding them
+would have pushed the final tail trim into the planning controls table. **The
+base carries an outline**, because other sections' purposes are not
+instructions for this call and they occupied the head the trim keeps. And
+**`trimmed true` is a finding, not a log line**: the evidence pack still loses
+two-thirds of itself on every call, and that is the next measured fix, not a
+settled one.
+
 ## The Compass has room for what it retrieves (v4.0)
 
 Zoning had **no section**. `Zoning` and `Planning` were sourceHeadings of the
@@ -3454,6 +3475,33 @@ carries the basis never ran. And **the browser follows the row**: a restart
 writes section 1 when section 10 was asked for, which `sectionWasWritten` alone
 reads as no progress, so `useChunkedRegeneration` follows `nextSectionIndex`
 and bounds the whole run.
+
+**And a read that failed is not a failed report.** Read §12 of
+[`INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
+before touching `_shared/reports/investment/failureStamp.pure.ts`,
+`src/lib/reports/runRowRead.pure.ts`, the final status check or the failure
+path in `useChunkedRegeneration`, or the `status: 'failed'` branch of
+`manage-investment-reports`. On 24 Sep 2026 60 Lawley Street finished — 16 of
+16 sections banked, the row written `completed` — and three seconds later the
+Supabase edge runtime answered 503 `SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED` in
+6 ms to the browser's final status read. The hook had dropped that read's
+`error` and compared `NaN >= 16`, threw "the record holds 0 of 16 sections",
+could not read the row in its catch either, and §9's own guarantee — *an
+unreadable row still records the failure* — stamped the finished document
+failed, which `manage-investment-reports` then refunded as a failed run (16
+jobs, 316 tokens). Three rules now. **The server decides from the row it can
+read**: a failure stamp over a finished document is refused (409
+`report_complete`, nothing written, nothing released), and one over a row it
+cannot read is not written either — the half that protects every browser
+build, and it ships with the edge deploy rather than a frontend publish. **A
+failed read is `unreadable`, never a row of zero**: `readRunRow` repeats a
+transient failure through the measured window before concluding anything, and
+`settleRunOutcome` lets the generator's own `isComplete` stand where the row
+cannot be read — while the row, whenever it CAN be read, still wins, because a
+second pump can rewind a counter the generator reported complete. And **a run
+that wrote nothing stamps nothing**. A report stamped before this recovers by
+**Regenerate**: with every section banked the hook calls no generator and only
+re-runs the finishing step, pinned on the hook both before and after.
 
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),

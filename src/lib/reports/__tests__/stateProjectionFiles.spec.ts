@@ -6,7 +6,7 @@
  * `state-projection-liveness`, which runs these same parsers over them.
  */
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as XLSX from 'xlsx';
 import { describe, expect, it } from 'vitest';
@@ -39,6 +39,17 @@ import {
 } from '../../../../supabase/functions/_shared/reports/market/openData/projectionLoad.pure';
 
 type Cell = string | number | null;
+
+/*
+ * Every repository file this spec reads is named from the ROOT, never
+ * through a `../` literal. Mission Control delivers a spec to a clone only
+ * with the files it asserts about, and it finds those by reading root-named
+ * path literals. `'../../../../supabase/…'` named nothing it could see, so on
+ * npc-crm-independent this spec arrived without its ingest function and
+ * asserted the prime's loader against the clone's older one.
+ */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const readRepoFile = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 
 function workbook(sheets: Record<string, Cell[][]>, opts: { widenTo?: Record<string, string> } = {}): Uint8Array {
   const wb = XLSX.utils.book_new();
@@ -684,7 +695,6 @@ describe('readable is not republishable', () => {
   });
 
   it('schedules exactly the declared files, and first-loads only the ones whose licence is accepted', () => {
-    const migrations = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/migrations');
     const filesIn = (sql: string) => [...sql.matchAll(/"stage":\s*"projections",\s*"file":\s*"([a-z_0-9]+)"/g)].map((m) => m[1]);
     /*
      * A file declared without a job is never refreshed and says nothing about
@@ -694,17 +704,17 @@ describe('readable is not republishable', () => {
      * gets its job from a new migration, and this reads every file that
      * schedules one.)
      */
-    const monthly = readFileSync(`${migrations}/20261218010000_population_projections_refresh.sql`, 'utf8');
+    const monthly = readRepoFile('supabase/migrations/20261218010000_population_projections_refresh.sql');
     expect(new Set(filesIn(monthly))).toEqual(new Set(PROJECTION_FILES.map((f) => f.key)));
     // The first loads fire only what the loader will not refuse.
-    const first = readFileSync(`${migrations}/20261218020000_population_projections_first_ingest.sql`, 'utf8');
+    const first = readRepoFile('supabase/migrations/20261218020000_population_projections_first_ingest.sql');
     const fired = filesIn(first);
     expect(fired.length).toBeGreaterThan(0);
     for (const key of fired) expect(file(key).licence, key).not.toBeNull();
   });
 
   it('refuses in the loader, before any fetch, a file with no accepted licence', () => {
-    const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../supabase/functions/market-sales-ingest/index.ts'), 'utf8');
+    const source = readRepoFile('supabase/functions/market-sales-ingest/index.ts');
     const stage = source.slice(source.indexOf("if (stage === 'projections')"));
     const refusal = stage.indexOf('if (file.licence === null)');
     const fetchAt = stage.indexOf('fetchProjectionWorkbook(file)');

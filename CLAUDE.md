@@ -278,6 +278,21 @@ Three rules bite.
 A deploy is a person's dispatch, at ≈ A$19–24 a month. The planning page
 prints G-NAF's attribution wherever its point came from the register.
 
+**A remembered street answer is put to the register once.** The first
+production run through it (25 Sep 2026) placed Schofields and Blacktown by
+G-NAF and left `60 Lawley Street, Spalding` on OpenStreetMap's remembered
+street point: the cache re-asks only answers coarser than a street, so G-NAF,
+which holds the address, was never asked. Rule 4 in
+`geocodeChainPolicy.pure.ts` asks the register alone, where the ask names a
+number and the operator's order names it. Its address point replaces the
+street, "nothing finer" re-dates the street for an hour, and an outage of ours
+leaves it standing. A stored enrichment on a street point is placed again when
+a generation starts (`streetPointIsStale`: nothing written yet, and not placed
+by this generation in the last hour) and never mid-generation. A reused planning
+answer is kept only while it was read at this run's point
+(`planningAnswerFitsPoint`) — compared by point, never by clock, because the
+stored packet is re-stamped every invocation. §19 of the geocoding doc.
+
 **The address a pin and a card are built from is COMPOSED, never inherited.**
 Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
 touching `_shared/listingAddress.pure.ts`,

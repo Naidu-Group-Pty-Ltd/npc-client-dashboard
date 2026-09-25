@@ -343,4 +343,82 @@ describe('G-NAF leads the chain where a register is configured', () => {
     expect(out.ok && out.result.provider).toBe('gnaf');
     expect(gnafPaths).toEqual(['/tok/gnaf/v1/manifest.json', '/tok/gnaf/v1/localities.json.gz', '/tok/gnaf/v1/NSW/2148.psv.gz']);
   });
+
+  describe('a remembered street answer is put to the register (rule 4)', () => {
+    // 25 Sep 2026 00:18 UTC: `60 Lawley Street, Spalding WA 6530` was served
+    // OpenStreetMap's street point remembered from before the register
+    // existed, and G-NAF — which holds the address — was never asked.
+    const DAYS = 24 * 3_600_000;
+    const rememberedStreet = (resolvedAgoMs: number, over: Record<string, unknown> = {}) => ({
+      ...cachedLocality(resolvedAgoMs),
+      lat: -33.769, lng: 150.9068, precision: 'street', types: ['route'], provider_precision: 'road',
+      provider: 'nominatim', matched_address: 'Second Avenue, Blacktown, New South Wales, 2148, Australia',
+      ...over,
+    });
+
+    it('takes the register\'s address point in place of the street, asks nobody else, and remembers it', async () => {
+      stubNetwork({ gnaf: register() });
+      const db = fakeDb(rememberedStreet(2 * DAYS));
+      const out = await chain.geocodeAddress(db, ASK, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.fromCache).toBe(false);
+      expect(out.result).toMatchObject({ provider: 'gnaf', precision: 'address' });
+      expect(out.tried).toEqual(['gnaf']);
+      expect(calls.every((c) => c === 'gnaf')).toBe(true);
+      expect(db.writes).toHaveLength(1);
+      expect(db.writes[0]).toMatchObject({ provider: 'gnaf', precision: 'address' });
+    });
+
+    it('keeps the street answer, re-dated, where the register holds no finer point', async () => {
+      stubNetwork({ gnaf: register() });
+      const db = fakeDb(rememberedStreet(2 * DAYS, { query: '9 Second Avenue, Blacktown NSW 2148' }));
+      const out = await chain.geocodeAddress(db, { address: '9 Second Avenue, Blacktown NSW 2148' }, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok && out.fromCache).toBe(true);
+      expect(out.ok && out.result).toMatchObject({ provider: 'nominatim', precision: 'street' });
+      expect(gnafPaths).toContain('/tok/gnaf/v1/NSW/2148.psv.gz');
+      expect(db.writes).toHaveLength(1);
+      expect(db.writes[0]).toMatchObject({ provider: 'nominatim', precision: 'street' });
+      expect(Date.now() - Date.parse(String(db.writes[0].resolved_at))).toBeLessThan(60_000);
+    });
+
+    it('leaves the street answer untouched when the register cannot be read — an outage is ours, not the address\'s', async () => {
+      stubNetwork({ gnaf: register({ 'v1/manifest.json': { status: 503, body: 'down' } }) });
+      const db = fakeDb(rememberedStreet(2 * DAYS));
+      const out = await chain.geocodeAddress(db, ASK, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok && out.fromCache).toBe(true);
+      expect(out.ok && out.result.provider).toBe('nominatim');
+      expect(db.writes).toHaveLength(0);
+    });
+
+    it('asks nothing while the street answer is under an hour old', async () => {
+      stubNetwork({ gnaf: register() });
+      const out = await chain.geocodeAddress(fakeDb(rememberedStreet(10 * 60_000)), ASK, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok && out.result.provider).toBe('nominatim');
+      expect(calls).toEqual([]);
+    });
+
+    it('never puts an ask with no number to the register', async () => {
+      stubNetwork({ gnaf: register() });
+      const db = fakeDb(rememberedStreet(2 * DAYS, { query: 'Second Avenue, Blacktown NSW 2148' }));
+      const out = await chain.geocodeAddress(db, { address: 'Second Avenue, Blacktown NSW 2148' }, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok && out.fromCache).toBe(true);
+      expect(calls).toEqual([]);
+    });
+
+    it('does not re-ask the register about a street it placed itself', async () => {
+      stubNetwork({ gnaf: register() });
+      const out = await chain.geocodeAddress(fakeDb(rememberedStreet(2 * DAYS, { provider: 'gnaf' })), ASK, { env: GNAF_ENV, feature: 'spec' });
+      expect(out.ok && out.fromCache).toBe(true);
+      expect(calls).toEqual([]);
+    });
+
+    it('asks nothing where the operator\'s order leaves the register out', async () => {
+      const env = (k: string) => (k === 'GEOCODER_GNAF_URL' ? GNAF_BASE : k === 'GEOCODER_PROVIDERS' ? 'nominatim,photon,abs_locality' : undefined);
+      stubNetwork({ gnaf: register() });
+      const out = await chain.geocodeAddress(fakeDb(rememberedStreet(2 * DAYS)), ASK, { env, feature: 'spec' });
+      expect(out.ok && out.fromCache).toBe(true);
+      expect(calls).toEqual([]);
+    });
+  });
 });

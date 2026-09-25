@@ -16,10 +16,12 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  STREET_POINT_REUSE_HOURS,
   areaCentreDisclosure,
   enrichmentPointOf,
   pointDescribesTheProperty,
   pointIsAnAreaCentre,
+  streetPointIsStale,
 } from '../../../../supabase/functions/_shared/reports/location/enrichmentPoint.pure.ts';
 import {
   AREA_CENTRE_REUSE_HOURS,
@@ -105,10 +107,49 @@ describe('an enrichment is reused only where it can say what its point was', () 
     expect(standsInAfterFailedRefetch(later)).toBe(false);
   });
 
-  it('reuses an address or street enrichment however old — an address does not move', () => {
-    for (const p of ['address', 'street']) {
-      const d = assessEnrichmentReuse(enrichment({ geocodePrecision: p }), SUBJECT, ACQUIRED_MS + 90 * 24 * 3_600_000);
-      expect(d.reuse, p).toBe(true);
+  it('reuses an address enrichment however old — an address does not move', () => {
+    const d = assessEnrichmentReuse(enrichment({ geocodePrecision: 'address', geocodeProvider: 'gnaf' }), SUBJECT, ACQUIRED_MS + 90 * 24 * 3_600_000);
+    expect(d.reuse).toBe(true);
+  });
+
+  it('keeps a street point for the whole generation that measured from it', () => {
+    // 25 Sep 2026: `60 Lawley Street, Spalding` stored OpenStreetMap's street
+    // point while the address register held the property's own.
+    const onStreet = enrichment({ geocodePrecision: 'street', geocodeProvider: 'nominatim' });
+    // Sections already written were measured from it, however long ago.
+    expect(assessEnrichmentReuse(onStreet, SUBJECT, ACQUIRED_MS + 90 * 24 * 3_600_000, { sectionsWritten: 3 }).reuse).toBe(true);
+    // A hand-off before the first section, moments after this generation placed it.
+    expect(assessEnrichmentReuse(onStreet, SUBJECT, ACQUIRED_MS + 5 * 60_000, { sectionsWritten: 0 }).reuse).toBe(true);
+  });
+
+  it('places a street point again when the next generation starts', () => {
+    const onStreet = enrichment({ geocodePrecision: 'street', geocodeProvider: 'nominatim' });
+    const next = assessEnrichmentReuse(onStreet, SUBJECT, ACQUIRED_MS + (STREET_POINT_REUSE_HOURS + 1) * 3_600_000, { sectionsWritten: 0 });
+    expect(next.reuse).toBe(false);
+    expect(next.verdict).toBe('street_point_stale');
+    // A street reading is sound: if asking again fails, it still stands in.
+    expect(standsInAfterFailedRefetch(next)).toBe(true);
+  });
+
+  it('changes nothing for a caller that does not say what it has written', () => {
+    const onStreet = enrichment({ geocodePrecision: 'street', geocodeProvider: 'nominatim' });
+    expect(assessEnrichmentReuse(onStreet, SUBJECT, ACQUIRED_MS + 90 * 24 * 3_600_000).reuse).toBe(true);
+  });
+
+  it('keeps a street point the register placed itself — it will say the same until its next release', () => {
+    const d = assessEnrichmentReuse(enrichment({ geocodePrecision: 'street', geocodeProvider: 'gnaf' }), SUBJECT, ACQUIRED_MS + 90 * 24 * 3_600_000, { sectionsWritten: 0 });
+    expect(d.reuse).toBe(true);
+  });
+
+  it('decides the street rule in one place, for every reader of a point', () => {
+    const fresh = { sectionsWritten: 0 };
+    expect(streetPointIsStale({ precision: 'street', provider: 'photon' }, { ...fresh, ageHours: STREET_POINT_REUSE_HOURS + 0.1 })).toBe(true);
+    expect(streetPointIsStale({ precision: 'street', provider: 'photon' }, { ...fresh, ageHours: STREET_POINT_REUSE_HOURS })).toBe(false);
+    expect(streetPointIsStale({ precision: 'street', provider: null }, { ...fresh, ageHours: null })).toBe(true);
+    expect(streetPointIsStale({ precision: 'street', provider: 'photon' }, { sectionsWritten: 1, ageHours: 10_000 })).toBe(false);
+    expect(streetPointIsStale({ precision: 'street', provider: 'photon' }, { sectionsWritten: null, ageHours: 10_000 })).toBe(false);
+    for (const precision of ['address', 'locality', 'postcode', null] as const) {
+      expect(streetPointIsStale({ precision, provider: 'nominatim' }, { ...fresh, ageHours: 10_000 }), String(precision)).toBe(false);
     }
   });
 

@@ -60,6 +60,7 @@
  * This changes no figure in any document. An enrichment reused is byte-identical
  * to the enrichment stored, because it IS the enrichment stored.
  */
+import { STREET_POINT_REUSE_HOURS, streetPointIsStale } from './enrichmentPoint.pure.ts';
 
 /** Where the acquisition record lives on the persisted object. */
 export const ENRICHMENT_STAMP = '__acquisition' as const;
@@ -262,7 +263,8 @@ export type ReuseVerdict =
   | 'readings_missing'
   | 'commute_destination_unrecorded'
   | 'point_precision_unrecorded'
-  | 'area_centre_stale';
+  | 'area_centre_stale'
+  | 'street_point_stale';
 
 export interface ReuseDecision {
   readonly reuse: boolean;
@@ -294,6 +296,12 @@ export function assessEnrichmentReuse(
   subject: EnrichmentSubject,
   /** The clock the area-centre shelf life is measured on; the wall clock unless a spec pins it. */
   nowMs: number = Date.now(),
+  /**
+   * What the generation reusing it has already written. A street point is
+   * placed again only where this is known to be nothing
+   * (`streetPointIsStale`); a caller that does not say keeps today's reuse.
+   */
+  generation: { sectionsWritten?: number | null } = {},
 ): ReuseDecision {
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
     return refuse('nothing_stored', 'No location enrichment is stored for this report.');
@@ -356,6 +364,26 @@ export function assessEnrichmentReuse(
         + 'could not be asked.',
       );
     }
+  }
+  // A street point is a sound reading, so it stands through the generation
+  // that measured from it — but it is what a provider answers when it found
+  // the street and not the lot, and the address register can see the lot. A
+  // generation that has written nothing yet asks the geocoder again, which now
+  // puts a remembered street answer to the register
+  // (`geocodeChainPolicy.pure.ts`, rule 4).
+  const acquiredMsForPoint = Date.parse(acquisition.acquiredAt);
+  const pointAgeHours = Number.isFinite(acquiredMsForPoint) ? (nowMs - acquiredMsForPoint) / 3_600_000 : null;
+  if (streetPointIsStale(
+    { precision: stages.geocodePrecision ?? null, provider: stages.geocodeProvider ?? null },
+    { sectionsWritten: generation.sectionsWritten ?? null, ageHours: pointAgeHours },
+  )) {
+    return refuse(
+      'street_point_stale',
+      'The stored enrichment was measured from a point on the property’s street, not the '
+      + `property itself, more than ${STREET_POINT_REUSE_HOURS} hour ago, and this generation has written `
+      + 'nothing from it yet. Asking the geocoder again: the national address register may now place '
+      + 'the address at the property.',
+    );
   }
 
   // S2 — a stamp vouches for the ACQUISITION, not for a field somebody
@@ -480,6 +508,11 @@ export function assessEnrichmentReuse(
  * reading there lets a transient failure do what the retry was meant to
  * prevent.
  *
+ * `street_point_stale` is the same kind of refusal: the stored reading is
+ * sound — measured from the property's own street, for this subject — and is
+ * refused only in the hope that the address register now places the lot. If
+ * asking again fails, the street reading is still the best evidence there is.
+ *
  * Every other refusal names a defect in the stored object itself — another
  * subject, no stamp to prove its subject, no coordinate, readings a gate
  * removed, a commute measured to an unrecorded destination — and none of
@@ -487,6 +520,7 @@ export function assessEnrichmentReuse(
  */
 const STANDS_IN_AFTER_FAILED_REFETCH: ReadonlySet<ReuseVerdict> = new Set<ReuseVerdict>([
   'incomplete_acquisition',
+  'street_point_stale',
 ]);
 
 /** Whether the stored enrichment may stand in after its re-fetch failed. */

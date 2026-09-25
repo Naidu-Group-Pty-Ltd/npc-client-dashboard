@@ -35,6 +35,9 @@
  * property.
  */
 
+/** How finely a planning answer's point was placed — the geocoder's own four words. */
+type PlanningPrecision = 'address' | 'street' | 'locality' | 'postcode';
+
 /** What a stored acquisition result must carry to be reusable. */
 export interface AcquisitionStamp {
   /** The address the result was acquired for, as submitted. */
@@ -106,7 +109,8 @@ export type ReuseDecision =
         | 'expired'
         | 'previous_attempt_failed'
         | 'no_stored_value'
-        | 'point_not_recorded';
+        | 'point_not_recorded'
+        | 'point_changed';
     };
 
 function normaliseAddress(value: string): string {
@@ -289,6 +293,83 @@ export function planningPointIsRecorded(value: unknown): boolean {
   if (!basis || typeof basis !== 'object') return false;
   const precision = (basis as Record<string, unknown>).precision;
   return precision === 'address' || precision === 'street';
+}
+
+/** A point a planning answer was, or is about to be, read at. */
+export interface PlanningPoint {
+  precision: PlanningPrecision | null;
+  provider: string | null;
+  /** Recorded from 25 Sep 2026; absent on every answer stored before. */
+  lat: number | null;
+  lng: number | null;
+}
+
+const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** The point a stored planning answer records it was read at. Total. */
+export function planningPointOf(value: unknown): PlanningPoint {
+  const basis = value && typeof value === 'object'
+    ? (value as Record<string, unknown>).pointBasis as Record<string, unknown> | undefined
+    : undefined;
+  const b = basis && typeof basis === 'object' ? basis : {};
+  const precision = b.precision;
+  const provider = b.provider;
+  return {
+    precision: precision === 'address' || precision === 'street' || precision === 'locality' || precision === 'postcode'
+      ? precision
+      : null,
+    provider: typeof provider === 'string' && provider.trim() ? provider.trim() : null,
+    lat: finiteOrNull(b.lat),
+    lng: finiteOrNull(b.lng),
+  };
+}
+
+/**
+ * Was a stored planning answer read at the point THIS run is working from?
+ *
+ * A planning answer is a reading at a point, and the point can move between
+ * generations: the geocoder puts a remembered street answer to the address
+ * register (`geocodeChainPolicy.pure.ts`, rule 4) and the location enrichment
+ * is placed again (`streetPointIsStale`). An answer kept for its thirty-day
+ * cadastral life across that move would leave a report measuring its
+ * amenities at the property and reading its zone on the street — measured on
+ * 25 Sep 2026, `60 Lawley Street, Spalding` read its planning at
+ * OpenStreetMap's street point while the register held the property's own.
+ *
+ * So the point is compared, not the clock: same precision, same provider,
+ * and — where both record one — the same coordinate. Nothing recorded is not
+ * a match.
+ */
+export function planningAnswerFitsPoint(
+  stored: unknown,
+  current: { precision: string | null; provider: string | null; lat?: number | null; lng?: number | null },
+): boolean {
+  const recorded = planningPointOf(stored);
+  if (recorded.precision === null || recorded.precision !== current.precision) return false;
+  if (recorded.provider !== (current.provider ?? null)) return false;
+  const lat = finiteOrNull(current.lat);
+  const lng = finiteOrNull(current.lng);
+  if (recorded.lat !== null && recorded.lng !== null && lat !== null && lng !== null) {
+    return Math.abs(recorded.lat - lat) < 1e-6 && Math.abs(recorded.lng - lng) < 1e-6;
+  }
+  return true;
+}
+
+/**
+ * Take back a reuse `planReuse` admitted, once the run learns it does not fit.
+ *
+ * The provenance ledger is written from the plan LAST, and is last-write-wins,
+ * so a withdrawn entry left standing would record "reused" over the fresh
+ * answer the run then fetched.
+ */
+export function withdrawReuse(plan: ReusePlan, key: string, reason: 'point_changed'): ReusePlan {
+  const values = { ...plan.values };
+  delete values[key];
+  return {
+    ...plan,
+    values,
+    entries: plan.entries.map((e) => (e.key === key ? { ...e, decision: { reuse: false, reason } } : e)),
+  };
 }
 
 /** Compose the stamp a run writes beside what it acquired. */

@@ -79,6 +79,48 @@ export function pointIsAnAreaCentre(precision: PointPrecision | null): boolean {
 }
 
 /**
+ * How recently a street point must have been placed for a generation that has
+ * written nothing yet to keep it.
+ *
+ * A generation hands off before its first section when acquisition eats the
+ * budget, and the next invocation arrives within minutes; asking the geocoder
+ * again there would re-buy the research the hand-off exists to keep. An hour
+ * covers that and nothing longer — the same hour the chain gives the register
+ * before asking it again (`STREET_REASK_AFTER_MS`).
+ */
+export const STREET_POINT_REUSE_HOURS = 1;
+
+/**
+ * Must a reading taken at a street point be placed again before it is used?
+ *
+ * A street point is a sound reading — it is not the area-centre defect — but
+ * it is what a provider answers when it found the street and not the lot, and
+ * the national address register can see the lot. On 25 Sep 2026 a regenerated
+ * `60 Lawley Street, Spalding WA 6530` stored OpenStreetMap's street point
+ * while G-NAF held the address at its property centroid; reused for ever, it
+ * would have stayed on the street for ever.
+ *
+ * So it is placed again when a generation STARTS — nothing written yet, and
+ * not merely handed off moments ago by this same generation — and never in
+ * the middle of one, however long that takes, because every section already
+ * written was measured from it. Never for a point the register placed itself
+ * (it will say the same until its next release), never where the caller does
+ * not know what has been written (today's behaviour stands), and an age that
+ * cannot be read proves no recency.
+ */
+export function streetPointIsStale(
+  point: { precision: PointPrecision | null; provider: string | null },
+  generation: { sectionsWritten: number | null; ageHours: number | null },
+): boolean {
+  if (point.precision !== 'street') return false;
+  if (point.provider === 'gnaf') return false;
+  if (generation.sectionsWritten === null || generation.sectionsWritten > 0) return false;
+  const age = generation.ageHours;
+  if (age === null || !Number.isFinite(age) || age < 0) return true;
+  return age > STREET_POINT_REUSE_HOURS;
+}
+
+/**
  * What a reader is told about readings measured from an area's centre.
  *
  * Written for the prompt that composes the report: it names what the figures

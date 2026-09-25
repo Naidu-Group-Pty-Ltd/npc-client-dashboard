@@ -527,14 +527,17 @@ describe('planning prompt blocks', () => {
         verification: 'A spatial layer is indicative; what settles the question is the local government planning scheme and PlanWA.',
       },
     });
-    expect(text).toContain('non-commercial');
+    // The service's note reaches the writer in a reader's words (`readerNote`):
+    // a licence bar, never an outage.
+    expect(text).toContain('for personal use only');
+    expect(text).not.toMatch(/could not be (checked|consulted)/);
     expect(text).toContain('Not available for this property, and why');
     expect(text).toContain('Do NOT name a zone');
   });
 
   it('no planning data at all instructs an honest absence, never a guess', () => {
     const text = planningStatBlocks({});
-    expect(text).toContain('do not name a zone');
+    expect(text).toMatch(/do not name a zone/i);
     expect(text).toMatch(/do not invent development activity/i);
   });
 

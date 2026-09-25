@@ -27,6 +27,7 @@ import {
   forwardDemandStatement,
   type ProjectionRegisterRead,
 } from './market/openData/projectionRegister.pure.ts';
+import { elsewhereOnly, inHomeSection } from './adviserVoice.pure.ts';
 
 interface Numericish { [key: string]: unknown }
 
@@ -197,11 +198,11 @@ function forwardDemandInstruction(input: RegionalPromptInput): string[] {
     : forwardDemandCoverageNote(input.forwardDemand ?? { kind: 'not_read' }, input.state ?? null);
   return [
     `**Forward demand — what this report holds:**\n\n${note}`,
-    'Where the analysis touches what the population is expected to do, use the statement above — '
-    + 'verbatim or closely paraphrased — and state no projected population, growth rate or horizon '
-    + 'of your own. Do NOT present the publisher named in it as a source this report consulted: '
-    + 'naming where a figure can be found and claiming to have read it are different statements, '
-    + 'and only the first is true here.',
+    `${inHomeSection('forwardDemand')} where the analysis touches what the population is expected to do, use the `
+    + `statement above — closely paraphrased in your own words. ${elsewhereOnly('forwardDemand')} In every `
+    + 'section: state no projected population, growth rate or horizon of your own, and do NOT present the '
+    + 'publisher named in it as a source this report consulted: naming where a figure can be found and '
+    + 'claiming to have read it are different statements, and only the first is true here.',
   ];
 }
 

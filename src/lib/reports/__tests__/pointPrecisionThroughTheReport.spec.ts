@@ -204,12 +204,12 @@ describe('the planning page says where the registers were asked', () => {
     const facts = buildPlanningFacts({ planningData: { ...NSW, pointBasis: { precision: 'street', source: 'enrichment', provider: 'photon' } } });
     expect(facts.pointPrecision).toBe('street');
     expect(renderPlanningControls(facts)).toContain('at a point on the property’s street');
-    expect(planningFactBlocks(facts)).toMatch(/6a\. These registers were asked at a point on the property’s STREET/);
+    expect(planningFactBlocks(facts)).toMatch(/6a\. These maps were checked at a point on the property’s STREET/);
   });
 
   it('credits the national address register where the point came from it — and only then', () => {
     const fromRegister = renderPlanningControls(buildPlanningFacts({ planningData: { ...NSW, pointBasis: { precision: 'address', source: 'enrichment', provider: 'gnaf' } } }));
-    expect(fromRegister).toContain('**Where the address point comes from.** The national address register, G-NAF.');
+    expect(fromRegister).toContain('**Address location.** The property was located using the national address file, G-NAF.');
     expect(fromRegister).toContain('G-NAF © Geoscape Australia licensed by the Commonwealth of Australia');
     const fromOsm = renderPlanningControls(buildPlanningFacts({ planningData: { ...NSW, pointBasis: { precision: 'street', provider: 'photon' } } }));
     expect(fromOsm).not.toContain('Geoscape');
@@ -217,7 +217,7 @@ describe('the planning page says where the registers were asked', () => {
 
   it('names an address reading as the property\'s own point, and adds no street rule', () => {
     const facts = buildPlanningFacts({ planningData: { ...NSW, pointBasis: { precision: 'address' } } });
-    expect(renderPlanningControls(facts)).toContain('the property’s own address point');
+    expect(renderPlanningControls(facts)).toContain('checked at the property’s address');
     expect(planningFactBlocks(facts)).not.toContain('6a.');
   });
 
@@ -225,11 +225,11 @@ describe('the planning page says where the registers were asked', () => {
     const facts = buildPlanningFacts({ pointNotPlaced: true });
     expect(facts.pointNotPlaced).toBe(true);
     const rules = planningFactBlocks(facts);
-    expect(rules).toMatch(/were NOT asked about this property/);
+    expect(rules).toMatch(/were NOT checked for this property/);
     expect(rules).toMatch(/centre of its suburb/);
-    expect(rules).toMatch(/Do NOT name a zone/);
+    expect(rules).toMatch(/do NOT name a zone/i);
     // An enrichment that never ran is a different sentence.
-    expect(planningFactBlocks(buildPlanningFacts({}))).toMatch(/no planning enrichment ran/);
+    expect(planningFactBlocks(buildPlanningFacts({}))).toMatch(/were not checked for this report/);
   });
 });
 

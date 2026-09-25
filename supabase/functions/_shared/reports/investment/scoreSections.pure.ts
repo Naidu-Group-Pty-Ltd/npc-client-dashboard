@@ -460,10 +460,27 @@ export function verdictWatchPoints(score: unknown): string[] {
     Array.isArray(v) ? v.map((x) => str(x)).filter((x): x is string => !!x) : [];
   const weaknesses = list(score.weaknesses);
   if (weaknesses.length || !isRecord(score.v2)) return weaknesses;
-  const out = [...list(score.risks)];
+  const out = [...recordedMarketRisks(score)];
   const caution = evidenceCautionLine(score);
   if (caution) out.push(caution);
   return [...new Set(out)];
+}
+
+/**
+ * The market risks the scorer recorded with a V2 grade, in its own words — or
+ * none.
+ *
+ * One reader for the two places a client meets them: the verdict page's
+ * watch points (above) and the SWOT's Threats (`buildSwot`). The 60 Lawley
+ * Street Compass (25 Sep 2026) printed "Rapid recent price growth may indicate
+ * market cooling ahead" as a consideration on its verdict page and "None
+ * identified" under Threats fifteen pages later, because the SWOT never read
+ * the list the verdict page did. V2 alone, for the reason `verdictWatchPoints`
+ * gives: the retired V1 scorer's list carries statements about a PURCHASE.
+ */
+export function recordedMarketRisks(score: unknown): string[] {
+  if (!isRecord(score) || !isRecord(score.v2) || !Array.isArray(score.risks)) return [];
+  return [...new Set(score.risks.map((x) => str(x)).filter((x): x is string => !!x))];
 }
 
 /**

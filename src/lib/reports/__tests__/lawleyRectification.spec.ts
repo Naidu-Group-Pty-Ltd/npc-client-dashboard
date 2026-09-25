@@ -348,8 +348,8 @@ describe('the SWOT reads the dwelling (page 16: "no weakness identified" beside 
   it('says which evidence it read — a council route is not a register measurement, a portal figure is not a register reading', () => {
     const swot = composeSwot(lawleyStrategy(), 'SWOT Analysis');
     expect(swot).toContain('A route or timetable described elsewhere in this report comes from the operator\'s '
-      + 'or council\'s own published pages; it is not a register measurement and is not scored.');
-    expect(swot).toContain('The registers this assessment reads hold no figure for vacancy, days on market');
+      + 'or council\'s own published pages; it is not a measurement and is not scored.');
+    expect(swot).toContain('The sources checked for this report hold no figure for vacancy, days on market');
   });
 });
 
@@ -364,7 +364,7 @@ describe('the grade\'s method leaves the SWOT for the appendix (pages 16-18: thr
   it('says the record HOLDS the adjusted weights, and never "reconstructed" beside "nothing is re-derived"', () => {
     const method = composeGradeMethodology(lawleyStrategy()) ?? '';
     expect(method).not.toContain('This record does not hold them, so they are reconstructed');
-    expect(method).not.toContain('This record does not hold the adjusted weights the service used');
+    expect(method).not.toContain('This record does not hold the adjusted weights the scoring method used');
     expect(method).toMatch(/adjusted weights (below )?are the ones the record holds/);
     expect(method).toContain('No figure in this table is re-derived by this report');
   });
@@ -389,7 +389,7 @@ describe('the exit outlook describes only what it draws (page 19 introduced a pr
   it('a Compass (no modelling) promises no future-year position', () => {
     const exit = composeExitOutlook(lawleyStrategy(), 'Resale Liquidity & Exit Outlook');
     expect(exit).not.toContain('What the position looks like at a future year');
-    expect(exit).toContain('No register this assessment reads holds days on market, time to sell or buyer depth');
+    expect(exit).toContain('None of the sources checked for this report holds days on market, time to sell or buyer depth');
   });
 });
 
@@ -553,17 +553,31 @@ describe('our own words never reach the page as labels (page 10 "ConfidenceChip:
   });
 });
 
-describe('the model\'s classification and the recommendation are explained, never merged (cover "STRONG BUY", p.21 "proceed only after")', () => {
-  it('both sections are told what the classification is, and neither may soften the recommendation to match it', () => {
+describe('one recommendation (cover "STRONG BUY", p.21 "proceed only after"; then "Proceed with caution" on the regeneration)', () => {
+  /*
+   * RENEGOTIATED 25 Sep 2026. Item 9 was first answered by telling both
+   * sections what "the scoring model's classification" is and that their own
+   * Proceed / Proceed with caution / Not suitable verdict must not be softened
+   * to match it. The regeneration obeyed: its cover said STRONG BUY, its
+   * Executive Verdict and Final Recommendation said "Proceed with caution",
+   * and it told the client the difference was what "the model does not
+   * measure". Two verdicts, explained in the platform's vocabulary. This block
+   * pinned that instruction; it now pins its removal. The rule itself — one
+   * recommendation, the one the cover prints, with its conditions kept as
+   * conditions — is `oneRecommendation.spec.ts`.
+   */
+  it('neither section is told the grade is a model\'s classification, in either registry mirror', () => {
     for (const list of [COMPASS_40_SECTIONS, FRONTEND_COMPASS_SECTIONS]) {
       const verdict = list.find((s) => s.id === 'compass.executiveVerdict')!.purpose;
       const closing = list.find((s) => s.id === 'compass.finalRecommendation')!.purpose;
-      expect(verdict).toContain('the model\'s reading of the dimensions it measured, not a recommendation to purchase');
-      expect(verdict).toContain('never restate the classification as your own verdict');
-      expect(closing).toContain('the classification reads only the dimensions the model measured');
-      expect(closing).toContain('do not soften the verdict to match the classification');
-      // The three verdict words the section has always used are still the ones it asks for.
-      expect(closing).toMatch(/\*\*Proceed\*\*, \*\*Proceed with caution\*\* or \*\*Not suitable\*\*/);
+      for (const purpose of [verdict, closing]) {
+        expect(purpose).not.toContain('classification');
+        expect(purpose).not.toContain('the model does not measure');
+        expect(purpose).toContain('the recommendation this document issues');
+      }
+      // The qualification is kept — as a condition of the one recommendation.
+      expect(verdict).toContain('each written as a condition of the recommendation with the check that settles it');
+      expect(closing).toContain('with every condition the recommendation depends on kept and stated as a condition');
     }
   });
 });
@@ -666,9 +680,9 @@ describe('transport: a station count is not "no public transport" (pages 9-10 ag
   it('the prompt block states the count, what it cannot see, and never "no reading was retrieved"', () => {
     const block = transportFactBlocks(LAWLEY_TRANSPORT);
     expect(block).not.toContain('No public-transport reading was retrieved');
-    expect(block).toContain('Transit stations within 2 km, in the OpenStreetMap amenity register held by this platform: **0**');
+    expect(block).toContain('Transit stations within 2 km (OpenStreetMap): **0**');
     expect(block).toContain('bus stops are not in it');
-    expect(block).toContain('A count of stations is not a finding that the area has no public transport.');
+    expect(block).toContain('A count of stations is not a finding that the area has no public transport');
   });
 
   it('a route or a timetable found in a search may be attributed, never quantified or taken from a profile', () => {
@@ -736,7 +750,7 @@ describe('the generator pins the evidence it used to trim away, and moves the sy
     expect(generator).toContain('${recordedAttributesBlock}');
     // The prohibition keeps its permitted form beside it.
     expect(generator).toContain('An attribute you find in a listing or any other search is not a record');
-    expect(generator).toContain('is not recorded for this assessment');
+    expect(generator).toContain('write that it is to be confirmed against the contract,');
   });
 
   it('carries the shortcode vocabulary in the system message, not in every section\'s user message', () => {
@@ -794,8 +808,10 @@ describe('a Western Australian lot is described in Western Australia\'s terms (a
 });
 
 describe('a note about our build is written in the reader\'s words (printed four times)', () => {
-  const READER = 'No state development-instrument register was searched for Western Australia: the only such '
-    + 'register this report reads is Queensland\'s.';
+  // The service's own diagnostic words stay in the service; the page prints
+  // an adviser's sentence (`readerNote`, serviceNote.pure.ts).
+  const READER = 'State-level development designations are not covered by this report for Western Australia. Any '
+    + 'that affect the property will appear on the local government’s planning certificate.';
 
   it('in the planning table', () => {
     expect(WA_PLANNING().instruments.note).toBe(READER);
@@ -887,8 +903,8 @@ describe('Western Australia\'s bush fire prone areas are read (the page said "Bu
 
   it('coverage says what is read and what is still not, in one sentence per jurisdiction', () => {
     expect(OVERLAY_COVERAGE.WA).toBe('partial_state_layers_read');
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/bush fire prone areas are read/);
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/planning scheme zones, density codes and other overlays, and its state floodplain mapping/);
-    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/Nothing here says whether any of those controls applies\./);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/bush fire prone area designation is read/);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/planning scheme zones, density codes and other overlays, and its floodplain mapping/);
+    expect(NO_STATE_LAYER_NOTE.WA).toMatch(/nothing here says whether any of them applies\./);
   });
 });

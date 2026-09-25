@@ -10,6 +10,8 @@ import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import {
   documentOutline,
+  issuedRecommendation,
+  recommendationContract,
   sectionContract,
   sectionRepairNote,
   sectionShapeShortfall,
@@ -162,6 +164,13 @@ import { readProjectionRegister } from '../_shared/reports/market/projectionRegi
 import { planningCouncilName } from '../_shared/reports/market/openData/projectionRegister.pure.ts';
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
+import {
+  INFRASTRUCTURE_REGISTER_HEADING,
+  INFRASTRUCTURE_REGISTER_SECTION,
+  PLANNING_REGISTER_HEADING,
+  PLANNING_REGISTER_SECTION,
+} from '../_shared/reports/investment/registerTables.pure.ts';
+import { DISCLOSURE_HOMES, elsewhereOnly, inHomeSection } from '../_shared/reports/adviserVoice.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { attributeTableYearBuilt, composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -1689,7 +1698,7 @@ VISUAL-FIRST RULES (CRITICAL):
 - Any "median grew from X to Y" / trend sentence MUST include either \`~~[…]~~\` inline or a \`::: stat\` callout nearby.
 - Any "subject vs suburb vs metro/state" comparison MUST use \`{{bars: Subject X, Suburb Y, Metro Z | title=…}}\`.
 - **A RATING YOU INVENTED MAY NOT BE DRAWN, IN ANY PRIMITIVE.** A 0-100 rating is a SCORE, and the only scores that exist are the ones supplied to you above — the Investment Score and the dimensions the engine actually scored. Do NOT mint a rating for appeal, suitability, confidence, affordability, land quality, certainty, risk, "focus", "emphasis" or any other attribute, and do NOT draw one as a \`{{gauge}}\`, a \`{{wheel}}\`, a \`{{bars}}\`, a \`{{heatmap}}\`, a \`{{radar}}\` or anything else. In particular: do NOT write \`max=100\` on a chart whose numbers you chose. Where no score was supplied, state the finding in WORDS and draw no chart of it. A number on a scale is read as a measurement however it is drawn, and the reader has no way to tell one you assigned from one that was calculated.
-- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not searched, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
+- **AN ABSENCE MAY NOT BE RATED, IN ANY PRIMITIVE.** Where something was not assessed, not checked, not covered, not available or not held, it gets NO position on a scale — not the top of it, not the bottom of it, and never a convention that stands in for one. Do NOT write a legend such as \`Not assessed shown as 5\`, \`n/a = 0\` or \`unknown treated as 3\`: a number on a scale is read as a measurement, so an absence drawn at 5 is a reader being told this is a high risk. Leave the unmeasured item OUT of the chart and name it in the register or the prose, where \`Not assessed\` is a level in its own right. A chart that declares such a convention is withheld from the document in full, so the whole drawing is lost — including the items that were measured.
 - Any list of 3+ ranked metrics MUST be rendered as \`{{bars: …}}\` instead of a table — where the metrics are MEASURED quantities that came from the data supplied to you (distances, counts, prices, shares, times, rates), each carrying its own real unit. A list of qualities you are ranking yourself is not a set of metrics: write it as prose or as a table with the reasons in it.
 - Any "X of Y households / dwellings / buyers" stat MUST use \`{{pictograph: …}}\`.
 - Any composition / share-of-total (tenure mix, age bands, expense split, capital
@@ -6203,9 +6212,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '1. **Name the publisher and its currency**, which the table beside you',
       '   already carries — "the NSW Planning Portal\'s Principal Planning',
       '   Layers, current at 7 August 2026" — or',
-      '2. **Name the report\'s own section**: these tables are reproduced in',
-      '   full at the end of this report under *Planning controls and',
-      '   development registers*.',
+      // The headings the page actually carries: each table closes the
+      // chapter it is the evidence for (`mergeBlocksIntoSections`), so a
+      // pointer to one section "at the end of this report" named a heading
+      // the document only has when that chapter is absent.
+      '2. **Name the heading it is set out under**: the planning controls close',
+      `   the ${DISCLOSURE_HOMES.planning.sectionName} chapter under *${PLANNING_REGISTER_HEADING}*,`,
+      `   and the development activity closes the ${DISCLOSURE_HOMES.infrastructure.sectionName}`,
+      `   chapter under *${INFRASTRUCTURE_REGISTER_HEADING}*.`,
       '',
       'The same rule covers every other source. A source is named in the',
       'sentence — "listed on realestate.com.au" — and never as a bracketed',
@@ -6266,26 +6280,28 @@ The table above contains every physical attribute on record for this property.
 Do not add a row to it, and do not state a land size, floor area, bedroom or
 bathroom count, parking count, year built or condition that is not in it — not
 as an estimate, not as a range, and not as what is "typical for the suburb".
-Where an attribute is absent you may say it is not recorded, and you may
+Where a feature is absent you may say it is to be confirmed, and you may
 discuss the suburb's housing stock in general terms provided you do not
 attribute any of it to this property. Nobody has inspected this property, so
 no statement about its condition, its compliance or its maintenance history
-is available to you.
+is available to you. Describe the property's features in your own sentences;
+do not reproduce this table under a heading of its own, and never call a
+feature a "recorded attribute".
 
 An attribute you find in a listing or any other search is not a record: never
 describe it as recorded, supplied or on record. Where the discussion needs one
-that is absent above, write that it is not recorded for this assessment and is
-to be confirmed against the contract, the listing and the building inspection.
+that is absent above, write that it is to be confirmed against the contract,
+the listing and the building inspection.
 `;
 
     const pinnedPlanningContext = [
       // The attributes on record ride the pin: see `recordedAttributesBlock`.
       '# The property — every physical attribute on record',
       recordedAttributesBlock,
-      '# Zoning & Planning Analysis — the controls retrieved for this property',
+      '# Zoning & Planning Analysis — the planning controls for this property',
       planningControlsTable,
       planningSectionRules,
-      '# Infrastructure & Development Outlook — what the registers answered',
+      '# Infrastructure & Development Outlook — what the published sources show',
       infrastructureTable,
       infrastructureSectionRules,
       /*
@@ -6374,7 +6390,7 @@ to be confirmed against the contract, the listing and the building inspection.
       // concatenated after the trim. A rule that survives while its evidence
       // is cut is the §6 defect, and it produced a report that named no source
       // because it had none to name.
-      '# Market Evidence — the figures retrieved for this market',
+      '# Market Evidence — the published figures for this market',
       marketTable,
       marketSectionRules,
       // The subject's own price rides the same pin as the market's figures,
@@ -6517,12 +6533,13 @@ ${(() => {
   const list = top.length ? top : all;
   if (list.length) parts.push(`\n| School | Distance | Type |\n|---|---|---|\n${rows(list)}`);
   if (!parts.length) {
-    return 'No school register reading was retrieved for this property. Say that no school data '
-      + 'was retrieved; do NOT name a school, state a distance, a rating or a catchment, and do '
-      + 'NOT describe the area as well or poorly served by schools.';
+    return `Schools near this property were not assessed for this report. ${inHomeSection('amenity')} say `
+      + `once that the schools near the property were not assessed and that the state education department's `
+      + `school finder shows them; ${elsewhereOnly('amenity')} Do NOT name a school, state a distance, a rating `
+      + 'or a catchment, and do NOT describe the area as well or poorly served by schools.';
   }
   return `${parts.join('\n')}\n\nEvery school named in the report must be one of these, at the distance stated here. `
-    + 'A school rating is not retrieved and must not be stated.';
+    + 'No school rating is held for this report, and none may be stated.';
 })()}
 
 ---
@@ -7558,8 +7575,24 @@ YOUR DEDICATED PROPERTY PARTNER
       ? Math.max(...completedSectionIndices) + 1
       : 0;
 
+    // ONE RECOMMENDATION. The verdict the cover and the verdict page will print
+    // is read here, from the score this invocation's sections are written from
+    // (after the evidence-basis decision above), by the rule the page reads it
+    // with — and handed to the two sections that state a recommendation, so the
+    // prose cannot issue a second one. 60 Lawley Street (25 Sep 2026) printed
+    // STRONG BUY on its cover and "Proceed with caution" in its text. See
+    // `recommendationContract` in `compassSectionContract.ts`.
+    const issuedRec = issuedRecommendation(enhancedData?.investmentScore);
+    if (issuedRec) console.log(`🧾 Recommendation the document issues: ${issuedRec.action}${issuedRec.grade ? ` (${issuedRec.grade})` : ''}`);
+
     for (let i = 0; i < filteredSections.length; i++) {
-      const sectionDef = filteredSections[i];
+      const baseSectionDef = filteredSections[i];
+      // The recommendation travels in the section's contract — the system
+      // message, never trimmed. Empty for every section but the two.
+      const recommendationRules = recommendationContract(baseSectionDef.registryId, issuedRec);
+      const sectionDef = recommendationRules
+        ? { ...baseSectionDef, contract: [baseSectionDef.contract, recommendationRules].filter(Boolean).join('\n\n') }
+        : baseSectionDef;
       const _chunkStart = Date.now();
 
       // CONTINUATION MODE: Skip already-completed sections
@@ -8438,12 +8471,12 @@ YOUR DEDICATED PROPERTY PARTNER
       // Appended verbatim for the reason the tables always were: asking a
       // model to reproduce a table is how a table comes back paraphrased, and
       // every date and figure here is one an authority published.
-      const planningPart = `### Planning controls retrieved for this property\n\n${planningControlsTable}\n`;
-      let infrastructurePart = `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      const planningPart = `### ${PLANNING_REGISTER_HEADING}\n\n${planningControlsTable}\n`;
+      let infrastructurePart = `### ${INFRASTRUCTURE_REGISTER_HEADING}\n\n${infrastructureTable}\n`;
       if (publishedProjectBlock) {
         infrastructurePart += `\n#### Major public projects near this property\n\n`
           + `${publishedProjectBlock}\n`
-          + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
+          + `**What this list covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
       }
       console.log(
         `📋 Composed retrieved planning + infrastructure evidence `
@@ -8459,8 +8492,8 @@ YOUR DEDICATED PROPERTY PARTNER
         into: 'planning',
         markdown: planningPart,
         fallback: {
-          heading: 'Planning controls and development registers',
-          markdown: `## Planning controls and development registers\n\n${planningPart}`,
+          heading: PLANNING_REGISTER_SECTION,
+          markdown: `## ${PLANNING_REGISTER_SECTION}\n\n${planningPart}`,
           order: 89,
         },
       });
@@ -8468,8 +8501,8 @@ YOUR DEDICATED PROPERTY PARTNER
         into: 'infrastructure',
         markdown: infrastructurePart,
         fallback: {
-          heading: 'Infrastructure and development registers',
-          markdown: `## Infrastructure and development registers\n\n${infrastructurePart}`,
+          heading: INFRASTRUCTURE_REGISTER_SECTION,
+          markdown: `## ${INFRASTRUCTURE_REGISTER_SECTION}\n\n${infrastructurePart}`,
           order: 89,
         },
       });

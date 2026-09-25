@@ -2328,14 +2328,13 @@ export function scenarioChart(opts: {
 /**
  * Where a plate's photograph comes from.
  *
- * `property.images` is a forward-looking path: **no adapter emits it today**.
- * That is deliberate rather than an oversight. A plate is a designed hole an
- * operator fills in the Builder for a specific report — the archetype's own
- * briefs say "Drop the hero photograph" — and binding it means the day an
- * adapter does carry photographs, every plate in two families fills itself with
- * no template change.
+ * `property.images` was written as a forward-looking path, so that the day an
+ * adapter carried photographs every plate in two families would fill itself
+ * with no template change. That day came on 25 Sep 2026: the Investment
+ * adapter now binds the listing's own photographs where the image library
+ * holds any a client's document may carry (`docs/reports/PROPERTY_PHOTOGRAPHS.md`).
  *
- * Until then the binding resolves empty, and the plate prints nothing.
+ * Where it holds none, the binding resolves empty and the plate prints nothing.
  */
 function plateSrc(index: number): string {
   return `{{property.images.${index}}}`;

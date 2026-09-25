@@ -2,6 +2,8 @@ import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseF
 import { claimSupportRules, readEvidenceInventory } from '../_shared/reports/investment/chartEvidence.pure.ts';
 import { composeCondensedDocument, CONDENSED_PAGE_CEILING } from '../_shared/reports/investment/condenseCompose.pure.ts';
 import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
+import { condensedRecommendationContract, issuedRecommendation } from '../_shared/compassSectionContract.ts';
+import { condensedVoiceRules } from '../_shared/reports/adviserVoice.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -150,8 +152,9 @@ REPORT STRUCTURE (~5 PAGES):
 DO NOT WRITE: Investment Score, Score Breakdown, or Financial Snapshot. Those
 three sections are composed from the stored record after you finish and are
 inserted in their proper place. Anything you write under those headings is
-discarded. Do not restate the grade, the score out of 100, the recommendation
-or the score components anywhere else either.
+discarded. Do not restate the grade, the score out of 100 or the score
+components anywhere else either. The recommendation is stated only where THE
+RECOMMENDATION THIS DOCUMENT ISSUES, below, says — in its words.
 
 ## Top 3 Opportunities
 - Brief bullet points (1-2 sentences each)
@@ -519,12 +522,30 @@ Deno.serve(async (req) => {
     // Build the condensation prompt using the structure guide
     const _brandCondense = await getBrandConfig();
     const { resolvePrompt: _resolveCondensePrompt } = await import('../_shared/engine-prompts.ts');
-    const systemPrompt = (await _resolveCondensePrompt('condense.system_template', {
-      brand_name: _brandCondense.companyName,
-      tier_name: tierConfig.name,
-      target_pages: tierConfig.targetPages,
-      structure_guide: tierConfig.structureGuide,
-    })).text;
+    /*
+     * The template can be replaced from the database
+     * (`prompt:condense.system_template`), so the voice and the recommendation
+     * are APPENDED to whatever it resolves to rather than written into it — an
+     * override replaces the template, and must not silently take these with it.
+     *
+     * Both are what `documentRules` and `recommendationContract` hand every
+     * Compass section, restated for a document the model rewrites from a
+     * Compass: a Briefing inherited its parent's words ("register",
+     * "retrieved", "Not searched") and its parent's second verdict, because
+     * nothing here said otherwise. The recommendation is read from the
+     * PARENT's record, which both paths above copy onto this child — so it is
+     * the verdict this child's own cover prints.
+     */
+    const systemPrompt = [
+      (await _resolveCondensePrompt('condense.system_template', {
+        brand_name: _brandCondense.companyName,
+        tier_name: tierConfig.name,
+        target_pages: tierConfig.targetPages,
+        structure_guide: tierConfig.structureGuide,
+      })).text,
+      condensedVoiceRules(),
+      condensedRecommendationContract(reportVariant, issuedRecommendation(parentReport.investment_score)),
+    ].join('\n\n');
 
     // The recorded figures, from the parent's own structured columns — the
     // same reconciled projection every templated document binds. The parent's

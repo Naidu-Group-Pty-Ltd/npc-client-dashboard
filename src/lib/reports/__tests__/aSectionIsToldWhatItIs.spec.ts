@@ -155,7 +155,12 @@ describe('what a section is told now', () => {
   it('keeps the rules the tier has and invents none for a tier that has none', () => {
     expect(rules).toMatch(/## HARD EXCLUSIONS \(Compass/);
     expect(rules).toMatch(/## CONSISTENCY CHECKS/);
-    expect(rules).toMatch(/\*\*Proceed\*\*, \*\*Proceed with caution\*\*, or \*\*Not suitable\*\*/);
+    // RENEGOTIATED 25 Sep 2026: the rule is ONE recommendation. The three
+    // adviser labels this line pinned moved to `recommendationContract`, which
+    // hands them to the two recommendation sections only where the page prints
+    // no verdict (`oneRecommendation.spec.ts`) — the 60 Lawley Street Compass
+    // printed STRONG BUY on its cover and "Proceed with caution" in its text.
+    expect(rules).toMatch(/## RECOMMENDATION FORMAT\nThe document makes ONE recommendation\./);
     expect(documentRules('financial-analysis')).toBe('');
   });
 

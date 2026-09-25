@@ -698,9 +698,13 @@ that answered *nothing here* from one nobody could ask.
    asked here that holds nothing here; `not_served`, `not_integrated`,
    `licence_restricted` and `unavailable` are four ways of never having asked.
    `RegisterReading` carries the distinction and the page prints
-   **"Searched, nothing found."** or **"Not searched."** accordingly — and the
-   rules name the register in each sentence, so the model cannot describe an
-   unsearchable register as one it searched.
+   **"Checked — nothing recorded."** or **"Not covered by this report."**
+   accordingly — and the rules name the register in each sentence, so the
+   model cannot describe an unsearchable register as one it searched. (They
+   read "Searched, nothing found." and "Not searched." until 26 Sep 2026: the
+   same distinction in the machine room's words. The pair is defined once in
+   `adviserVoice.pure.ts`, because the supply block prints it too — see
+   [`ADVISER_VOICE.md`](./ADVISER_VOICE.md).)
 
 ### 9.3 Where it lives
 

@@ -8,6 +8,7 @@ import { investmentReportFileName } from '@/lib/reports/investment/reportFileNam
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
+import { inlineReportPhotographs, type SignedPhotograph } from './reportPhotographs';
 
 function flatten(obj: any): Record<string, any> {
   if (!obj || typeof obj !== 'object') return {};
@@ -78,6 +79,31 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
   // while reading as though a second route existed.
   if (error) return null;
   return ((resp as any)?.report as any) ?? null;
+}
+
+/**
+ * The report and the property's own photographs, in one read.
+ *
+ * The same broker and the same `reports` permission as `loadInvestmentReport`;
+ * the photographs are an ADDITION the broker never lets fail the read, so a
+ * report with none — or whose photographs could not be read — loads exactly as
+ * it always did. See `reportPhotographs.pure.ts` for which may lead a client's
+ * document.
+ */
+async function loadInvestmentReportWithPhotographs(
+  reportId: string,
+): Promise<{ report: any; photographs: SignedPhotograph[] } | null> {
+  const { data: resp, error } = await invokeSecureFunction('get-investment-reports', {
+    table: 'investment_reports',
+    reportId,
+    photographs: true,
+    listOptions: { select: '*' },
+  } as any);
+  if (error) return null;
+  const report = (resp as any)?.report ?? null;
+  if (!report) return null;
+  const photographs = Array.isArray((resp as any)?.photographs) ? (resp as any).photographs as SignedPhotograph[] : [];
+  return { report, photographs };
 }
 
 /**
@@ -197,8 +223,9 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
      */
     payload?: Record<string, unknown> | null;
   }): Promise<TemplateBindingContext | null> {
-    const loaded = await loadInvestmentReport(reportId);
-    if (!loaded) return null;
+    const withPhotographs = await loadInvestmentReportWithPhotographs(reportId);
+    if (!withPhotographs) return null;
+    const loaded = withPhotographs.report;
     const presentedContent = typeof payload?.reportContent === 'string'
       ? payload.reportContent
       : null;
@@ -275,6 +302,13 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     // generated. See `organisationProjection.pure.ts`.
     await applyOrganisationAndBrand(data);
 
+    // The property's own photographs, where its listing holds any a client's
+    // document may carry. `property.images.N` is what the photographic masters
+    // bind — a cover hero on three, full-page plates on five — and every slot
+    // is conditional, so a report with none draws exactly what it drew before.
+    // Set after the projection so nothing above can overwrite it.
+    const images = await inlineReportPhotographs(withPhotographs.photographs);
+    if (images.length) data.property = { ...(data.property ?? {}), images };
 
     return {
       data,

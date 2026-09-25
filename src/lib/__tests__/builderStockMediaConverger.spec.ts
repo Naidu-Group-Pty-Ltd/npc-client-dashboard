@@ -40,6 +40,7 @@ function networkMigrations(): string[] {
     '20261202090000_builder_marketplace_ranking.sql',
     '20261211000000_a_builder_route_installs_itself.sql',
     MEDIA_MIGRATION,
+    '20261221100000_a_media_diagnostic_never_breaks_the_sweep.sql',
   ];
   for (const file of network) {
     if (!all.includes(file)) throw new Error(`missing migration ${file}`);
@@ -429,6 +430,75 @@ describe.skipIf(!runs)('the media converger', () => {
       expect(photoIds(itemId)).toEqual([a]);
       // The property itself still took the event's figures.
       expect(item(itemId)).toBe(`${org}|active|14 Proof Street|4`);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  describe('when the diagnostics recorder itself fails', () => {
+    /*
+     * PRODUCTION'S RECORDER RAISES ON ORDINARY METADATA. Its privacy screen is
+     * `$.**.keyvalue()`, which walks into every scalar and `.keyvalue()`
+     * refuses anything that is not an object — so any metadata carrying a
+     * value makes `record_portal_operational_event` throw. Measured on the
+     * first production proof: the refusal was rolled back and retried, and on
+     * the fifth attempt the dead-letter path, calling the same recorder inside
+     * the handler, would have aborted the whole sweep. The screen below is the
+     * production expression verbatim.
+     */
+    const brokenRecorder = `
+      CREATE OR REPLACE FUNCTION public.record_portal_operational_event(
+        p_event_name text, p_severity text, p_request_id uuid, p_ref text, p_actor_type text,
+        p_a text, p_b text, p_c text, p_d text, p_e text, p_f text, p_success boolean, p_meta jsonb)
+      RETURNS void LANGUAGE plpgsql AS $f$
+      BEGIN
+        IF jsonb_path_exists(COALESCE(p_meta,'{}'), '$.**.keyvalue() ? (@.key like_regex "(?i)^(internal_notes|smr)$")') THEN
+          RAISE EXCEPTION 'SENSITIVE_TELEMETRY_FIELD_FORBIDDEN';
+        END IF;
+        INSERT INTO public.portal_operational_events_log(name, severity, meta) VALUES (p_event_name, p_severity, p_meta);
+      END $f$;`;
+    const workingRecorder = `
+      CREATE OR REPLACE FUNCTION public.record_portal_operational_event(
+        p_event_name text, p_severity text, p_request_id uuid, p_ref text, p_actor_type text,
+        p_a text, p_b text, p_c text, p_d text, p_e text, p_f text, p_success boolean, p_meta jsonb)
+      RETURNS void LANGUAGE sql AS $f$
+        INSERT INTO public.portal_operational_events_log(name, severity, meta) VALUES (p_event_name, p_severity, p_meta)
+      $f$;`;
+
+    beforeEach(() => { db.sql(brokenRecorder); });
+    afterAll(() => { db.sql(workingRecorder); });
+
+    it('reproduces production: the recorder throws on ordinary metadata', () => {
+      expect(() => db.sql(`SELECT public.record_portal_operational_event('x', 'warning', gen_random_uuid(),
+        'r', 'system', NULL, 'integration_worker', NULL, NULL, NULL, NULL, false, '{"reason":"x"}'::jsonb)`))
+        .toThrow(/keyvalue/);
+    });
+
+    it('a refusal is still stamped, first time, and not retried', () => {
+      const event = deliver(conn, payload(itemId, org, { photos: asPhotos(ids(13)) }));
+      settle();
+      expect(mediaState(event)).toBe('true|refused:invalid_media');
+      expect(db.sql(`SELECT media_apply_attempts FROM public.builder_network_inbound_events WHERE id = '${event}'`)).toBe('0');
+    });
+
+    it('a dead letter does not abort the sweep, and the next event still converges', () => {
+      const [a] = ids(1);
+      const poisoned = deliver(conn, payload(itemId, org, { photos: asPhotos([a]) }));
+      applyMain();
+      db.sql(`
+        CREATE FUNCTION pg_temp_fail2() RETURNS trigger LANGUAGE plpgsql AS
+          $f$ BEGIN RAISE EXCEPTION 'simulated storage failure'; END $f$;
+        CREATE TRIGGER fail_photos2 BEFORE INSERT ON public.builder_network_stock_item_photos
+          FOR EACH ROW EXECUTE FUNCTION pg_temp_fail2();`);
+      try {
+        for (let tick = 0; tick < 5; tick += 1) applyMedia(); // must never throw
+        expect(mediaState(poisoned)).toMatch(/^true\|dead:/);
+      } finally {
+        db.sql(`DROP TRIGGER fail_photos2 ON public.builder_network_stock_item_photos;
+                DROP FUNCTION pg_temp_fail2();`);
+      }
+      deliver(conn, payload(itemId, org, { photos: asPhotos([a]) }));
+      settle();
+      expect(photoIds(itemId)).toEqual([a]);
     });
   });
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1036,
+  "migration_files": 1037,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -71,6 +71,7 @@
     "function:public.builder_network_clear_settled_mismatches",
     "function:public.builder_network_halt_identity_mismatch",
     "function:public.builder_network_mark_inbound_refused",
+    "function:public.builder_network_media_note",
     "function:public.builder_network_transaction_connection_set_once",
     "function:public.builder_stock_touch_updated_at",
     "function:public.bump_cross_portal_rollout_version",

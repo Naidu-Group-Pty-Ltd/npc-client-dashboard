@@ -63,3 +63,13 @@ Photographs are served the way the card's primary already is: through the networ
 | `builderStockMediaConverger.spec.ts` | Runs the real network migrations, main sweep included, against a throwaway Postgres. Covers 0, 1, several and 12 photographs; a 13th refused whole; replay with no duplicates; reorder, removal and replacement; a stale event; media waiting for the property; another builder's property; a revoked connection; an old payload with no media; an unknown version; the card's primary unchanged; documents independent of photographs; a `javascript:` link refused; bounded retry then dead-letter with the property untouched; and grants. It refuses to skip in CI. |
 | `builderStockPropertyDetailRead.spec.ts` | The read's projection, the Clients gate, and the organisation pin on every media read. |
 | `builderStockGallery.spec.tsx`, `builderStockPropertyPage.spec.tsx` | The gallery at every count, the route, the ways in, and what the page states. |
+
+## 6. A diagnostic never breaks the sweep
+
+The first production proof (25 Sep 2026) found that the Command Centre's `record_portal_operational_event` throws on ordinary metadata. Its privacy screen `$.**.keyvalue()` walks into every scalar, and `.keyvalue()` refuses anything that is not an object.
+
+With that recorder, the media sweep's refusal was rolled back and retried instead of being stamped once. On the fifth attempt, its dead-letter path would have aborted the whole sweep.
+
+`20261221100000` routes both diagnostics through `builder_network_media_note`, which turns a recorder failure into a database WARNING. The stamp on the event, which is the durable record, always stands.
+
+The recorder's screen is a shared privacy control. It is reported rather than changed here. The fix it needs is to apply `.keyvalue()` to objects only: `$.** ? (@.type() == "object").keyvalue() ? (…)`.

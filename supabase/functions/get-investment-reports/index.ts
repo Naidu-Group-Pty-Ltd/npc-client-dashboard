@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
@@ -6,6 +6,13 @@ import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './re
 import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/investment/subReportFamily.pure.ts';
 import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
+import {
+  photographsForReport,
+  REPORT_PHOTOGRAPH_COLUMNS,
+  sharedListingCounts,
+  type ListingImageReuseRow,
+  type StoredListingPhotograph,
+} from '../_shared/reportPhotographs.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
 type Projection = 'library' | 'cashFlowLibrary' | 'cashFlowComparison' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
@@ -20,6 +27,11 @@ interface RequestBody {
   /** Resolve the Compass family (parent + sub-reports + staleness) of this report id. */
   familyOf?: string;
   listMode?: boolean;
+  /**
+   * With `reportId`: also return the property's own photographs, signed for a
+   * few minutes, for the one render that asked. See `readReportPhotographs`.
+   */
+  photographs?: boolean;
   listOptions?: {
     status?: string | string[]; isArchived?: boolean; isClientReport?: boolean | null;
     clientPropertyId?: string; clientPropertyIds?: string[]; createdAfter?: string; createdBefore?: string;
@@ -85,7 +97,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-09-25.1';
+const FUNCTION_VERSION = '2026-09-25.2';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -189,6 +201,75 @@ async function hydrateCompleteAddresses(
       };
     }),
   };
+}
+
+/** Long enough for one render to fetch them; a signed URL is a bearer credential. */
+const PHOTOGRAPH_URL_TTL_SECONDS = 10 * 60;
+
+/**
+ * The property's own photographs, for a document drawn from this report.
+ *
+ * The masters that carry photographs bind `property.images.N`, and nothing
+ * ever filled it (`reportPhotographs.pure.ts` has the history). The listing a
+ * report was made from is `property_listing_id` — inherited by every fork and
+ * condense child — and its photographs are already stored, de-duplicated and
+ * classified in the image library. This reads them for ONE report the caller
+ * may already read, lets the pure rule decide which may lead a client's
+ * document, and signs only those.
+ *
+ * It never fails the read it rides on: the report is the answer and the
+ * photographs are an addition to it, so every failure here is an empty list
+ * and a log line. And it fails CLOSED — a reuse reading that could not be
+ * taken returns nothing, because "not shared with another listing" cannot be
+ * read from a failure.
+ */
+async function readReportPhotographs(
+  supabase: SupabaseClient,
+  row: ReportRow | undefined,
+  correlationId: string,
+): Promise<Array<{ url: string; width: number | null; height: number | null }>> {
+  const listingId = typeof row?.property_listing_id === 'string' ? row.property_listing_id.trim() : '';
+  if (!listingId) return [];
+  try {
+    const images = await supabase
+      .from('listing_images')
+      .select(REPORT_PHOTOGRAPH_COLUMNS)
+      .eq('listing_id', listingId)
+      .eq('status', 'stored')
+      .order('position', { ascending: true });
+    if (images.error || !images.data?.length) {
+      if (images.error) console.warn('[get-investment-reports] photographs unavailable', { correlationId, code: images.error.code });
+      return [];
+    }
+    const reuse = await supabase.rpc('listing_image_reuse', { p_listing_ids: [listingId] });
+    if (reuse.error) {
+      console.warn('[get-investment-reports] photograph reuse unavailable', { correlationId, code: reuse.error.code });
+      return [];
+    }
+    const chosen = photographsForReport(
+      images.data as unknown as StoredListingPhotograph[],
+      sharedListingCounts((reuse.data ?? []) as ListingImageReuseRow[]),
+    );
+    if (!chosen.length) return [];
+    const signed = await supabase.storage
+      .from('listing-images')
+      .createSignedUrls(chosen.map((p) => p.storagePath), PHOTOGRAPH_URL_TTL_SECONDS);
+    if (signed.error) {
+      console.warn('[get-investment-reports] photographs could not be signed', { correlationId });
+      return [];
+    }
+    const urlByPath = new Map<string, string>();
+    for (const entry of signed.data ?? []) {
+      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
+    }
+    return chosen.flatMap((p) => {
+      const url = urlByPath.get(p.storagePath);
+      return url ? [{ url, width: p.width, height: p.height }] : [];
+    });
+  } catch (error) {
+    console.warn('[get-investment-reports] photographs failed', { correlationId, technicalError: error });
+    return [];
+  }
 }
 
 Deno.serve(async (req) => {
@@ -366,7 +447,13 @@ Deno.serve(async (req) => {
     }
     const totalRows = count || 0, totalPages = Math.ceil(totalRows / pageSize);
     console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });
-    if (body.reportId) return json({ success: true, report: responseData[0], correlationId }, 200, corsHeaders, correlationId);
+    if (body.reportId) {
+      // Asked for, one report, behind the same `reports` permission as the row.
+      const photographs = table === 'investment_reports' && body.photographs === true
+        ? await readReportPhotographs(supabase, responseData[0] as unknown as ReportRow, correlationId)
+        : null;
+      return json({ success: true, report: responseData[0], ...(photographs ? { photographs } : {}), correlationId }, 200, corsHeaders, correlationId);
+    }
     return json({ success: true, reports: responseData, count: totalRows, pagination: { page, pageSize, totalRows, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 }, correlationId }, 200, corsHeaders, correlationId);
   } catch (error) {
     console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: error });

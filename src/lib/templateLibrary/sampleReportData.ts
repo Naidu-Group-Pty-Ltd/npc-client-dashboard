@@ -1362,8 +1362,10 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    * `renderResourcePolicy` skips a base64 payload and holds a
    * percent-encoded one under the SSRF scanner.
    *
-   * No adapter emits `property.images` today. A real report therefore has
-   * none, every plate is conditional, and an unfilled plate prints nothing.
+   * The Investment adapter emits `property.images` only where the report's
+   * listing holds photographs a client's document may carry
+   * (`docs/reports/PROPERTY_PHOTOGRAPHS.md`). Most reports have none, every
+   * plate is conditional, and an unfilled plate prints nothing.
    */
   images: [
     // Frontage

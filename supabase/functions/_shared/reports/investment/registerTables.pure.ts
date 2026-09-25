@@ -92,11 +92,17 @@ export const PLANNING_REGISTER_SECTION = 'Planning controls and development regi
  * different table.
  */
 export const REGISTER_TABLE_HEADERS: readonly string[] = [
-  // renderPlanningControls — the control summary.
+  // renderPlanningControls — the control summary. The second spelling is the
+  // one documents composed before 26 Sep 2026 carry: the headers moved into
+  // an adviser's words (`adviserVoice.pure.ts`) and a stored report keeps
+  // what it was written with, so both are the same table.
+  'control|finding|status|source',
   'control|reading|standing|evidence',
   // renderLandUseTable — what may be built.
   'residential use|standing under the instrument',
-  // renderConstraintRegister — what is mapped over this land.
+  // renderConstraintRegister — what is mapped over this land (and, below it,
+  // the stored spelling).
+  'kind|what is mapped|instrument|current at',
   'kind|what the register returned|instrument|current at',
   // renderPlanningControls — state development instruments.
   'instrument|name|status|gazetted',
@@ -158,10 +164,33 @@ export const REGISTER_POINTER = `*Set out in full under “${PLANNING_REGISTER_S
  */
 export const REGISTER_HEADINGS: readonly string[] = [
   PLANNING_REGISTER_SECTION,
+  'Planning controls for this property',
+  'Infrastructure and development near this property',
+  'Infrastructure and development registers',
+  // The two sub-headings as documents composed before 26 Sep 2026 carry them.
   'Planning controls retrieved for this property',
   'Infrastructure and development retrieved for this property',
-  'Infrastructure and development registers',
 ];
+
+/**
+ * The sub-headings the generator appends each register under, inside the
+ * chapter it is the evidence for — named once, because the generator writes
+ * them and `rewriteScaffoldingPointers` names them in a pointer, and two
+ * spellings of one heading is a pointer to a heading the page does not carry.
+ *
+ * They said "retrieved for this property" until 26 Sep 2026. "Retrieved" is
+ * the machine room's word (`adviserVoice.pure.ts`), so it left the heading; a
+ * stored report keeps the heading it was written with, which is why
+ * `STORED_REGISTER_HEADINGS` is still read.
+ */
+export const PLANNING_REGISTER_HEADING = 'Planning controls for this property';
+export const INFRASTRUCTURE_REGISTER_HEADING = 'Infrastructure and development near this property';
+/** The fallback section the infrastructure register takes where its chapter is absent. */
+export const INFRASTRUCTURE_REGISTER_SECTION = 'Infrastructure and development registers';
+export const STORED_REGISTER_HEADINGS = {
+  planning: 'Planning controls retrieved for this property',
+  infrastructure: 'Infrastructure and development retrieved for this property',
+} as const;
 
 /** The pointer that stands where a reproduction did, naming where the register is. */
 export function registerPointer(heading: string): string {

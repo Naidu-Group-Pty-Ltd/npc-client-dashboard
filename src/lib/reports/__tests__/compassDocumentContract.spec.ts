@@ -139,7 +139,7 @@ describe('the evidence pack is what the report may state', () => {
   it('states an absent register as a fact about the CHECK', () => {
     // The rule every absence in this product answers to. A category nobody
     // reached must never read as a category with nothing in it.
-    expect(p).toMatch(/No school register reading was retrieved/);
+    expect(p).toMatch(/Schools near this property were not assessed for this report/);
     // The amenity and transport absences moved into `amenityFactBlocks.pure.ts`
     // with the blocks themselves, and are asserted there by EXECUTION against
     // the shape `location-intelligence-service` publishes — which is stronger
@@ -182,7 +182,7 @@ describe('the contract itself', () => {
 
   it('says what depth is, because the legacy answer was length', () => {
     expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/Depth is not length/);
-    expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/A retrieved fact they could not easily get themselves/);
+    expect(COMPASS_DOCUMENT_CONTRACT).toMatch(/A confirmed fact they could not easily get themselves/);
   });
 
   it('shows the invented paragraph beside the evidenced one', () => {

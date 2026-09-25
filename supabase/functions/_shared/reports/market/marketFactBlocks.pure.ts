@@ -78,6 +78,7 @@ import {
   type MarketEvidence,
 } from './marketEvidence.pure.ts';
 import { parseVizDirective } from '../vizDirectives.pure.ts';
+import { elsewhereOnly, inHomeSection } from '../adviserVoice.pure.ts';
 
 /** How each measure is named to a reader, and how its value is written. */
 const MEASURE: Readonly<Record<EvidenceKey, { label: string; unit: 'money' | 'percent' | 'count' | 'days' | 'series' }>> = {
@@ -193,6 +194,25 @@ function writeValue(value: unknown, unit: (typeof MEASURE)[EvidenceKey]['unit'])
   }
 }
 
+/**
+ * The points of a stored series, or null.
+ *
+ * All or nothing: a series with one unreadable point is not charted with a
+ * gap where that point was, because a gap in a price line reads as a period
+ * nothing sold in, and nobody measured that.
+ */
+function seriesPoints(value: unknown): Array<{ period: string; value: number }> | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const out: Array<{ period: string; value: number }> = [];
+  for (const p of value) {
+    const period = isRecord(p) && typeof p.period === 'string' ? p.period.trim() : '';
+    const v = isRecord(p) ? p.value : null;
+    if (!/^\d{4}-\d{2}$/.test(period) || typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return null;
+    out.push({ period, value: v });
+  }
+  return out;
+}
+
 export interface MarketFactsInput {
   /** `enhancedData.marketEvidence` — what the adapters extracted, or absent. */
   marketEvidence?: unknown;
@@ -209,6 +229,26 @@ export interface MarketFactRow {
   /** Anything a reader needs in order not to over-read it. */
   note: string | null;
   benchmark: boolean;
+  /**
+   * The published series itself, on the price-series row alone.
+   *
+   * `value` writes a series as its extent — "60 periods, 2011-09 to 2026-06" —
+   * which is right for the table: a series is what the figures above it were
+   * computed from, not a figure a client reads off a row. A chart of the
+   * series needs the points, and they were already on the evidence point this
+   * row was built from; only the row threw them away.
+   *
+   * Carried only past the same licence gate as every other row, so a series
+   * the right to publish is not confirmed for never reaches a page as points
+   * any more than it reaches one as a row. `statedNumbers` does not read it:
+   * the table does not print these values, so a model's chart may not claim
+   * them — a composed chart draws them from the record instead.
+   */
+  series?: {
+    /** The geography the series describes, in the publisher's own words. */
+    area: string;
+    points: ReadonlyArray<{ period: string; value: number }>;
+  };
 }
 
 export interface MarketFacts {
@@ -263,6 +303,7 @@ export function buildMarketFacts(input: MarketFactsInput): MarketFacts {
     }
     const value = writeValue((point as EvidencePoint<unknown>).value, measure.unit);
     if (value === null) continue;
+    const series = key === 'priceSeries' ? seriesPoints((point as EvidencePoint<unknown>).value) : null;
     rows.push({
       key,
       label: measure.label,
@@ -271,6 +312,7 @@ export function buildMarketFacts(input: MarketFactsInput): MarketFacts {
       publisher,
       note: point.sourceNote,
       benchmark: IS_BENCHMARK(key),
+      ...(series ? { series: { area: point.areaName, points: series } } : {}),
     });
   }
 
@@ -348,9 +390,9 @@ export function renderMarketFacts(facts: MarketFacts): string {
   }
 
   if (facts.evidenceMissing) {
-    lines.push('**Not retrieved.** No market evidence was assembled for this property, so this report states no '
-      + 'median price, rent, growth rate, vacancy rate or sale count. That is a statement about this run rather '
-      + 'than about the market.');
+    lines.push('**Market figures are not covered by this report.** No published median price, rent, growth rate, '
+      + 'vacancy rate or sale count is summarised for this property, so none is stated. That is a limit of this '
+      + 'report rather than a finding about the market.');
     lines.push('');
     return lines.join('\n');
   }
@@ -493,16 +535,16 @@ export function growthReadingsDiverge(d: GrowthDivergence): boolean {
 export function growthDivergenceRule(d: GrowthDivergence): string | null {
   if (!growthReadingsDiverge(d)) return null;
   const accepted = `${d.acceptedPercent}%`;
-  const retrieved = `${d.retrievedPercent}%`;
-  const who = d.retrievedLabel?.trim() ? d.retrievedLabel.trim() : 'the retrieved series';
+  const published = `${d.retrievedPercent}%`;
+  const who = d.retrievedLabel?.trim() ? d.retrievedLabel.trim() : 'the published series';
   return 'CAPITAL GROWTH — TWO READINGS, AND THEY DISAGREE. The projections, the equity series and '
     + `every ten-year figure in this report are built on an accepted rate of ${accepted}. `
-    + `${who} measures ${retrieved} over its own past window. Both are real and they are different `
+    + `${who} measures ${published} over its own past window. Both are real and they are different `
     + 'quantities: one is an input a person agreed to, the other is what a publisher recorded. '
     + 'You may not replace one with the other, you may not average them, you may not present the '
-    + 'retrieved reading as a forecast or as what this property will do, and you may not quietly '
-    + `use ${retrieved} in a sentence about the modelled outcome. Where you mention growth at all, `
-    + `state both, say that the modelling uses ${accepted}, and attribute ${retrieved} to its `
+    + 'published reading as a forecast or as what this property will do, and you may not quietly '
+    + `use ${published} in a sentence about the modelled outcome. Where you mention growth at all, `
+    + `state both, say that the modelling uses ${accepted}, and attribute ${published} to its `
     + 'publisher and its period. Reconciling them is the adviser\'s judgement, not this report\'s.';
 }
 
@@ -546,19 +588,20 @@ export function marketFactRules(facts: MarketFacts): string {
 
   if (facts.evidenceMissing || !facts.anyStated) {
     return [
-      `${head} No market figure was retrieved for this property.`,
+      `${head} No published market figure is held for this property.`,
       '1. Do NOT state a median sale price, a median rent, a price growth rate, a vacancy rate, a days-on-market '
       + 'figure, an auction clearance rate or a sales volume — not for the suburb, the postcode, the council or '
       + 'the state, and not from a live web search, a listing portal, a news article or your own knowledge. '
       + 'There is no figure here to state.',
       `1a. ${PORTAL_FIGURE_PERMITTED_FORM}`,
       `2. ${noAgentless}`,
-      '3. Say in one sentence that no market price or rent series was retrieved for this location and that the '
-      + 'market discussion below is therefore qualitative. Then write it qualitatively — position, dwelling mix, '
-      + 'demand drivers, what a buyer would compare — without a number.',
+      `3. ${inHomeSection('market')} say in one sentence that no published price or rent series is held for this `
+      + `location and that the market discussion is therefore qualitative. ${elsewhereOnly('market')} Wherever the `
+      + 'market is discussed, write it qualitatively — position, dwelling mix, demand drivers, what a buyer would '
+      + 'compare — without a number.',
       '4. Do NOT compare the asking price or price guide against a median, a "prevailing" level or a "typical" '
       + 'figure. There is no median here, so any such comparison invents one.',
-      '5. Do NOT rate, score or grade the market from the absence. A figure nobody retrieved is not evidence that '
+      '5. Do NOT rate, score or grade the market from the absence. A figure that is not held is not evidence that '
       + 'the market is strong, weak, fair value or anything else.',
       `6. ${CHART_IS_A_CLAIM} With no figure held, that means no market chart at all.`,
     ].join('\n');

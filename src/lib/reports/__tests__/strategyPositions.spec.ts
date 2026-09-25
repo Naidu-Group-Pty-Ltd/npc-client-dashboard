@@ -194,7 +194,8 @@ describe('rule 2 — an absence is coverage, never a quadrant entry', () => {
     const swot = buildSwot(rec);
     const quadrants = JSON.stringify([swot.strengths, swot.weaknesses, swot.opportunities, swot.threats]);
     expect(quadrants).not.toContain('transport');
-    expect(swot.coverage.join(' ')).toContain('outside every transport network loaded');
+    expect(swot.coverage.join(' ')).toContain('outside the public transport networks whose stop data this report covers');
+    expect(swot.coverage.join(' ')).toContain('not evidence that the area is poorly served');
   });
 
   it('names an empty quadrant as a statement about the record, never as a clearance', () => {
@@ -316,8 +317,8 @@ describe('rule 5 — liquidity is measured, equity is modelled', () => {
 });
 
 describe('rule 6 — monitoring names the register and promises nothing', () => {
-  it('says plainly that nothing on this platform watches on the reader’s behalf', () => {
-    expect(composeMonitoringPlan(base(), 'Monitoring')).toContain('watches these on your behalf');
+  it('says plainly that nothing watches these on the reader’s behalf', () => {
+    expect(composeMonitoringPlan(base(), 'Monitoring')).toContain('These are not monitored on your behalf');
   });
 
   it('gives every row a register, a cadence and what a different answer would mean', () => {
@@ -468,7 +469,7 @@ describe('the monitoring plan is blocks, not a five-column table', () => {
   });
 
   it('keeps the promise it exists to make', () => {
-    expect(plan()).toContain('watches these on your behalf');
+    expect(plan()).toContain('These are not monitored on your behalf');
     // Events prompt a re-read; the report keeps no schedule of its own.
     expect(plan()).toContain('rather than a schedule this report keeps');
   });

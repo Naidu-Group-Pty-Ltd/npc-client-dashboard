@@ -31,7 +31,10 @@ import { stripFootnoteDebris } from './footnoteDebris.pure.ts';
 import { promotePipedPseudoTables } from './pseudoTables.pure.ts';
 import { withholdRatedAbsenceCharts } from './ratedAbsence.pure.ts';
 import {
+  INFRASTRUCTURE_REGISTER_HEADING,
+  PLANNING_REGISTER_HEADING,
   PLANNING_REGISTER_SECTION,
+  STORED_REGISTER_HEADINGS,
   dedupeRegisterTables,
   stripHeadingScaffolding,
 } from './registerTables.pure.ts';
@@ -767,11 +770,12 @@ function bySection(markdown: string): string[] {
 function registerHeadingIn(markdown: string, aboutInfrastructure: boolean): string {
   const has = (h: string) => new RegExp(`^#{1,6}\\s+${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'mi').test(markdown);
   if (has(PLANNING_REGISTER_SECTION)) return PLANNING_REGISTER_SECTION;
-  const infra = 'Infrastructure and development retrieved for this property';
-  const planning = 'Planning controls retrieved for this property';
-  if (aboutInfrastructure && has(infra)) return infra;
-  if (has(planning)) return planning;
-  if (has(infra)) return infra;
+  // Today's spelling first, then the one a stored report carries.
+  const infra = [INFRASTRUCTURE_REGISTER_HEADING, STORED_REGISTER_HEADINGS.infrastructure].find(has);
+  const planning = [PLANNING_REGISTER_HEADING, STORED_REGISTER_HEADINGS.planning].find(has);
+  if (aboutInfrastructure && infra) return infra;
+  if (planning) return planning;
+  if (infra) return infra;
   return PLANNING_REGISTER_SECTION;
 }
 

@@ -782,6 +782,11 @@ export interface CoverOptions {
   facts: Array<{ label: string; value: string; valueChars?: number }>;
 }
 
+/** The depth of a banded cover's field, from the head of the sheet. */
+export const COVER_BAND_HEIGHT = 176;
+/** The band's block name, which `withCoverPhotograph` finds it by. */
+const COVER_BAND_NAME = 'Cover band';
+
 /**
  * The cover.
  *
@@ -889,9 +894,9 @@ export function cover(opts: CoverOptions): PageDef {
       title: '',
       bg: 'token:bg',
       color: 'token:text',
-      height: 176,
+      height: COVER_BAND_HEIGHT,
       x: 0, y: 0, width: PAGE.width,
-    }, 'Cover band'));
+    }, COVER_BAND_NAME));
   }
 
   if (plan.frame) {
@@ -2513,6 +2518,90 @@ export function coverHero(index: number, brief: string): BlockDef[] {
       x: 0, y: 0, width: PAGE.width, height: PAGE.height,
     }, 'Cover scrim'),
   ].map((b) => ({ ...b, conditional: plateConditional(index) }));
+}
+
+/** One pass of the field colour over the head of the sheet, `height` points deep. */
+function scrim(height: number, name: string): BlockDef {
+  // `tint` rather than `bg`, as in `coverHero`: the hero paints a tint at 0.55.
+  return block('hero', { title: '', tint: 'token:bg', x: 0, y: 0, width: PAGE.width, height }, name);
+}
+
+const FIELD_PHOTOGRAPH_BRIEF = 'Drop the cover photograph — the dwelling or its streetscape';
+const BAND_PHOTOGRAPH_BRIEF = 'Drop the masthead photograph — the dwelling or its streetscape';
+
+/**
+ * The report's lead photograph, on a cover the catalogue drew without one.
+ *
+ * Five of the fifty Investment masters were designed around photographs
+ * (`image_slots`). The other forty-five had nowhere to put one, so a report
+ * holding the property's own photographs printed none of them, and a dark
+ * cover left an empty field where a reader expected the house. The owner asked
+ * for a photograph on those covers (25 Sep 2026). The cover's ground decides
+ * where one can go:
+ *
+ *   - `field`: behind the whole sheet, under the photographic covers' own
+ *     scrim (`coverHero`) and a second pass of it. The type is already
+ *     reversed out of the field colour, and the scrim is that colour, so the
+ *     type reads over a photograph as it reads over the field.
+ *   - `band`: inside the band and nowhere else. The band is the one part of a
+ *     banded cover with a fixed extent. The title below it grows upward from
+ *     its rule by as many lines as the address needs (`cover`), so a
+ *     photograph anywhere on the paper would sit where a long address sets.
+ *     In the band it lies behind the mark, the wordmark and the tagline, which
+ *     never move, under the same two passes.
+ *   - `paper`: unchanged. Type on paper is dark ink, and a photograph under it
+ *     needs a pale wash strong enough to keep that ink legible. That makes a
+ *     different cover, not this cover with a picture added. One of the eleven,
+ *     Monograph, is photo-free by the catalogue's own design. This is a
+ *     decision for the design source, not something to derive here.
+ *
+ * The scrim is laid TWICE, which the photographic covers' own is not. Their
+ * design sets its small type over one 0.55 pass of the field colour. Over a
+ * white facade or a pale sky, the commonest ground in a listing photograph,
+ * that leaves the tagline and the fact labels at about 3.5:1 (measured on
+ * Private Banking's palette over pure white), half the 7:1 print floor
+ * `REPORT_RULES.md` §2 sets for small type. Two passes darken by
+ * 1 − 0.45² ≈ 0.80 and bring the same worst case to about 7.9:1. The house
+ * stays plainly visible: rendered over a pale-sky, white-facade stand-in, the
+ * roof line, the windows and the lawn all read. The renderer's tint opacity is
+ * one fixed value, so the second pass is a second block, not a new property.
+ *
+ * Every block is conditional on the photograph, so a report without one
+ * draws exactly the cover it drew before. The missing photograph is a dropped
+ * LAYER, which `closeDroppedBlocks` leaves in place rather than closing.
+ * Call this after the rest of the master is built: the new blocks then take
+ * the last ids, and every existing block keeps its own.
+ */
+export function withCoverPhotograph(
+  coverPage: PageDef,
+  index: number,
+  ground: CoverPlan['ground'],
+): PageDef {
+  if (ground === 'field') {
+    const photograph = [
+      ...coverHero(index, FIELD_PHOTOGRAPH_BRIEF),
+      { ...scrim(PAGE.height, 'Cover scrim, second pass'), conditional: plateConditional(index) },
+    ];
+    return { ...coverPage, blocks: [...photograph, ...coverPage.blocks] };
+  }
+  if (ground !== 'band') return coverPage;
+  const band = coverPage.blocks.findIndex((b) => b.name === COVER_BAND_NAME);
+  if (band < 0) throw new Error(`A banded cover with no "${COVER_BAND_NAME}" block: ${coverPage.name}`);
+  // Above the band's colour, beneath the head's type: blocks paint in order.
+  const photograph = [
+    block('image', {
+      src: plateSrc(index),
+      fit: 'cover',
+      placeholder: false,
+      x: 0, y: 0, width: PAGE.width, height: COVER_BAND_HEIGHT,
+    }, BAND_PHOTOGRAPH_BRIEF),
+    scrim(COVER_BAND_HEIGHT, 'Band scrim'),
+    scrim(COVER_BAND_HEIGHT, 'Band scrim, second pass'),
+  ].map((b) => ({ ...b, conditional: plateConditional(index) }));
+  return {
+    ...coverPage,
+    blocks: [...coverPage.blocks.slice(0, band + 1), ...photograph, ...coverPage.blocks.slice(band + 1)],
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

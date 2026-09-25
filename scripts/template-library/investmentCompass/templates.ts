@@ -71,6 +71,7 @@ import {
   textHeight,
   table,
   verdict,
+  withCoverPhotograph,
   withFurniture,
   beginCompassTemplate,
   flowColumn,
@@ -1254,6 +1255,15 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   pages.push(...platesFor('page'));
 
   pages.push(disclaimerPage(STANDARD_DISCLAIMER));
+
+  // The lead photograph, on a cover the catalogue drew without one: behind the
+  // field, or inside the band. A master that declares photographs already
+  // placed them above, and a paper cover is left as drawn (`withCoverPhotograph`
+  // says why). Last, so the new blocks take new ids and no existing block's
+  // id moves.
+  if (!slots.coverHero && slots.plates.length === 0) {
+    pages[0] = withCoverPhotograph(pages[0], 0, c.cover.ground);
+  }
 
   return assembleMaster({ family, variant, manifest, c, pages, format: INVESTMENT_COMPASS_FORMAT });
 }

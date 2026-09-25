@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { namedPhotographCount, photographCaptureRequest, startPhotographCapture } from '@/lib/reports/urlExtractPhotographs';
 import type { Json } from '@/integrations/supabase/types';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationsContext';
@@ -80,7 +81,7 @@ export function InvestmentReportGenerator() {
   const [propertyUrl, setPropertyUrl] = useState('');
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
-  const [urlScrapedData, setUrlScrapedData] = useState<{ propertyAddress: string; scrapedContent: string; sourceUrl: string } | null>(null);
+  const [urlScrapedData, setUrlScrapedData] = useState<{ propertyAddress: string; scrapedContent: string; sourceUrl: string; scrapeJobId?: string; photographCount?: number } | null>(null);
   const [isUrlGenerating, setIsUrlGenerating] = useState(false);
   
   // PDF upload state
@@ -847,6 +848,10 @@ export function InvestmentReportGenerator() {
         propertyAddress,
         scrapedContent: scrapedResult.markdown,
         sourceUrl: scrapedResult.sourceUrl || propertyUrl,
+        // The job the extraction ran as, and how many of the listing's own
+        // photographs it named — kept so the report made from it can keep them.
+        scrapeJobId: startData.jobId,
+        photographCount: namedPhotographCount(scrapedResult),
       });
 
       // Populate form fields with scraped data (without triggering sync loops).
@@ -1055,6 +1060,20 @@ export function InvestmentReportGenerator() {
       }).catch(error => {
         console.error('Background generation error:', error);
       });
+
+      // Keep the listing's own photographs for this report, beside the
+      // generation and never in its way. The server finishes the work in the
+      // background, and a document drawn later finishes anything it left
+      // over, so only the ask itself has to land (`urlExtractPhotographs.ts`).
+      const photographCapture = photographCaptureRequest(pendingReport.id, urlScrapedData);
+      if (photographCapture) {
+        void startPhotographCapture(
+          (request) => invokeSecureFunction('listing-images', { ...request }),
+          photographCapture,
+        ).then((outcome) => {
+          if (!outcome.ok) console.warn('Listing photographs were not requested for this report:', outcome.error);
+        });
+      }
 
       // Add "generation started" notification
       addNotification({

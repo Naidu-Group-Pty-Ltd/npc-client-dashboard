@@ -1287,6 +1287,15 @@ jobs:
           BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run templates:library:seed:check
 
+      # Seed v21 put the report's lead photograph on 34 covers, and made two
+      # promises a client would see broken: without a photograph the cover is
+      # exactly what it was, and beside one nothing on the cover moves. This
+      # spec renders all 34 both ways through the production renderer. No job
+      # runs `src/lib/templateLibrary` as a folder, so the spec is named here.
+      - name: The cover photograph moves nothing, and without one the cover is unchanged
+        if: ${{ !cancelled() }}
+        run: npx vitest run src/lib/templateLibrary/__tests__/investmentCompassCoverPhotograph.spec.ts
+
       # The renders themselves, when it fails: a reviewer should be able to
       # look at the page rather than read a coordinate.
       - name: Upload the renders

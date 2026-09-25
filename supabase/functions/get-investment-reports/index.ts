@@ -5,6 +5,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/investment/subReportFamily.pure.ts';
 import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
 type Projection = 'library' | 'cashFlowLibrary' | 'cashFlowComparison' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
@@ -50,7 +51,13 @@ interface RequestBody {
   command_centre_session_token?: string;
 }
 
-export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
+// The three generation stamps ride along so the date every surface prints is
+// when the report was GENERATED, not when its row was inserted — a
+// regeneration reuses the row, so `created_at` never moves
+// (`reportGeneratedAt.pure.ts`). The completion stamp is read by JSON path
+// rather than by selecting `data_sources`, which carries the market evidence
+// and is far too large for a list.
+export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,updated_at,variant_generated_at,generation_completed_at:data_sources->_generationQuality->>generatedAt,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
 const INVESTMENT_LIBRARY_SOURCE_SELECT = `${INVESTMENT_LIBRARY_SELECT},manual_overrides,financial_calculations`;
 // `cashFlowComparison` reads the SAME columns as `cashFlowLibrary` and simply
 // does not collapse them. The two answer different questions: a list needs the
@@ -78,7 +85,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-09-14.1';
+const FUNCTION_VERSION = '2026-09-25.1';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -345,6 +352,17 @@ Deno.serve(async (req) => {
     }
     if (table === 'investment_reports' && projection === 'cashFlowLibrary') {
       responseData = responseData.map(row => toLibraryFinancialSummary(row as ReportRow)) as typeof responseData;
+    }
+    // When each report was generated, resolved once here so every surface
+    // prints the same date (`reportGeneratedAt.pure.ts`). The JSON-path alias
+    // is consumed rather than published: `generated_at` is the contract.
+    if (table === 'investment_reports' && projection !== 'idLookup' && projection !== 'generationProgress' && responseData.length) {
+      responseData = (responseData as unknown as ReportRow[]).map((row) => {
+        const reading = resolveReportGeneratedAt(row);
+        const dated: ReportRow = { ...row, generated_at: reading?.at ?? null, generated_at_basis: reading?.basis ?? null };
+        delete dated.generation_completed_at;
+        return dated;
+      }) as unknown as typeof responseData;
     }
     const totalRows = count || 0, totalPages = Math.ceil(totalRows / pageSize);
     console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });

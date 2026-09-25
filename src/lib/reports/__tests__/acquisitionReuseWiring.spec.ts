@@ -22,10 +22,12 @@ import {
   planReuse,
   planningAnswerFitsPoint,
   planningPointIsRecorded,
+  planningAnswerVersionOf,
   planningPointOf,
   withdrawReuse,
   type AcquisitionSubject,
 } from '../investment/acquisitionReuse.pure';
+import { PLANNING_ANSWER_VERSION } from '../../../../supabase/functions/_shared/planning/planningAnswerVersion.pure';
 
 const SUBJECT: AcquisitionSubject = {
   address: '18 Annabelle Crescent, Kellyville NSW 2155',
@@ -38,7 +40,11 @@ const NOW = Date.parse('2026-09-19T15:00:00.000Z');
 
 function packet(overrides: Record<string, unknown> = {}, ageHours = 0.2) {
   return {
-    planningData: { zone: 'R2', pointBasis: { precision: 'address', source: 'enrichment', provider: 'nominatim' } },
+    planningData: {
+      zone: 'R2',
+      pointBasis: { precision: 'address', source: 'enrichment', provider: 'nominatim' },
+      answerVersion: PLANNING_ANSWER_VERSION,
+    },
     climateData: { rainfall: 900 },
     domainData: { evidence: {} },
     [ACQUISITION_STAMP_KEY]: acquisitionStamp(
@@ -52,6 +58,7 @@ function packet(overrides: Record<string, unknown> = {}, ageHours = 0.2) {
 describe('planReuse refuses by default', () => {
   it('reuses nothing from an unstamped packet, which is every legacy run', () => {
     const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
       storedPacket: { planningData: { zone: 'R2' }, climateData: {} },
       subject: SUBJECT,
       nowMs: NOW,
@@ -66,12 +73,13 @@ describe('planReuse refuses by default', () => {
   });
 
   it('reuses nothing at all when there is no previous packet', () => {
-    const plan = planReuse({ storedPacket: null, subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: null, subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(Object.keys(plan.values)).toHaveLength(0);
   });
 
   it('refuses a packet acquired for a different postcode', () => {
     const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
       storedPacket: packet(),
       subject: { ...SUBJECT, postcode: '4650' },
       nowMs: NOW,
@@ -85,6 +93,7 @@ describe('planReuse refuses by default', () => {
 
   it('refuses a packet acquired for a different state at the same postcode', () => {
     const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
       storedPacket: packet(),
       subject: { ...SUBJECT, state: 'VIC' },
       nowMs: NOW,
@@ -96,14 +105,14 @@ describe('planReuse refuses by default', () => {
     const stale = packet();
     (stale[ACQUISITION_STAMP_KEY] as { schemaVersion: number }).schemaVersion =
       ACQUISITION_SCHEMA_VERSION - 1;
-    const plan = planReuse({ storedPacket: stale, subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: stale, subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(Object.keys(plan.values)).toHaveLength(0);
   });
 
   it('never freezes a failed acquisition as a permanent absence', () => {
     const failed = packet();
     (failed[ACQUISITION_STAMP_KEY] as { outcome: string }).outcome = 'failed';
-    const plan = planReuse({ storedPacket: failed, subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: failed, subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(Object.keys(plan.values)).toHaveLength(0);
     expect(plan.entries.find((e) => e.key === 'planningData')?.decision).toMatchObject({
       reason: 'previous_attempt_failed',
@@ -113,7 +122,7 @@ describe('planReuse refuses by default', () => {
   it('never reuses a key the packet does not hold', () => {
     // A dependency that failed leaves no value, because the call sites only
     // assign on success — so absence is the conservative signal it re-fetches on.
-    const plan = planReuse({ storedPacket: packet(), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet(), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(plan.values).not.toHaveProperty('crimeStatistics');
     expect(plan.entries.find((e) => e.key === 'crimeStatistics')?.decision).toMatchObject({
       reason: 'no_stored_value',
@@ -123,7 +132,7 @@ describe('planReuse refuses by default', () => {
 
 describe('planReuse adopts what it may, and prices the shelf life per class', () => {
   it('adopts a fresh packet for the same subject', () => {
-    const plan = planReuse({ storedPacket: packet(), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet(), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(plan.values).toHaveProperty('planningData');
     expect(plan.values).toHaveProperty('climateData');
     expect(plan.values).toHaveProperty('domainData');
@@ -131,7 +140,7 @@ describe('planReuse adopts what it may, and prices the shelf life per class', ()
 
   it('keeps a cadastral answer far longer than a market one', () => {
     // 48 hours: the zoning has not moved, the median might have.
-    const plan = planReuse({ storedPacket: packet({}, 48), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet({}, 48), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(plan.values).toHaveProperty('planningData');
     expect(plan.values).not.toHaveProperty('domainData');
   });
@@ -139,6 +148,7 @@ describe('planReuse adopts what it may, and prices the shelf life per class', ()
   it('survives a changed accepted input, because a register is not a calculator', () => {
     // The operator revised the interest rate. The flood overlay did not move.
     const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
       storedPacket: packet(),
       subject: { ...SUBJECT, inputRevision: 'purchasePrice=1200000' },
       nowMs: NOW,
@@ -156,7 +166,7 @@ describe('a planning answer is a reading at a point', () => {
    * apartment from the stored packet.
    */
   it('is refused when it records no point — every answer stored before the rule', () => {
-    const plan = planReuse({ storedPacket: packet({ planningData: { zone: 'R2' } }), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet({ planningData: { zone: 'R2' } }), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(plan.values).not.toHaveProperty('planningData');
     expect(plan.entries.find((e) => e.key === 'planningData')?.decision).toMatchObject({
       reuse: false,
@@ -168,6 +178,7 @@ describe('a planning answer is a reading at a point', () => {
 
   it.each(['locality', 'postcode'])('is refused when the point was a %s centre', (precision) => {
     const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
       storedPacket: packet({ planningData: { zone: 'R2', pointBasis: { precision } } }),
       subject: SUBJECT,
       nowMs: NOW,
@@ -188,10 +199,14 @@ describe('a planning answer is a reading at a point', () => {
    * enrichment keeps the time it was actually placed.
    */
   const readAt = (precision: string, provider: string, lat?: number, lng?: number) =>
-    ({ zone: 'R2', pointBasis: { precision, source: 'enrichment', provider, ...(lat !== undefined ? { lat, lng } : {}) } });
+    ({
+      zone: 'R2',
+      pointBasis: { precision, source: 'enrichment', provider, ...(lat !== undefined ? { lat, lng } : {}) },
+      answerVersion: PLANNING_ANSWER_VERSION,
+    });
 
   it('does not expire a street reading by age — the point decides, at the request', () => {
-    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }, 48), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }, 48), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     expect(plan.values).toHaveProperty('planningData');
   });
 
@@ -215,13 +230,77 @@ describe('a planning answer is a reading at a point', () => {
   });
 
   it('takes back a withdrawn reuse from both the values and the ledger entries', () => {
-    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }), subject: SUBJECT, nowMs: NOW });
+    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
     const withdrawn = withdrawReuse(plan, 'planningData', 'point_changed');
     expect(withdrawn.values).not.toHaveProperty('planningData');
     expect(withdrawn.values).toHaveProperty('climateData');
     expect(withdrawn.entries.find((e) => e.key === 'planningData')?.decision).toEqual({ reuse: false, reason: 'point_changed' });
     // The plan it was given is not mutated.
     expect(plan.values).toHaveProperty('planningData');
+  });
+});
+
+describe('a planning answer is an answer of the version it was asked under', () => {
+  /*
+   * 25 Sep 2026: the 06:22 UTC regeneration of 60 Lawley Street, Spalding WA
+   * adopted the planning answer its own 01:31 UTC generation had read under
+   * `c6` ("♻️ Acquisition reuse: 9 of 11 dependencies adopted"). `c7`, which
+   * reads Western Australia's bush fire prone areas, had shipped in between,
+   * so planning-data-service was never asked and the bushfire register that
+   * answers at that point never reached the document. The service's own cache
+   * is keyed by version; this reuse was not.
+   */
+  const lawleyAnswer = (extra: Record<string, unknown> = {}) => ({
+    jurisdiction: 'WA',
+    zoning: { status: 'licence_restricted' },
+    pointBasis: { precision: 'address', source: 'enrichment', provider: 'gnaf', lat: -28.7371, lng: 114.6279 },
+    ...extra,
+  });
+
+  it('is refused when it records no version — every answer stored before the rule', () => {
+    const plan = planReuse({ storedPacket: packet({ planningData: lawleyAnswer() }), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
+    expect(plan.values).not.toHaveProperty('planningData');
+    expect(plan.entries.find((e) => e.key === 'planningData')?.decision).toEqual({
+      reuse: false,
+      reason: 'answer_version_not_recorded',
+    });
+  });
+
+  it('is refused when it was read under an earlier version', () => {
+    const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
+      storedPacket: packet({ planningData: lawleyAnswer({ answerVersion: 'c6' }) }),
+      subject: SUBJECT,
+      nowMs: NOW,
+    });
+    expect(plan.values).not.toHaveProperty('planningData');
+    expect(plan.entries.find((e) => e.key === 'planningData')?.decision).toEqual({
+      reuse: false,
+      reason: 'answer_version_changed',
+    });
+  });
+
+  it('is kept when it was read under the current version', () => {
+    const plan = planReuse({
+      planningAnswerVersion: PLANNING_ANSWER_VERSION,
+      storedPacket: packet({ planningData: lawleyAnswer({ answerVersion: PLANNING_ANSWER_VERSION }) }),
+      subject: SUBJECT,
+      nowMs: NOW,
+    });
+    expect(plan.values).toHaveProperty('planningData');
+  });
+
+  it('refuses the planning answer alone — a climate reading has no answer version', () => {
+    const plan = planReuse({ storedPacket: packet({ planningData: lawleyAnswer() }), subject: SUBJECT, nowMs: NOW, planningAnswerVersion: PLANNING_ANSWER_VERSION });
+    expect(plan.values).toHaveProperty('climateData');
+  });
+
+  it('reads the recorded version totally', () => {
+    expect(planningAnswerVersionOf({ answerVersion: ' c7 ' })).toBe('c7');
+    expect(planningAnswerVersionOf({ answerVersion: '' })).toBeNull();
+    expect(planningAnswerVersionOf({ answerVersion: 7 })).toBeNull();
+    expect(planningAnswerVersionOf({ zone: 'R2' })).toBeNull();
+    expect(planningAnswerVersionOf(null)).toBeNull();
   });
 });
 
@@ -299,6 +378,15 @@ describe('the generator wires every reusable dependency to a guard', () => {
 
   it('records the coordinate a planning answer was read at', () => {
     expect(source).toMatch(/pointBasis: \{[\s\S]{0,400}?lat: planningCoords!\.lat,[\s\S]{0,40}?lng: planningCoords!\.lng,/);
+  });
+
+  it('records the answer version a planning answer was read under', () => {
+    // Inside the stored answer, beside its point — not on the packet stamp,
+    // which a later invocation re-writes whatever it reused.
+    expect(source).toMatch(/planningData: \{\s*\.\.\.planningBody\.data,\s*pointBasis: \{[\s\S]{0,700}?answerVersion: PLANNING_ANSWER_VERSION,/);
+    expect(source).toContain("import { PLANNING_ANSWER_VERSION } from '../_shared/planning/planningAnswerVersion.pure.ts';");
+    // …and hands the current version to the plan, which cannot import it.
+    expect(source).toMatch(/planReuse\(\{[\s\S]{0,400}?planningAnswerVersion: PLANNING_ANSWER_VERSION,/);
   });
 
   it('tells the enrichment guard what this generation has written', () => {

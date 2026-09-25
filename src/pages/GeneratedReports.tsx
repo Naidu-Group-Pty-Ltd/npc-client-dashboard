@@ -33,6 +33,7 @@ import { ReportLibrarySkeleton } from '@/components/reports/library/ReportLibrar
 import { ReportLibraryPagination } from '@/components/reports/library/ReportLibraryPagination';
 import type { ComparisonAnalysis, InvestmentReport } from '@/components/reports/library/types';
 import { buildGeneratedReportGroups, type GeneratedReportGroup } from '@/lib/reports/generatedReportGroups';
+import { reportGeneratedAt } from '@/lib/reports/investment/reportGeneratedAt.pure';
 import { hasReportInFlight, LIBRARY_REFRESH_INTERVAL_MS } from '@/lib/reports/libraryRefresh.pure';
 import { REPORT_GENERATION_CANCELLED_EVENT, REPORT_GENERATION_STARTED_EVENT } from '@/lib/reports/generationSignals.pure';
 import { getCanonicalReportType, normalizeComparableReportType } from '@/lib/reports/reportVariants';
@@ -266,7 +267,7 @@ export default function GeneratedReports() {
     return (data.report || null) as any;
   };
 
-  const downloadInvestmentReportText = async (report: Pick<InvestmentReport, 'id' | 'property_address' | 'created_at'>) => {
+  const downloadInvestmentReportText = async (report: Pick<InvestmentReport, 'id' | 'property_address' | 'created_at' | 'status' | 'updated_at' | 'variant_generated_at' | 'generated_at' | 'generated_at_basis'>) => {
     try {
       const full = await fetchInvestmentReportDetails(report.id);
       if (!full?.report_content) {
@@ -277,7 +278,7 @@ export default function GeneratedReports() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(report.created_at), 'yyyy-MM-dd')}.txt`;
+      a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(reportGeneratedAt(report)?.at ?? report.created_at), 'yyyy-MM-dd')}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -934,6 +935,7 @@ export default function GeneratedReports() {
         id: report.id,
         property_address: report.property_address,
         created_at: report.created_at,
+        generated_at: reportGeneratedAt(report)?.at ?? null,
         report_tier: report.report_tier,
       });
     } else {

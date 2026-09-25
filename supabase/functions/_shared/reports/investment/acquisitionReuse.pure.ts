@@ -110,7 +110,9 @@ export type ReuseDecision =
         | 'previous_attempt_failed'
         | 'no_stored_value'
         | 'point_not_recorded'
-        | 'point_changed';
+        | 'point_changed'
+        | 'answer_version_not_recorded'
+        | 'answer_version_changed';
     };
 
 function normaliseAddress(value: string): string {
@@ -295,6 +297,33 @@ export function planningPointIsRecorded(value: unknown): boolean {
   return precision === 'address' || precision === 'street';
 }
 
+/**
+ * The planning answer version a stored answer was read under, or null where
+ * it records none.
+ *
+ * `planning-data-service` keys its own cache on `PLANNING_ANSWER_VERSION`, so
+ * a deployment that widens the answer stops serving the narrow rows. This
+ * reuse is a second cache in front of that one, and it carried no version: on
+ * 25 Sep 2026 the regeneration of 60 Lawley Street, Spalding WA adopted the
+ * planning answer its own earlier generation had read at 01:31 UTC, under
+ * `c6`. `c7`, which reads Western Australia's bush fire prone areas, had
+ * shipped in between. So the service was never asked, and the bushfire
+ * register that answers at that point never reached the regenerated
+ * document. The thirty-day cadastral shelf life would have kept that answer
+ * for a month.
+ *
+ * The generator stamps the version on the answer it stores and hands the
+ * current one to `planReuse`. Both the stamp and the service's cache key read
+ * `PLANNING_ANSWER_VERSION`, and both deploy with the shared module. It is
+ * passed in rather than imported because a module here imports nothing from
+ * another domain (`investmentSourceOfTruth.spec.ts`).
+ */
+export function planningAnswerVersionOf(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const version = (value as Record<string, unknown>).answerVersion;
+  return typeof version === 'string' && version.trim() ? version.trim() : null;
+}
+
 /** A point a planning answer was, or is about to be, read at. */
 export interface PlanningPoint {
   precision: PlanningPrecision | null;
@@ -411,8 +440,14 @@ export function planReuse(args: {
   storedPacket: Record<string, unknown> | null | undefined;
   subject: AcquisitionSubject;
   nowMs: number;
+  /**
+   * The answer version the planning service answers under now
+   * (`PLANNING_ANSWER_VERSION`). Required: a caller that could omit it would
+   * reuse every stored answer whatever shape it had.
+   */
+  planningAnswerVersion: string;
 }): ReusePlan {
-  const { storedPacket, subject, nowMs } = args;
+  const { storedPacket, subject, nowMs, planningAnswerVersion } = args;
   const rawStamp = storedPacket?.[ACQUISITION_STAMP_KEY];
   const stamp = (rawStamp && typeof rawStamp === 'object')
     ? (rawStamp as AcquisitionStamp)
@@ -438,6 +473,14 @@ export function planReuse(args: {
     // thirty days (`cadastral`) on every regeneration.
     if (decision.reuse && key === 'planningData' && !planningPointIsRecorded(storedValue)) {
       decision = { reuse: false, reason: 'point_not_recorded' };
+    }
+    // …and it is an answer of a particular SHAPE. One read under an earlier
+    // `PLANNING_ANSWER_VERSION` lacks what the current version asks for, so it
+    // is asked again once, exactly as the service's own cache would.
+    if (decision.reuse && key === 'planningData') {
+      const version = planningAnswerVersionOf(storedValue);
+      if (version === null) decision = { reuse: false, reason: 'answer_version_not_recorded' };
+      else if (version !== planningAnswerVersion) decision = { reuse: false, reason: 'answer_version_changed' };
     }
     entries.push({ key, producer: policy.producer, decision });
     if (decision.reuse) values[key] = storedValue;

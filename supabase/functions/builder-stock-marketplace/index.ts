@@ -36,6 +36,7 @@ import {
   verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
@@ -47,6 +48,8 @@ import {
 } from '../_shared/builderStock/projection.pure.ts';
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
 import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
+import { readBuilderConversation } from '../_shared/builderStock/agencyMessages.ts';
+import { agencyMessageRefusal, projectConversationMessages } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
   promotedOrganisations, splicePinsIntoPage, type RankedRow,
 } from '../_shared/builderStock/marketplaceOrder.pure.ts';
@@ -146,6 +149,28 @@ Deno.serve(async (req) => {
         .eq('lifecycle_status', 'active')
         .maybeSingle();
       return data;
+    };
+
+    /**
+     * A property this deployment ever activated stays READABLE after the
+     * builder stops listing it: its page and its conversation are durable
+     * history. Everything else is active stock only, and every write still
+     * goes through `loadItem`.
+     */
+    const loadReadableItem = async (itemId: string) => {
+      if (!itemId) return null;
+      const { data } = await supabase
+        .from('builder_network_stock_items')
+        .select('*')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (!data) return null;
+      if (data.lifecycle_status === 'active') return data;
+      const { count, error } = await supabase
+        .from('builder_stock_selections')
+        .select('id', { count: 'exact', head: true })
+        .eq('stock_item_id', data.id);
+      return !error && count ? data : null;
     };
 
     // =====================================================================
@@ -348,7 +373,7 @@ Deno.serve(async (req) => {
      * applies — and nothing here is composed by a model.
      */
     if (operation === 'get_stock_item') {
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const [record] = await decorate(supabase, [item]);
       const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
@@ -584,6 +609,87 @@ Deno.serve(async (req) => {
           + 'builders.aurixasystems.com.au — the marketplace serves the network\'s imagery.',
         code: 'builder_stock_images_moved',
       }, 410);
+    }
+
+    // =====================================================================
+    // The builder conversation — messages about an activated property,
+    // carried to the builder over the signed network. Read under the Listings
+    // gate every operation passes; writing needs Listings edit. The sender is
+    // the session's user; the property is a lookup key the SQL re-resolves.
+    // =====================================================================
+
+    const conversationRefusal = (error: { message?: string } | null) => {
+      const refusal = agencyMessageRefusal(String(error?.message ?? ''));
+      if (refusal) return json({ success: false, error: refusal.error, code: refusal.code }, refusal.status);
+      console.error('[builder-stock-marketplace] builder message failed', error?.message);
+      return json({ success: false, error: 'The message could not be saved. Try again shortly.' }, 503);
+    };
+    const uuidOf = (value: unknown): string | null => {
+      const text = cleanText(value, 64).toLowerCase();
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(text) ? text : null;
+    };
+
+    if (operation === 'get_builder_conversation') {
+      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
+      if (!item) return json({ error: 'Property not found' }, 404);
+      const read = await readBuilderConversation(supabase, {
+        stockItemId: item.id, organisationId: item.organisation_id, viewerUserId: userId,
+      });
+      if (!read.ok) return json({ success: false, error: 'conversation_could_not_be_read' }, 503);
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      const networkOn = await builderNetworkEnabled(supabase);
+      // Every gate the send and retry functions enforce, so no button is
+      // offered that the server would refuse.
+      // A property the builder no longer lists keeps its history and takes
+      // nothing new.
+      const open = read.open && item.lifecycle_status === 'active';
+      const canSend = open && listingsEdit.ok && networkOn;
+      return json({
+        success: true,
+        conversation_id: read.conversation_id,
+        open,
+        closed_reason: item.lifecycle_status === 'active' ? read.closed_reason : 'delisted',
+        can_send: canSend,
+        messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
+      });
+    }
+
+    if (operation === 'send_builder_message') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      if (!item) return json({ error: 'Property not found' }, 404);
+      const clientMessageId = uuidOf(body.client_message_id);
+      if (!clientMessageId) {
+        return json({ success: false, error: 'A message needs its own id.', code: 'invalid_message' }, 400);
+      }
+      const { data, error } = await supabase.rpc('builder_network_post_message', {
+        _stock_item_id: item.id,
+        _sender_user_id: userId,
+        _client_message_id: clientMessageId,
+        _body: String(body.body ?? '').slice(0, 8000),
+      });
+      if (error) return conversationRefusal(error);
+      const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+      return json({ success: true, message: row ? projectConversationMessages([row], userId)[0] : null });
+    }
+
+    if (operation === 'retry_builder_message') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const messageId = uuidOf(body.message_id);
+      if (!messageId) return json({ error: 'Message not found' }, 404);
+      const { data, error } = await supabase.rpc('builder_network_retry_message', {
+        _message_id: messageId,
+        _sender_user_id: userId,
+      });
+      if (error) return conversationRefusal(error);
+      const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+      return json({ success: true, message: row ? projectConversationMessages([row], userId)[0] : null });
     }
 
     // =====================================================================

@@ -13,6 +13,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { BuilderStockItem, BuilderStockSelection } from '@/lib/builderStock';
 import type { MirrorSource } from '../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
 import type { PropertyDetail } from '../../supabase/functions/_shared/builderStock/propertyDetail.pure';
+import type { ConversationMessageView } from '../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 
 export const marketplaceStockKeys = {
   root: () => ['marketplace', 'builder-stock'] as const,
@@ -66,8 +67,9 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await invokeSecureFunction<T>('builder-stock-marketplace', body);
   const message = error?.message || (data as { error?: string } | null)?.error;
   if (message) {
-    const failure = new Error(message) as Error & { code?: string };
-    failure.code = (data as { code?: string } | null)?.code;
+    const failure = new Error(message) as Error & { code?: string; status?: number };
+    failure.code = (data as { code?: string } | null)?.code ?? error?.code;
+    failure.status = error?.status;
     throw failure;
   }
   return data as T;
@@ -216,4 +218,147 @@ export function useMarketplaceStockItem(stockItemId: string, enabled = true) {
       operation: 'get_stock_item', stock_item_id: stockItemId,
     }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// The builder conversation on a property page.
+// ---------------------------------------------------------------------------
+
+export type { ConversationMessageView, DeliveryState } from '../../supabase/functions/_shared/builderStock/agencyMessages.pure';
+
+export interface BuilderConversation {
+  conversation_id: string | null;
+  /** False where this workspace holds no live activation of the property. */
+  open: boolean;
+  /** Why it is closed, so the page names the right next step. Absent from an older function. */
+  closed_reason?: 'not_connected' | 'connection_paused' | 'not_activated' | 'delisted' | null;
+  can_send: boolean;
+  messages: ConversationMessageView[];
+}
+
+/** How often an open conversation re-reads itself. Polling is the transport's floor. */
+export const BUILDER_CONVERSATION_POLL_MS = 10_000;
+
+/**
+ * A closed conversation is checked only this often: rarely enough to cost
+ * nothing, often enough that an activation made elsewhere (another user,
+ * another tab) reopens it without a reload.
+ */
+export const BUILDER_CONVERSATION_CLOSED_POLL_MS = 60_000;
+
+/**
+ * An open conversation is re-read every few seconds; a closed one only once a
+ * minute. Activating from this page also invalidates the query, so it reopens
+ * at once there.
+ */
+export function builderConversationPollInterval(data: { open?: boolean } | undefined): number {
+  return data?.open === false ? BUILDER_CONVERSATION_CLOSED_POLL_MS : BUILDER_CONVERSATION_POLL_MS;
+}
+
+const conversationKey = (stockItemId: string) =>
+  [...marketplaceStockKeys.root(), 'conversation', stockItemId] as const;
+
+/**
+ * A refusal says the reader may no longer see this conversation: signed out,
+ * Listings access withdrawn, or the feature switched off. Unlike a transient
+ * failure, what was read before must not stay on screen after it.
+ */
+export function conversationAccessLost(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { status, code } = error as { status?: number; code?: string };
+  return status === 401 || status === 403 || code === 'builder_stock_disabled';
+}
+
+/**
+ * A refusal is not retried: the query error is set only once retries are
+ * spent, and until then the card would keep showing what the reader may no
+ * longer see. Anything else is retried once, as every query in the app is.
+ */
+export function retryUnlessAccessLost(failureCount: number, error: unknown): boolean {
+  return !conversationAccessLost(error) && failureCount < 1;
+}
+
+/**
+ * The poll stops once a read is refused: every later poll would be refused
+ * too, and each 403 counts towards the client's authentication breaker, so a
+ * few of them could clear an otherwise valid session. Remounting the page
+ * reads again.
+ */
+export function conversationRefetchInterval(state: { data?: { open?: boolean }; error?: unknown }): number | false {
+  return conversationAccessLost(state.error) ? false : builderConversationPollInterval(state.data);
+}
+
+export function useBuilderConversation(stockItemId: string, enabled = true) {
+  return useQuery({
+    queryKey: conversationKey(stockItemId),
+    enabled: enabled && !!stockItemId,
+    queryFn: () => invoke<BuilderConversation>({
+      operation: 'get_builder_conversation', stock_item_id: stockItemId,
+    }),
+    refetchInterval: (query) => conversationRefetchInterval(query.state),
+    refetchIntervalInBackground: false,
+    retry: retryUnlessAccessLost,
+  });
+}
+
+/**
+ * Send one message. The caller mints `clientMessageId` once per message and
+ * reuses it for any repeat of the same send, so a timeout is safe to retry.
+ */
+export function useSendBuilderMessage(stockItemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { clientMessageId: string; body: string }) => invoke<{ message: ConversationMessageView | null }>({
+      operation: 'send_builder_message', stock_item_id: stockItemId,
+      client_message_id: input.clientMessageId, body: input.body,
+    }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
+  });
+}
+
+export function useRetryBuilderMessage(stockItemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => invoke<{ message: ConversationMessageView | null }>({
+      operation: 'retry_builder_message', message_id: messageId,
+    }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: conversationKey(stockItemId) }),
+  });
+}
+
+/**
+ * Keeps a conversation log on its newest message: a thread longer than its
+ * box opens at the end, and a message a poll brings in is not left below the
+ * visible area.
+ */
+export function scrollLogToEnd(log: { scrollTop: number; scrollHeight: number } | null | undefined): void {
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+/**
+ * Where the log should move after a read. `null` before any read, or on a new
+ * thread, opens at the end. A new last message follows the end. A message the
+ * poll sorted ABOVE the newest one (it was written earlier and arrived late)
+ * is brought into view itself, because following the end would leave it out
+ * of sight with nothing saying it came. Otherwise the log stays where the
+ * reader put it.
+ */
+export function arrivalScrollTarget(previousIds: readonly string[] | null, ids: readonly string[]): 'end' | string | null {
+  if (previousIds === null) return 'end';
+  const seen = new Set(previousIds);
+  const arrived = ids.filter((id) => !seen.has(id));
+  if (!arrived.length) return null;
+  // A message that sorts above the newest one already seen is a late arrival,
+  // and it wins even when the same poll also brought a new last message:
+  // following the end would leave it above the reader, unseen.
+  let lastSeenIndex = -1;
+  ids.forEach((id, index) => { if (seen.has(id)) lastSeenIndex = index; });
+  const late = arrived.find((id) => ids.indexOf(id) < lastSeenIndex);
+  return late ?? 'end';
+}
+
+/** Brings one message of a log into view, by the id it is drawn with. */
+export function scrollMessageIntoView(log: HTMLElement | null | undefined, messageId: string): void {
+  const node = log?.querySelector?.(`[data-message-id="${CSS.escape(messageId)}"]`);
+  node?.scrollIntoView?.({ block: 'nearest' });
 }

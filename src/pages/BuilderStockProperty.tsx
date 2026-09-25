@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BuilderStockGallery } from '@/components/listings/BuilderStockGallery';
 import { ActivateBuilderDialog } from '@/components/listings/BuilderStockTab';
+import { BuilderStockConversation } from '@/components/listings/BuilderStockConversation';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import {
@@ -142,7 +143,10 @@ export default function BuilderStockProperty() {
   const builder = item.builder_organisation;
   const builderName = builder ? (builder.trading_name || builder.legal_name) : null;
   const availability = item.availability_status as StockAvailability;
-  const selectable = SELECTABLE_AVAILABILITY.has(availability);
+  // A property the builder stopped listing is kept readable for its history;
+  // it cannot be activated again.
+  const delisted = (item.lifecycle_status ?? 'active') !== 'active';
+  const selectable = !delisted && SELECTABLE_AVAILABILITY.has(availability);
   const estate = item.development_name || item.project_name;
   const synced = when(item.last_seen_at);
   const figure = (value: number | null | undefined) =>
@@ -173,6 +177,9 @@ export default function BuilderStockProperty() {
           <Badge variant="outline" className={cn('font-medium', STOCK_AVAILABILITY_CLASSES[availability])}>
             {STOCK_AVAILABILITY_LABELS[availability] ?? 'Not stated'}
           </Badge>
+          {delisted ? (
+            <Badge variant="outline" className="font-medium text-muted-foreground">No longer listed by the builder</Badge>
+          ) : null}
           {activations.some((a) => a.status !== 'withdrawn') ? (
             <Badge variant="outline" className="border-primary/30 bg-primary/10 font-medium text-primary">
               <CheckCircle2 className="mr-1 h-3 w-3" aria-hidden />Activated
@@ -198,6 +205,8 @@ export default function BuilderStockProperty() {
         </div>
 
         <div className="order-3 min-w-0 space-y-5 lg:order-none lg:col-start-1 lg:row-start-2">
+          <BuilderStockConversation stockItemId={item.id} builderName={builderName} />
+
           {item.description ? (
             <Card>
               <CardHeader><CardTitle className="text-base">About this property</CardTitle></CardHeader>

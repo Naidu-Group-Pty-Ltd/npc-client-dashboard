@@ -76,6 +76,7 @@ import {
   isFloorPrecision,
   pauseAfterRefusal,
   refusalExcerpt,
+  rememberedStreetAnswerIsProvisional,
 } from './geocodeChainPolicy.pure.ts';
 import {
   GNAF_LOCALITY_INDEX_PATH,
@@ -542,6 +543,16 @@ async function gnafShardRows(base: string, state: AuState, postcode: string, tim
 }
 
 /**
+ * The number or lot the register would be asked about, or null where the ask
+ * names none — the register answers about an address, never about a street.
+ * One reading, used both to ask and to decide whether asking could help.
+ */
+function registerAskOf(plan: GeocodePlan): ReturnType<typeof askedAddressOf> | null {
+  const asked = askedAddressOf(gnafStreetLineOf(plan.ask));
+  return asked.street && (asked.number || asked.lot) ? asked : null;
+}
+
+/**
  * G-NAF — the national address register, read one postal area at a time from
  * the product's own address service. See `gnafShard.pure.ts` for what counts
  * as a match; this function does the reading.
@@ -554,8 +565,8 @@ async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Prom
 
   const target = gnafTargetOf(plan.ask);
   if (!target.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${target.reason}` };
-  const asked = askedAddressOf(gnafStreetLineOf(plan.ask));
-  if (!asked.street || (!asked.number && !asked.lot)) {
+  const asked = registerAskOf(plan);
+  if (!asked) {
     return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the ask names no street number or lot — a street alone is not a register question' };
   }
 
@@ -694,6 +705,65 @@ async function councilOf(lat: number, lng: number, timeoutMs: number): Promise<{
   }
 }
 
+/** Name the council for a caller that asked for one and a provider that did not say. */
+async function withCouncil(result: GeocodeResult, wantLga: boolean | undefined, timeoutMs: number): Promise<GeocodeResult> {
+  if (wantLga && !result.lga) {
+    const council = await councilOf(result.lat, result.lng, timeoutMs);
+    if (council) {
+      result.lga = council.lga;
+      result.lgaCode = council.lgaCode;
+    }
+  }
+  return result;
+}
+
+/**
+ * Rule 4 (`geocodeChainPolicy.pure.ts`): put a remembered street answer to the
+ * address register, once.
+ *
+ * Only the register is asked. The street answer came from a free-text search
+ * that found the street and not the lot, and asking the same kind of search
+ * again would find the same street; the register is the one provider here
+ * that can see the lot. Its address point replaces the street answer and is
+ * remembered; its "I hold nothing finer" re-dates the street answer so it is
+ * not asked again for an hour; a failure of ours — the machine unreachable, a
+ * refusal — leaves the street answer exactly as it was, because an outage is
+ * a statement about our access and never about the address.
+ */
+async function betterRememberedStreet(args: {
+  // deno-lint-ignore no-explicit-any
+  supabase: any;
+  plan: GeocodePlan;
+  key: string;
+  fullAsk: GeocodeAsk;
+  address: string;
+  remembered: GeocodeResult;
+  gnafBase: string;
+  timeoutMs: number;
+  feature: string;
+  wantLga: boolean | undefined;
+  tried: GeocodeProvider[];
+}): Promise<GeocodeOutcome> {
+  const { supabase, plan, key, fullAsk, address, remembered, gnafBase, timeoutMs, feature, tried } = args;
+  tried.push('gnaf');
+  const attempt = await askGnaf(plan, gnafBase, timeoutMs);
+  if (attempt.ok && attempt.result.precision === 'address') {
+    const result = await withCouncil(attempt.result, args.wantLga, timeoutMs);
+    await writeCache(supabase, key, fullAsk, result);
+    console.log(`[geocoder] ${feature}: gnaf address for "${address.slice(0, 80)}" — replaces a remembered ${remembered.provider} street answer`);
+    return { ok: true, result, fromCache: false, tried };
+  }
+  if (!attempt.ok && attempt.providerRefused) {
+    console.warn(`[geocoder] ${feature}: ${attempt.detail} — the remembered ${remembered.provider} street answer stands`);
+    return { ok: true, result: remembered, fromCache: true, tried };
+  }
+  // The register LOOKED: no such number, or it too places this address only
+  // on its street. The remembered answer is the best there is for now.
+  await writeCache(supabase, key, fullAsk, remembered);
+  console.log(`[geocoder] ${feature}: the register holds no finer point for "${address.slice(0, 80)}" — the remembered ${remembered.provider} street answer stands, re-dated`);
+  return { ok: true, result: remembered, fromCache: true, tried };
+}
+
 /**
  * Geocode an Australian address through the chain. See the module header.
  */
@@ -739,7 +809,27 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
       askNamesStreet: Boolean(fullAsk.street),
       streetLevelProvidersConfigured: streetLevelConfigured,
     }));
-    if (!reask) return { ok: true, result: hit.result, fromCache: true, tried };
+    if (!reask) {
+      // Rule 4: a remembered street answer written before the register could
+      // be asked is put to it once. Only where the operator's order still
+      // names the register — removing it from `GEOCODER_PROVIDERS` must stop
+      // every request to it, this one included.
+      const registerConfigured = gnafBase !== null && providers.includes('gnaf');
+      if (gnafBase !== null && rememberedStreetAnswerIsProvisional({
+        precision: hit.result.precision,
+        provider: hit.result.provider,
+        resolvedAt: hit.resolvedAt,
+        nowMs: Date.now(),
+        askNamesNumber: registerAskOf(plan) !== null,
+        registerConfigured,
+      })) {
+        return await betterRememberedStreet({
+          supabase, plan, key, fullAsk, address, remembered: hit.result, gnafBase,
+          timeoutMs, feature, wantLga: options.wantLga, tried,
+        });
+      }
+      return { ok: true, result: hit.result, fromCache: true, tried };
+    }
     if (allowLocality) provisional = hit.result;
     console.log(`[geocoder] ${feature}: the remembered ${hit.result.precision} answer is provisional — asking the street-level providers again`);
   }
@@ -792,14 +882,7 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
       attempt = await askGoogle(supabase, fullAsk, { timeoutMs, env, feature });
     }
     if (attempt.ok) {
-      const result = attempt.result;
-      if (options.wantLga && !result.lga) {
-        const council = await councilOf(result.lat, result.lng, timeoutMs);
-        if (council) {
-          result.lga = council.lga;
-          result.lgaCode = council.lgaCode;
-        }
-      }
+      const result = await withCouncil(attempt.result, options.wantLga, timeoutMs);
       const verdict = cacheVerdict(result, failures);
       if (verdict.write) {
         await writeCache(supabase, key, fullAsk, result);

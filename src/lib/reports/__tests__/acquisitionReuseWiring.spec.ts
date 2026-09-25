@@ -20,7 +20,10 @@ import {
   REUSABLE_ACQUISITIONS,
   acquisitionStamp,
   planReuse,
+  planningAnswerFitsPoint,
   planningPointIsRecorded,
+  planningPointOf,
+  withdrawReuse,
   type AcquisitionSubject,
 } from '../investment/acquisitionReuse.pure';
 
@@ -175,6 +178,51 @@ describe('a planning answer is a reading at a point', () => {
   it.each(['address', 'street'])('is reusable when the point was the %s', (precision) => {
     expect(planningPointIsRecorded({ pointBasis: { precision } })).toBe(true);
   });
+
+  /*
+   * 25 Sep 2026: `60 Lawley Street, Spalding` read its planning at
+   * OpenStreetMap's street point while the address register held the
+   * property's own. The point can now move between generations, and the
+   * zoning has to move with it — decided by comparing the POINT, never the
+   * clock, because the packet is re-stamped on every invocation while the
+   * enrichment keeps the time it was actually placed.
+   */
+  const readAt = (precision: string, provider: string, lat?: number, lng?: number) =>
+    ({ zone: 'R2', pointBasis: { precision, source: 'enrichment', provider, ...(lat !== undefined ? { lat, lng } : {}) } });
+
+  it('does not expire a street reading by age — the point decides, at the request', () => {
+    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }, 48), subject: SUBJECT, nowMs: NOW });
+    expect(plan.values).toHaveProperty('planningData');
+  });
+
+  it('fits only the point it was read at', () => {
+    const here = { precision: 'street', provider: 'nominatim', lat: -28.7372735, lng: 114.6282027 };
+    expect(planningAnswerFitsPoint(readAt('street', 'nominatim'), here)).toBe(true);
+    // The register now places the address at the property: the zone is read again.
+    expect(planningAnswerFitsPoint(readAt('street', 'nominatim'), { precision: 'address', provider: 'gnaf', lat: -28.7371, lng: 114.6279 })).toBe(false);
+    expect(planningAnswerFitsPoint(readAt('street', 'photon'), here)).toBe(false);
+    // Recorded coordinates are compared where both sides have them.
+    expect(planningAnswerFitsPoint(readAt('street', 'nominatim', -28.7372735, 114.6282027), here)).toBe(true);
+    expect(planningAnswerFitsPoint(readAt('street', 'nominatim', -28.74, 114.63), here)).toBe(false);
+    // Nothing recorded is not a match.
+    expect(planningAnswerFitsPoint({ zone: 'R2' }, here)).toBe(false);
+  });
+
+  it('reads the recorded point totally', () => {
+    expect(planningPointOf({ pointBasis: { precision: 'street', provider: ' photon ', lat: -33.1, lng: 151.2 } }))
+      .toEqual({ precision: 'street', provider: 'photon', lat: -33.1, lng: 151.2 });
+    expect(planningPointOf({ zone: 'R2' })).toEqual({ precision: null, provider: null, lat: null, lng: null });
+  });
+
+  it('takes back a withdrawn reuse from both the values and the ledger entries', () => {
+    const plan = planReuse({ storedPacket: packet({ planningData: readAt('street', 'nominatim') }), subject: SUBJECT, nowMs: NOW });
+    const withdrawn = withdrawReuse(plan, 'planningData', 'point_changed');
+    expect(withdrawn.values).not.toHaveProperty('planningData');
+    expect(withdrawn.values).toHaveProperty('climateData');
+    expect(withdrawn.entries.find((e) => e.key === 'planningData')?.decision).toEqual({ reuse: false, reason: 'point_changed' });
+    // The plan it was given is not mutated.
+    expect(plan.values).toHaveProperty('planningData');
+  });
 });
 
 describe('what is reusable, and what deliberately is not', () => {
@@ -238,5 +286,22 @@ describe('the generator wires every reusable dependency to a guard', () => {
 
   it('never fails a report because reuse was unavailable', () => {
     expect(source).toContain('Acquisition reuse unavailable (non-blocking)');
+  });
+  it('asks the registers again where a reused planning answer was read at a different point', () => {
+    const check = source.indexOf('!planningAnswerFitsPoint(enhancedData.planningData, subjectCoordinate)');
+    const request = source.indexOf('const planningRequest =');
+    expect(check).toBeGreaterThan(-1);
+    // Decided before the request is built, or the stale answer is kept.
+    expect(check).toBeLessThan(request);
+    // …and taken back from the ledger, which is written from the plan last.
+    expect(source).toContain("reusePlan = withdrawReuse(reusePlan, 'planningData', 'point_changed');");
+  });
+
+  it('records the coordinate a planning answer was read at', () => {
+    expect(source).toMatch(/pointBasis: \{[\s\S]{0,400}?lat: planningCoords!\.lat,[\s\S]{0,40}?lng: planningCoords!\.lng,/);
+  });
+
+  it('tells the enrichment guard what this generation has written', () => {
+    expect(source).toContain('{ sectionsWritten: completedSectionIndices.length }');
   });
 });

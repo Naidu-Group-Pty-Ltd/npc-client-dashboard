@@ -41,6 +41,19 @@
  *    one is extended. The refusal's own words are kept for the log
  *    (`refusalExcerpt`), because on the day it mattered nobody could say WHY
  *    the service had refused us.
+ * 4. **A remembered STREET answer is put to the address register**
+ *    (`rememberedStreetAnswerIsProvisional`). A street answer is a real answer
+ *    — the provider found the street and could not see the lot — so rule 2
+ *    rightly leaves it alone. But every one written before the register
+ *    existed was written without asking the one provider that CAN see the
+ *    lot. Measured on the first production run through the register, 25 Sep
+ *    2026 00:18 UTC: `60 Lawley Street, Spalding WA 6530` was served
+ *    OpenStreetMap's remembered street point, G-NAF was never asked, and the
+ *    register holds that address at its property centroid. So where the ask
+ *    names a number or a lot and a register is configured, the register is
+ *    asked once: its address point replaces the street, its "no finer point"
+ *    re-dates the street answer for an hour, and an outage of ours leaves it
+ *    standing untouched.
  *
  * Pure: no Deno, no DOM, no network.
  */
@@ -102,10 +115,11 @@ export function cacheVerdict(
 /**
  * Must a remembered answer be asked again of the street-level providers?
  *
- * Never for a street or address answer (an address does not move), never for
- * a question that names no street (a suburb-only ask cannot be placed finer
- * than its suburb), never where no street-level provider is configured. A
- * missing or unreadable date proves no recency and so is asked again.
+ * Never for a street or address answer (an address does not move; a street
+ * answer is put to the address register by rule 4, and to nobody else), never
+ * for a question that names no street (a suburb-only ask cannot be placed
+ * finer than its suburb), never where no street-level provider is configured.
+ * A missing or unreadable date proves no recency and so is asked again.
  */
 export function cachedAnswerIsProvisional(args: {
   precision: GeocodePrecision;
@@ -119,6 +133,48 @@ export function cachedAnswerIsProvisional(args: {
   const at = typeof args.resolvedAt === 'string' ? Date.parse(args.resolvedAt) : Number.NaN;
   if (!Number.isFinite(at)) return true;
   return args.nowMs - at >= FLOOR_REASK_AFTER_MS;
+}
+
+/**
+ * Providers that place an address from an authoritative register of
+ * addresses, and so can see the lot where a free-text search found only the
+ * street. G-NAF alone.
+ */
+export const ADDRESS_REGISTER_PROVIDERS: ReadonlySet<GeocodeProvider> = new Set<GeocodeProvider>(['gnaf']);
+
+/**
+ * How long the register's "I hold no finer point" stands before a remembered
+ * street answer is put to it again. An hour, like the floor: a report's
+ * continuations ask once, and the register is our own machine, so asking an
+ * address it does not hold once an hour costs nothing a public service would
+ * notice.
+ */
+export const STREET_REASK_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Must a remembered STREET answer be put to the address register (rule 4)?
+ *
+ * Only a street answer — a floor answer is rule 2's, and an address answer is
+ * already the property. Never one the register gave itself (a register
+ * placing an address on its street will say the same until its next
+ * release), never an ask that names no number or lot (the register answers
+ * about an address, never about a street), and never where no register is
+ * configured. A missing or unreadable date proves no recency and so is asked.
+ */
+export function rememberedStreetAnswerIsProvisional(args: {
+  precision: GeocodePrecision;
+  provider: GeocodeProvider;
+  resolvedAt: string | null | undefined;
+  nowMs: number;
+  askNamesNumber: boolean;
+  registerConfigured: boolean;
+}): boolean {
+  if (args.precision !== 'street') return false;
+  if (ADDRESS_REGISTER_PROVIDERS.has(args.provider)) return false;
+  if (!args.askNamesNumber || !args.registerConfigured) return false;
+  const at = typeof args.resolvedAt === 'string' ? Date.parse(args.resolvedAt) : Number.NaN;
+  if (!Number.isFinite(at)) return true;
+  return args.nowMs - at >= STREET_REASK_AFTER_MS;
 }
 
 /** Bounds on a pause, so a hostile or mistyped `Retry-After` can neither spin nor stall us. */

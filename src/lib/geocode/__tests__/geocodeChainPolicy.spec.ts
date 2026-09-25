@@ -14,11 +14,13 @@ import {
   FLOOR_REASK_AFTER_MS,
   PAUSE_AFTER_STATUS_MS,
   PAUSE_BOUNDS_MS,
+  STREET_REASK_AFTER_MS,
   cacheVerdict,
   cachedAnswerIsProvisional,
   parseRetryAfter,
   pauseAfterRefusal,
   refusalExcerpt,
+  rememberedStreetAnswerIsProvisional,
 } from '../../../../supabase/functions/_shared/geocode/geocodeChainPolicy.pure.ts';
 
 const NOW = Date.parse('2026-09-24T10:19:08Z');
@@ -126,5 +128,52 @@ describe('rule 3 — a refusal pauses the provider that sent it', () => {
     expect(words).toBe('Access blocked Access blocked You have been blocked because you have violated the usage policy of OSM\'s Nominatim.');
     expect(refusalExcerpt('x'.repeat(500)).length).toBe(200);
     expect(refusalExcerpt(null)).toBe('');
+  });
+});
+
+describe('rule 4 — a remembered street answer is put to the address register', () => {
+  // 25 Sep 2026 00:18 UTC: `60 Lawley Street, Spalding WA 6530` was served
+  // OpenStreetMap's street point from before the register existed, and G-NAF
+  // — which holds the address at its property centroid — was never asked.
+  const base = {
+    precision: 'street' as const,
+    provider: 'nominatim' as const,
+    nowMs: NOW,
+    askNamesNumber: true,
+    registerConfigured: true,
+  };
+
+  it('is put to the register once it is an hour old, and not before', () => {
+    expect(rememberedStreetAnswerIsProvisional({ ...base, resolvedAt: new Date(NOW - STREET_REASK_AFTER_MS).toISOString() })).toBe(true);
+    expect(rememberedStreetAnswerIsProvisional({ ...base, resolvedAt: new Date(NOW - STREET_REASK_AFTER_MS + 60_000).toISOString() })).toBe(false);
+  });
+
+  it('is put to the register where nothing proves when it was resolved', () => {
+    expect(rememberedStreetAnswerIsProvisional({ ...base, resolvedAt: null })).toBe(true);
+    expect(rememberedStreetAnswerIsProvisional({ ...base, resolvedAt: 'last week' })).toBe(true);
+  });
+
+  it('holds for every free-text provider that can stop at a street', () => {
+    for (const provider of ['nominatim', 'photon', 'google'] as const) {
+      expect(rememberedStreetAnswerIsProvisional({ ...base, provider, resolvedAt: null }), provider).toBe(true);
+    }
+  });
+
+  it('never re-asks the register about a street it placed itself', () => {
+    expect(rememberedStreetAnswerIsProvisional({ ...base, provider: 'gnaf', resolvedAt: null })).toBe(false);
+  });
+
+  it('never puts an ask with no number or lot to the register — it answers about an address, not a street', () => {
+    expect(rememberedStreetAnswerIsProvisional({ ...base, askNamesNumber: false, resolvedAt: null })).toBe(false);
+  });
+
+  it('asks nothing where no register is configured', () => {
+    expect(rememberedStreetAnswerIsProvisional({ ...base, registerConfigured: false, resolvedAt: null })).toBe(false);
+  });
+
+  it('leaves an address answer, and a floor answer, to the rules that own them', () => {
+    for (const precision of ['address', 'locality', 'postcode'] as const) {
+      expect(rememberedStreetAnswerIsProvisional({ ...base, precision, resolvedAt: null }), precision).toBe(false);
+    }
   });
 });

@@ -85,6 +85,8 @@ import {
   acquisitionStamp,
   inputRevisionOf,
   planReuse,
+  planningAnswerFitsPoint,
+  withdrawReuse,
   type AcquisitionSubject,
 } from '../_shared/reports/investment/acquisitionReuse.pure.ts';
 import {
@@ -3606,9 +3608,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         postcode,
         state,
       };
+      // What this generation has written decides whether a street point may
+      // stand: every section already written was measured from it, and a
+      // generation that has written nothing yet asks the geocoder again.
       const reuse = assessEnrichmentReuse(
         existingEnhancedFields.locationIntelligence,
         enrichmentSubject,
+        Date.now(),
+        { sectionsWritten: completedSectionIndices.length },
       );
       if (reuse.reuse) {
         locationEnrichmentReused = true;
@@ -4134,6 +4141,23 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         });
       }
 
+      // A planning answer adopted from an earlier invocation is a reading AT A
+      // POINT, and the point may have moved since: the enrichment above is
+      // placed again when a generation starts on a street point, and the
+      // geocoder now asks the address register about a remembered street.
+      // Where this run's point is not the one the answer was read at, the
+      // answer is dropped and asked again here — never kept, or the report
+      // would measure its amenities at one point and read its zone at another.
+      if (subjectCoordinate && reusePlan && alreadyHeld('planningData')
+          && !planningAnswerFitsPoint(enhancedData.planningData, subjectCoordinate)) {
+        console.log(
+          `♻️ The stored planning answer was read at a different point than this run's `
+          + `(${subjectCoordinate.precision} by ${subjectCoordinate.provider ?? 'unrecorded'}) — asking the registers again`,
+        );
+        enhancedData = { ...enhancedData, planningData: undefined };
+        reusePlan = withdrawReuse(reusePlan, 'planningData', 'point_changed');
+      }
+
       // ──────────────────────────────────────────────────────────────────
       // ONE WAVE, NOT FOUR QUEUES
       //
@@ -4233,6 +4257,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                     precision: planningCoords!.precision,
                     source: planningCoords!.source,
                     provider: planningCoords!.provider,
+                    // So a later invocation can tell whether it is still
+                    // working from this point (`planningAnswerFitsPoint`).
+                    lat: planningCoords!.lat,
+                    lng: planningCoords!.lng,
                   },
                 },
               };

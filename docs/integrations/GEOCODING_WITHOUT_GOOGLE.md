@@ -832,3 +832,63 @@ a clone. Every build is proved in CI before anything serves it: the register
 checked against itself, the image run in the runner, the real chain asked for
 the owner's addresses. A deploy is a person's dispatch, at ≈ A$19–24 a month
 for one always-on machine.
+
+## 19. The first run through the register, and the street answer it missed (25 Sep 2026)
+
+The owner regenerated three reports at 00:18 UTC, the first production use of
+the register. Read from `function_logs`:
+
+| Report | Placed by | Precision | Zone read there |
+|---|---|---|---|
+| 93 Schofields Farm Road (tallawong), Schofields NSW 2762 | `gnaf` | address | R2 — Low Density Residential |
+| 1408/5 SECOND AVE, Blacktown NSW 2148 | `gnaf` | address | MU1 — Mixed Use, Blacktown (the suburb centroid had read R2) |
+| 60 Lawley Street, Spalding WA 6530 | `nominatim` | street | none — WA zoning is licence restricted |
+
+The first two are rule 2 working as written: `the remembered locality answer
+is provisional — asking the street-level providers again`, then G-NAF.
+
+The third is the defect. There is no `[geocoder]` line for it, because the
+answer came from `geocode_cache`: OpenStreetMap's street point, remembered
+before the outage. Rule 2 re-asks only an answer coarser than a street, on the
+ground that an address does not move. That is true of an address answer. A
+street answer is what a provider gives when it found the street and not the
+lot, and every one in the cache was written before the register existed, so
+the one provider that can see the lot was never asked. The register's own proof
+run (§18) places this address at its property centroid (`PC`).
+
+Three changes, one rule each:
+
+1. **Rule 4** (`geocodeChainPolicy.pure.ts`,
+   `rememberedStreetAnswerIsProvisional`). A remembered street answer is put
+   to the register once it is an hour old, where the ask names a number or a
+   lot, a register is configured, and the operator's `GEOCODER_PROVIDERS`
+   still names it. The register alone is asked. Its address point replaces the
+   street and is remembered; "nothing finer here" re-dates the street answer
+   for an hour; an outage of ours leaves it exactly as it was. A street the
+   register placed itself is never re-asked.
+2. **A stored enrichment measured from a street point stands through the
+   generation that measured from it, and is placed again when the next one
+   starts** (`streetPointIsStale` in `enrichmentPoint.pure.ts`, refused as
+   `street_point_stale`). "Starts" is measured by what the generation has
+   written, not by the clock: a generation that has written sections keeps its
+   point however long it runs, because every section was measured from it,
+   and one that has written nothing asks again unless it placed the point
+   itself in the last hour (`STREET_POINT_REUSE_HOURS`, the hand-off before a
+   first section). Unlike the area-centre refusal, it still stands in when the
+   re-fetch fails: a street reading is sound, and was refused only in the hope
+   of a better one.
+3. **A reused planning answer follows the point** (`planningAnswerFitsPoint`
+   in `acquisitionReuse.pure.ts`). Its `pointBasis` now records the
+   coordinate, and the generator compares it with this run's point before the
+   registers are asked: a different precision, provider or coordinate drops
+   the reused answer and reads the zone again (`withdrawReuse` takes it back
+   from the provenance ledger, which is written last). The clock could not
+   decide this: the stored packet is re-stamped on every invocation while the
+   enrichment keeps the time it was actually placed, so the two would have
+   expired at different moments and a report could have measured its
+   amenities at the property while reading its zone on the street.
+
+The cost is bounded by construction: the register is our own machine, and an
+address it does not hold is asked at most once an hour, and only when something
+geocodes it. Nothing is migrated or deleted; each row is repaired the next time
+it is asked for.

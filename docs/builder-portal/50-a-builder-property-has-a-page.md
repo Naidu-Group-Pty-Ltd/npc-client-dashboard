@@ -72,4 +72,4 @@ With that recorder, the media sweep's refusal was rolled back and retried instea
 
 `20261221100000` routes both diagnostics through `builder_network_media_note`, which turns a recorder failure into a database WARNING. The stamp on the event, which is the durable record, always stands.
 
-The recorder's screen is a shared privacy control. It is reported rather than changed here. The fix it needs is to apply `.keyvalue()` to objects only: `$.** ? (@.type() == "object").keyvalue() ? (…)`.
+The recorder's screen is a shared privacy control, so it was fixed on its own afterwards: `20261221110000` applies `.keyvalue()` to objects only and puts the same screen on the table. The wrapper stays, because a diagnostic must never be able to break the sweep, whatever the recorder does next.

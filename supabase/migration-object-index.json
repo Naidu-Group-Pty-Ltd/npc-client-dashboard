@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1037,
+  "migration_files": 1038,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -263,6 +263,8 @@
     "function:public.partner_privacy_incident_defaults",
     "function:public.pause_migration_job",
     "function:public.pdf_import_watchdog_sweep",
+    "function:public.portal_operational_events_screen",
+    "function:public.portal_operational_metadata_is_forbidden",
     "function:public.post_conversation_message",
     "function:public.prevent_duplicate_current_primary_address",
     "function:public.prevent_solicitor_matter_access_firm_drift",
@@ -2490,6 +2492,7 @@
     "trigger:trg_pfct_touch",
     "trigger:trg_pfec_updated_at",
     "trigger:trg_plwu_updated_at",
+    "trigger:trg_portal_operational_events_screen",
     "trigger:trg_ppi_defaults",
     "trigger:trg_prevent_duplicate_current_primary_address",
     "trigger:trg_prevent_legal_matter_access_firm_drift",
@@ -3228,6 +3231,7 @@
     "trigger:trg_pdf_import_monitoring_events_updated_at",
     "trigger:trg_pdf_import_retention_events_updated_at",
     "trigger:trg_pfct_touch",
+    "trigger:trg_portal_operational_events_screen",
     "trigger:trg_ppi_defaults",
     "trigger:trg_prevent_duplicate_current_primary_address",
     "trigger:trg_prevent_legal_matter_access_firm_drift",

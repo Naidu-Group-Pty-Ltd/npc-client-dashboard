@@ -46,6 +46,7 @@ import {
   RANKED_ITEM_SELECT, STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
+import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
 import {
   promotedOrganisations, splicePinsIntoPage, type RankedRow,
 } from '../_shared/builderStock/marketplaceOrder.pure.ts';
@@ -339,11 +340,20 @@ Deno.serve(async (req) => {
       });
     }
 
+    /**
+     * THE PROPERTY PAGE'S READ. The same decorated record a card is drawn
+     * from, and beside it the property's photographs and documents (from the
+     * media converger's tables) and its activation record. A client is named
+     * only to a reader the Clients module admits — the gate `list_selections`
+     * applies — and nothing here is composed by a model.
+     */
     if (operation === 'get_stock_item') {
       const item = await loadItem(cleanText(body.stock_item_id, 64));
       if (!item) return json({ error: 'Property not found' }, 404);
       const [record] = await decorate(supabase, [item]);
-      return json({ success: true, record });
+      const clientsView = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      const detail = await readPropertyDetail(supabase, item, { includeClients: clientsView.ok });
+      return json({ success: true, record, ...detail });
     }
 
     if (operation === 'list_builders') {

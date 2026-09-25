@@ -150,6 +150,17 @@ Two findings, both fixed after it:
   year; the 06:22 regeneration saved the same 29 override fields as the
   baseline. Action: record them in Manual Data Override (fields added here and
   published), then regenerate.
+  Checked before the owner's listing extraction (25 Sep 2026): bedrooms and
+  bathrooms travel end to end under one pair of names (`beds`/`baths` →
+  `bedrooms`/`bathrooms`, banked for continuations). The year did not. The New
+  Report form files a listing's year under `constructionYear`, the stored spec
+  reads it, and the attribute table read `yearBuilt` alone, so the document was
+  forbidden to state a year its record held. `attributeTableYearBuilt` now
+  prints the stored year on an existing property where the row would otherwise
+  be empty. A new build or land lot is left exactly as it was, because there
+  `constructionYear` is the 10 Year Cash Flow's construction programme year
+  and never a fact about a standing building (the owner's rule). The stored
+  spec's order is unchanged.
 - **B8 — Infrastructure pipeline.** City of Greater Geraldton capital works and
   WA budget papers are not integrated registers; the report states the
   coverage limit. Action: supply the adopted capital works programme as a

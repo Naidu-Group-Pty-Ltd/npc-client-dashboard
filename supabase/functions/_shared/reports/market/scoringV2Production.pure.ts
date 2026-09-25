@@ -122,7 +122,7 @@ import {
 } from './shadowScorer.pure.ts';
 import { buildScoreOutput, type ScoreOutput } from './scoreOutputContract.pure.ts';
 import { buildEvidenceStatement, type EvidenceStatement } from './evidenceStatement.pure.ts';
-import { applyEligibility } from './gradeEligibility.pure.ts';
+import { applyEligibility, growthEvidenceGrain } from './gradeEligibility.pure.ts';
 import {
   admissibleInputs,
   claimPermits,
@@ -988,8 +988,26 @@ function swot(
 
   const g = score('growth');
   if (permits.fromDimensionScore('growth') && g !== null) {
-    if (g >= 70) strengths.push('Measured capital growth in this suburb is strong');
-    else if (g < 45) weaknesses.push('Measured capital growth in this suburb has been limited');
+    /*
+     * The sentence names what was measured. It said "in this suburb" whatever
+     * the evidence was, and on the 60 Lawley Street Compass (25 Sep 2026) that
+     * put "Measured capital growth in this suburb is strong" on the verdict
+     * page over a Western Australia, all-dwelling series. The thresholds are
+     * untouched; only the geography and dwelling type the growth describes
+     * are stated, in the words the grade caution already uses. Where the
+     * evidence IS this suburb's own, the sentence is exactly what it was.
+     */
+    const grain = growthEvidenceGrain(r.growth);
+    const qualifier = [grain.where, grain.what].filter((x): x is string => !!x).join(', ');
+    if (g >= 70) {
+      strengths.push(qualifier
+        ? `Measured capital growth is strong ${qualifier}`
+        : 'Measured capital growth in this suburb is strong');
+    } else if (g < 45) {
+      weaknesses.push(qualifier
+        ? `Measured capital growth has been limited ${qualifier}`
+        : 'Measured capital growth in this suburb has been limited');
+    }
   }
   const y = score('yield');
   if (permits.fromDimensionScore('yield') && y !== null) {

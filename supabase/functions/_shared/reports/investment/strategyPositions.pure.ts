@@ -325,6 +325,19 @@ export interface StrategyProperty {
   councilArea: string | null;
   parking: number | null;
   bedrooms: number | null;
+  /**
+   * Recorded bathrooms and construction year, where the record holds them.
+   *
+   * Optional so every record built before they were read — and every caller
+   * that builds one by hand — stays valid and byte-identical. They exist so a
+   * layout limitation and an older build can reach the Weaknesses quadrant
+   * from the RECORD: on the 25 Sep 2026 Compass for 60 Lawley Street the
+   * Property Fit chapter listed "One bathroom" and "Older construction" as
+   * the main limitations while the SWOT beside it said no weakness had been
+   * identified, because this module never read either fact.
+   */
+  bathrooms?: number | null;
+  yearBuilt?: number | null;
 }
 
 export interface StrategyRecord {
@@ -539,6 +552,19 @@ export interface Swot {
 }
 
 /**
+ * How many years before the report a recorded build must be to be named an
+ * older dwelling.
+ *
+ * It is a description, not a rating: the entry it gates says the age is not a
+ * defect and hands the question to the building inspection. Forty years is
+ * the point at which the original roof covering, wiring and plumbing of a
+ * house have usually reached the end of their service lives, which is what
+ * the entry tells a reader to have checked — a newer dwelling is not called
+ * old, and nothing here scores or prices the age.
+ */
+const OLDER_DWELLING_YEARS = 40;
+
+/**
  * Rule 1 and rule 2 in one function.
  *
  * Every push is guarded by the presence of the value it names. `coverage`
@@ -618,6 +644,34 @@ export function buildSwot(rec: StrategyRecord): Swot {
     }
   }
 
+  // ── The dwelling itself ──
+  //
+  // A layout limitation and an older build are facts about THIS property, and
+  // the Property Fit chapter already names them as its main limitations — so a
+  // SWOT that reads only the registers and then says "no weakness identified"
+  // contradicts the page before it. Each entry is drawn only where the RECORD
+  // holds the fact, and says what it is not: neither is a defect, and neither
+  // is a finding an inspection has made.
+  const beds = rec.property.bedrooms;
+  const baths = rec.property.bathrooms ?? null;
+  if (isNum(baths) && isNum(beds) && baths === 1 && beds >= 3) {
+    w.push({
+      claim: `One bathroom serving ${beds} bedrooms.`,
+      basis: 'The recorded configuration of this dwelling. A single bathroom narrows the households the layout '
+        + 'suits against homes of the same size that have two; it is a limitation of the layout, not a defect.',
+    });
+  }
+  const built = rec.property.yearBuilt ?? null;
+  const asOfYear = rec.transport.measuredAt ? Number(String(rec.transport.measuredAt).slice(0, 4)) : null;
+  if (isNum(built) && isNum(asOfYear) && built > 1800 && asOfYear - built >= OLDER_DWELLING_YEARS) {
+    w.push({
+      claim: `An older dwelling, built in ${built}.`,
+      basis: `The recorded construction year, ${asOfYear - built} years before this report. Age is not a defect; `
+        + 'it is why the condition of the roof, wiring, plumbing and any later alterations is a matter for the '
+        + 'building inspection rather than something this report can assume.',
+    });
+  }
+
   // ── Planning ──
   if (rec.planning.zoneStatus === 'stated' && rec.planning.zone) {
     s.push({
@@ -656,10 +710,20 @@ export function buildSwot(rec: StrategyRecord): Swot {
      * community-edited register, not the operator's own stop file, and no
      * loaded timetable feed reaches Queensland outside the south-east.
      */
+    /*
+     * …and it is not the only transport evidence a report can carry, so this
+     * line may not read as though it were. On the 60 Lawley Street Compass the
+     * Transport chapter named Route 852 and a stop on Lawley Street from the
+     * council's own published pages, while this line — and the risk register
+     * after it — read as if nothing about transport was held at all. Both were
+     * true of what each read; neither said which.
+     */
     coverage.push(
       `Public transport was **not read from an operator's own stop file** for this property. The reading came from `
       + `${transportSourceName(rec.transport.source)}, which counts one amenity category rather than boarding `
-      + 'places, so nothing here states how this property is served and no conclusion is drawn either way.',
+      + 'places, so nothing here states how this property is served and no conclusion is drawn either way. A route '
+      + 'or timetable described elsewhere in this report comes from the operator\'s or council\'s own published '
+      + 'pages; it is not a register measurement and is not scored.',
     );
   }
 
@@ -762,10 +826,19 @@ export function buildSwot(rec: StrategyRecord): Swot {
   const notHeld = (['vacancyRate', 'daysOnMarket', 'medianRent', 'auctionClearanceRate', 'vendorDiscount'] as const)
     .filter((k) => !subjectRow(rec.market, k));
   if (notHeld.length) {
+    /*
+     * "No published figure was held" read as a statement about the WHOLE
+     * report, and on the 60 Lawley Street Compass two pages earlier quoted a
+     * listing portal's days on market. Both were true: the portal figure is a
+     * portal's own statistic the writer found, and this list is what the
+     * registers this assessment reads hold. The sentence now says which.
+     */
     coverage.push(
-      'No published figure was held for vacancy, days on market, advertised rent, vendor discount or auction '
-      + 'clearance in this market. Each would bear on the entries above; none is estimated, and their absence is '
-      + 'not counted as a strength or a weakness.',
+      'The registers this assessment reads hold no figure for vacancy, days on market, advertised rent, vendor '
+      + 'discount or auction clearance in this market. A figure a listing portal reports, where the report quotes '
+      + 'one, is that portal\'s own statistic: it is not a register measurement, it is not scored, and it is not '
+      + 'counted here. Each would bear on the entries above; none is estimated, and their absence is not counted '
+      + 'as a strength or a weakness.',
     );
   }
   if (rec.score.gaps.length) {
@@ -780,7 +853,8 @@ export function buildSwot(rec: StrategyRecord): Swot {
       + (rec.score.weightCovered !== null
         ? `, carrying ${pct(rec.score.weightCovered * 100, 0)} of the score's nominal points`
         : '')
-      + '. The dimensions and what each one rested on are tabled below.',
+      + '. The dimensions and what each one rested on are set out in the appendix, under *How this grade was '
+      + 'reached*.',
     );
   }
 
@@ -799,7 +873,8 @@ export function buildSwot(rec: StrategyRecord): Swot {
 const QUADRANT_NOTE: Record<keyof Omit<Swot, 'coverage'>, string> = {
   strengths: 'None identified from the market register, the planning layer, the transport feeds or the recorded '
     + 'financial position. The evidence examined is listed below.',
-  weaknesses: 'None identified from the same sources. That is a statement about what was examined, not a clearance.',
+  weaknesses: 'None identified from the same sources or from the dwelling\'s recorded attributes. That is a statement '
+    + 'about what was examined, not a clearance: the condition of the dwelling is for the building inspection.',
   opportunities: 'None identified: no recorded figure supports one, and none is inferred.',
   threats: 'None identified in the registers read for this property. Registers not read are listed below — an '
     + 'unread register is not a clean one.',
@@ -831,9 +906,31 @@ export function composeSwot(rec: StrategyRecord, heading: string): string {
     for (const c of swot.coverage) lines.push(`- ${c}`);
     lines.push('');
   }
-  const dimensions = composeScoreDimensionTable(rec);
-  if (dimensions) lines.push(dimensions, '');
+  /*
+   * The grade's method is NOT part of the SWOT any more.
+   *
+   * `composeScoreDimensionTable` used to be appended here, which put two pages
+   * of weights, contributions and rounding notes between the quadrants and the
+   * Risk Dashboard — on the 60 Lawley Street Compass the SWOT ran from page 16
+   * to page 18 and three quarters of it was method. The owner's structure is
+   * SWOT → Risk → Due Diligence → Monitoring → Recommendation → methodology,
+   * so the table is composed on its own (`composeGradeMethodology`) and the
+   * generator places it in the appendix. The concise reading of the grade
+   * stays on the verdict page, where it already was.
+   */
   return lines.join('\n').trimEnd();
+}
+
+/**
+ * How the grade was reached — the scoring method, for the appendix.
+ *
+ * The same table `composeSwot` used to carry, under its own sub-heading and
+ * nothing else, so it can be placed where the method belongs rather than in
+ * the middle of the assessment. Null where the record holds no scored
+ * dimension, exactly as before.
+ */
+export function composeGradeMethodology(rec: StrategyRecord): string | null {
+  return composeScoreDimensionTable(rec);
 }
 
 /**
@@ -873,6 +970,24 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
    */
   const legacyCeiling = a.methodology === 'delivered_points_ceiling';
   const unknownMethod = a.methodology === 'unknown';
+  /*
+   * "Reconstructed" is two different situations, and the table used to call
+   * both of them "this record does not hold the adjusted weights".
+   *
+   * On the 60 Lawley Street Compass the record DID hold them — 50%, 31% and
+   * 19% — and they are exactly the original weights renormalised over the
+   * three measured dimensions. `readScoreAssessment` then uses the exact
+   * fractions (31.25% rather than 31%), because they reproduce the recorded
+   * composite and the rounded ones do not. So the page said the weights were
+   * missing and reconstructed, and six paragraphs later said "no figure in
+   * this table is re-derived" — both about one table. Where the record holds
+   * the weights and the reconstruction is merely their exact form, the prose
+   * says THAT; only a record that holds none is described as reconstructed.
+   */
+  const weightsHeld = a.dimensions
+    .filter((d) => d.score !== null)
+    .every((d) => typeof d.recordedWeight === 'number' && d.recordedWeight > 0);
+  const exactFormOfHeld = a.weightBasis !== 'recorded' && weightsHeld;
   lines.push(
     legacyCeiling
       ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
@@ -886,6 +1001,10 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + (a.weightBasis === 'recorded'
           ? 'The adjusted weights below are the ones the record holds, so they are the weights this grade was '
             + 'built from. '
+          : exactFormOfHeld
+          ? 'The adjusted weights are the ones the record holds; they are the original weights spread over the '
+            + 'dimensions that were measured, and the arithmetic below uses their exact fractions rather than '
+            + 'the rounded percentages the record stores. '
           : 'This record does not hold them, so they are reconstructed from the original weights of the '
             + 'dimensions that were measured. ')
         + 'The record does not state which scoring methodology issued its grade, so the grade is reported as it '
@@ -898,6 +1017,14 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'adjusted weights below are the ones the record holds, so they are the weights this grade was '
         + 'actually built from. A dimension that could not be assessed is disclosed rather than deducted: it '
         + 'lowers no score and caps no grade, and the scope of the assessment is stated with the result instead.'
+      : exactFormOfHeld
+      ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
+        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
+        + 'built from. The adjusted weights below are the ones the record holds. They are exactly the original '
+        + 'weights spread over the dimensions that were measured, so the arithmetic uses their exact fractions '
+        + 'rather than the whole percentages the record stores them as. A dimension that could not be assessed '
+        + 'is disclosed rather than deducted: it lowers no score and caps no grade, and the scope of the '
+        + 'assessment is stated with the result instead.'
       : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
         + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
         + 'built from. This record does not hold the adjusted weights the service used, so they are reconstructed '
@@ -1031,10 +1158,16 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
     for (const n of a.notRetained) lines.push(`- ${n}`);
     lines.push('');
   }
+  // The closing line may not say "nothing is re-derived" over weights this
+  // report reconstructed — the contradiction the 60 Lawley Street table
+  // printed. Where the weights are the record's own (whole or exact), it may.
   lines.push(
     "Calculated by this platform's investment scoring service"
     + (rec.score.authority ? ` (${rec.score.authority})` : '')
-    + '. No figure in this table is re-derived by this report; the arithmetic above restates the engine\'s own.',
+    + (a.weightBasis === 'recorded' || weightsHeld
+      ? '. No figure in this table is re-derived by this report; the arithmetic above restates the engine\'s own.'
+      : '. The scores and the composite are the engine\'s own; the adjusted weights are reconstructed as stated '
+        + 'above, because this record does not hold them.'),
     '',
   );
   return lines.join('\n').trimEnd();
@@ -1303,13 +1436,38 @@ export function composeHoldingStrategy(rec: StrategyRecord, heading: string): st
 export function composeExitOutlook(rec: StrategyRecord, heading: string): string {
   const f = rec.finance;
   const lines: string[] = [`## ${heading}`, ''];
+  /*
+   * The introduction describes what THIS section goes on to draw.
+   *
+   * It promised "what the position looks like at a future year … this
+   * report's own projection under the accepted CGR assumption" on every tier —
+   * including the Compass, which carries no modelling at all and draws no
+   * projection below (see the closing comment). On the 60 Lawley Street
+   * Compass a reader was told about a model the document does not contain,
+   * and that the projection lives in the Financial Analysis Report is a
+   * boundary the Compass has to keep, not describe away.
+   */
+  const projects = Boolean(f && isNum(f.capitalGrowth) && rec.price.value !== null);
   lines.push(
-    'Two different questions, answered from two different kinds of evidence. **What the market recorded** comes from '
-    + 'a published register. **What the position looks like at a future year** is an output of this report\'s own '
-    + 'projection under the accepted CGR assumption. The first is a count of what happened; the second is a model.',
+    projects
+      ? 'Two different questions, answered from two different kinds of evidence. **What the market recorded** comes '
+        + 'from a published register. **What the position looks like at a future year** is an output of this '
+        + 'report\'s own projection under the accepted CGR assumption. The first is a count of what happened; the '
+        + 'second is a model.'
+      : '**What the market recorded** comes from a published register: it is a record of what happened in this '
+        + 'market, not a forecast of what a sale of this property would achieve.',
     '',
-    'Neither answers *how easily this sells*. Days on market, time to sell and buyer depth are not measured '
-    + 'anywhere in this report, and no figure below should be read as standing in for them.',
+    /*
+     * "Not measured anywhere in this report" was false the day a Market
+     * Positioning chapter quoted a listing portal's days on market — the 60
+     * Lawley Street Compass did, two pages earlier. What is true is narrower,
+     * and it is what the reader needs: no register this assessment reads holds
+     * such a measure, and a portal's own figure is not one.
+     */
+    'Neither answers *how easily this sells*. No register this assessment reads holds days on market, time to sell '
+    + 'or buyer depth for this market. A figure a listing portal reports, where the report quotes one, is that '
+    + 'portal\'s own statistic, not a register measurement, and no figure below should be read as standing in for '
+    + 'any of them.',
     '',
   );
 
@@ -1425,6 +1583,13 @@ export interface MonitorRow {
   cadence: string;
   lastRead: string;
   changesIf: string;
+  /**
+   * True where no register answered this for the report, so the item is a
+   * FIRST check still owed rather than a reading to watch. Printed apart from
+   * the readings, because "monitor" a control nobody has read yet is not a
+   * plan — it is research that has not been done.
+   */
+  firstCheck?: boolean;
 }
 
 /**
@@ -1472,13 +1637,26 @@ export function buildMonitorRows(rec: StrategyRecord): MonitorRow[] {
         + 'nearby. A spatial layer is indicative — a planning certificate from the council is what settles it.',
     });
   } else {
+    /*
+     * "On request" was printed as how often a planning control CHANGES — it
+     * is how a certificate is obtained, which is a different question. The
+     * control changes when the scheme is amended; what the reader needs is
+     * when to look, which is before exchange and then on the events that make
+     * a control matter.
+     */
     rows.push({
-      what: 'The planning control in force',
-      register: rec.planning.council ? `${rec.planning.council} council` : 'the council',
-      cadence: 'On request',
-      lastRead: 'No layer answered for this property',
-      changesIf: 'This one is not a re-check but a first check: the control was never read from a register here, and '
-        + 'a planning certificate is the way to obtain it.',
+      what: 'The planning controls that apply to the lot',
+      register: rec.planning.council
+        ? `${rec.planning.council} — planning certificate or property enquiry`
+        : 'the council — planning certificate or property enquiry',
+      cadence: 'When the council amends its planning scheme; a certificate states the controls as at the day it is '
+        + 'issued',
+      lastRead: 'Not read from a register for this report',
+      changesIf: 'This is a first check, not a re-check: the controls were never read from a register here, and a '
+        + 'planning certificate or property enquiry obtained before exchange is the way to establish them. After '
+        + 'that, look again before any works, a refinance or a sale, and when the council gives notice of a scheme '
+        + 'amendment affecting the area.',
+      firstCheck: true,
     });
   }
   if (rec.transport.verdict === 'stops_nearby' && rec.transport.countReading?.count !== null) {
@@ -1561,7 +1739,7 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
    * "where it is published" and "how often it changes" are what turns the list
    * into something actionable.
    */
-  for (const r of rows) {
+  const block = (r: MonitorRow) => {
     const read = r.lastRead && r.lastRead !== '—'
       ? ` As read for this report: ${r.lastRead}.`
       : '';
@@ -1573,6 +1751,31 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
       r.changesIf,
       '',
     );
+  };
+  /*
+   * First checks and readings are two lists.
+   *
+   * On the 60 Lawley Street Compass the planning control — which no register
+   * had answered — sat in the same list as the one-year growth rate, under an
+   * introduction about re-reading figures the report already holds. A control
+   * nobody has read is research still owed before exchange; it is printed
+   * first and under its own name, so it cannot be mistaken for something the
+   * report already knows and merely asks the reader to watch.
+   */
+  const firstChecks = rows.filter((r) => r.firstCheck);
+  const readings = rows.filter((r) => !r.firstCheck);
+  if (firstChecks.length) {
+    lines.push('### First checks still owed', '');
+    lines.push(
+      'No register answered these for this report. Each is research to complete before exchange, not a reading to '
+      + 'monitor.',
+      '',
+    );
+    firstChecks.forEach(block);
+  }
+  if (readings.length) {
+    if (firstChecks.length) lines.push('### What to re-read after purchase', '');
+    readings.forEach(block);
   }
   /*
    * "Follow the slowest thing on the list" was a cadence rule invented here.
@@ -1581,8 +1784,10 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
    */
   lines.push(
     'Each item states how often its publisher republishes. Re-reading anything more often than its publisher issues '
-    + 'it returns the same figure; how far behind a publication cycle a review may fall is a decision for the '
-    + 'reader and their adviser, and this report does not set one.',
+    + 'it returns the same figure. The events that make a re-read worth doing are the ones a holder already '
+    + 'faces — a lease renewal, a change in the loan rate, planned works, a refinance or a sale — and each is a '
+    + 'prompt to check the items above rather than a schedule this report keeps. How far behind a publication '
+    + 'cycle a review may otherwise fall is a decision for the reader and their adviser.',
     '',
   );
   return lines.join('\n').trimEnd();
@@ -1835,6 +2040,8 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
       councilArea: text(specs.council_area),
       parking: num(specs.parking),
       bedrooms: num(specs.bedrooms),
+      bathrooms: num(specs.bathrooms),
+      yearBuilt: num(specs.year_built),
     },
     price: opts.price,
     market: opts.market,

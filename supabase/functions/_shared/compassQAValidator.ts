@@ -98,6 +98,13 @@ const TABLE_PROMISE = /\b(?:table|matrix|grid|schedule)\s+(?:below|that follows|
 const PAIR_HEADING = /^(?:#{2,4}\s+|\*\*)?strengths?\s*(?:and|&)\s*(?:limitations?|weaknesses|considerations|watch[- ]?points)\b/i;
 /** The second half of that pair, as a sub-heading or a bold label. */
 const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}:?\s*$/i;
+/**
+ * The same label as a RUN-IN lead, with its content on the same line —
+ * `**Watch points:** single bathroom; 1979 construction`. It carries the
+ * second list, and reading only a label on a line of its own reported that
+ * list as missing on a section that had written it.
+ */
+const PAIR_SECOND_LEAD_IN = /^(?:[-*+]\s+)?(?:\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}\s*:\s*\*{0,2}\s*\S/i;
 
 
 /**
@@ -585,10 +592,10 @@ export function runQAValidation(
     if (pairAt < 0) continue;
     const rest = lines.slice(pairAt + 1);
     const secondAt = rest.findIndex((l) => PAIR_SECOND_LABEL.test(l.trim()));
-    const secondHasContent = secondAt >= 0 && rest.slice(secondAt + 1).some((l) => {
+    const secondHasContent = (secondAt >= 0 && rest.slice(secondAt + 1).some((l) => {
       const t = l.trim();
       return t && !t.startsWith('#') && !PAIR_SECOND_LABEL.test(t);
-    });
+    })) || rest.some((l) => PAIR_SECOND_LEAD_IN.test(l.trim()));
     if (!secondHasContent) {
       findings.push({
         rule: 'unbalanced-pair',

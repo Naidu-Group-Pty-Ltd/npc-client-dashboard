@@ -32,7 +32,7 @@ describe('rule 1 — an outage is never remembered as the address', () => {
       { provider: 'photon', providerRefused: false },
     ]);
     expect(v.write).toBe(false);
-    if (!v.write) expect(v.reason).toContain('nominatim');
+    if (v.write === false) expect(v.reason).toContain('nominatim');
   });
 
   it('remembers a suburb centroid every street-level provider LOOKED for and could not better', () => {

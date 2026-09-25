@@ -126,7 +126,7 @@ import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
-import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
+import { gradedDetailLine, gradedLine, publishableGrade, verdictWatchPoints } from './reports/investment/scoreSections.pure.ts';
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
 import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
 import { contentPolicyFor } from './reports/investment/tierContent.pure.ts';
@@ -212,7 +212,17 @@ function put(target: Record<string, unknown>, key: string, value: unknown): void
   if (value !== undefined && value !== null && value !== '') target[key] = value;
 }
 
-/** `3 bed · 2 bath · 1 car`, from whichever parts are present. */
+/**
+ * `3 bed · 2 bath · 1 car`, from whichever parts are present.
+ *
+ * A configuration with the rooms missing says so. Page 3 of the 60 Lawley
+ * Street Compass (25 Sep 2026) printed "Configuration · 2 car" — the record
+ * held the parking and not the bedrooms or bathrooms, and a reader takes a
+ * configuration line as the whole configuration. Where the car spaces are
+ * the only part held, the line names what was not recorded, so it cannot be
+ * read as a description of the dwelling; with nothing held at all the row is
+ * still not drawn.
+ */
 function configuration(spec: (...keys: string[]) => unknown): string | undefined {
   const parts: string[] = [];
   const bed = num(spec('bedrooms'));
@@ -221,7 +231,12 @@ function configuration(spec: (...keys: string[]) => unknown): string | undefined
   if (bed !== undefined) parts.push(`${bed} bed`);
   if (bath !== undefined) parts.push(`${bath} bath`);
   if (car !== undefined) parts.push(`${car} car`);
-  return parts.length ? parts.join(' · ') : undefined;
+  if (!parts.length) return undefined;
+  const unrecorded = [bed === undefined ? 'bedrooms' : null, bath === undefined ? 'bathrooms' : null]
+    .filter((x): x is string => x !== null);
+  return unrecorded.length
+    ? `${parts.join(' · ')} · ${unrecorded.join(' and ')} not recorded`
+    : parts.join(' · ');
 }
 
 /**
@@ -806,10 +821,12 @@ export function projectInvestmentReport(
   put(recommendation, 'gradedDetailLine', gradedDetailLine(score));
 
   const strengths = strArray(score.strengths);
-  const weaknesses = strArray(score.weaknesses);
+  // Weaknesses where the record has them, else the scorer's risks and the
+  // run's evidence caution — see `verdictWatchPoints`.
+  const watch = verdictWatchPoints(score);
   const summary: Record<string, unknown> = {};
   if (strengths.length) summary.strength = strengths;
-  if (weaknesses.length) summary.watch = weaknesses;
+  if (watch.length) summary.watch = watch;
 
   // Objects rather than bare strings, because the catalogue binds `risks.N.risk`.
   //

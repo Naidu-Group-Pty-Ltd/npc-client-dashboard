@@ -28,13 +28,14 @@ import {
 import {
   buildNswHazardIdentify, buildNswPrincipalIdentify, buildNswProtectionIdentify,
   buildQldFloodIdentify, buildQldMsesIdentify, buildQldStatePlanningIdentify,
-  buildTasOverlayQuery, buildVicOverlayQuery,
+  buildTasOverlayQuery, buildVicOverlayQuery, buildWaBushfireIdentify,
   mergeConstraintOutcomes, parseNamedLayerConstraints, parseNswConstraints,
   parseNswInstrument, parseTasOverlays, parseVicOverlays,
   NSW_HAZARD_LAYERS, NSW_HAZARD_SOURCE, NSW_PRINCIPAL_CONTROL_LAYERS,
   NSW_PRINCIPAL_SOURCE, NSW_PROTECTION_LAYERS, NSW_PROTECTION_SOURCE,
   QLD_FLOODCHECK_SOURCE, QLD_LICENCE, QLD_MSES_SOURCE,
   QLD_STATE_PLANNING_CONTEXT_SOURCE,
+  WA_BUSHFIRE_INSTRUMENT, WA_BUSHFIRE_LICENCE, WA_BUSHFIRE_SOURCE,
   type ConstraintProbeOutcome,
 } from '../_shared/planning/planningConstraints.pure.ts';
 import {
@@ -336,7 +337,9 @@ Deno.serve(async (req) => {
     } else {
       instrumentsCell = {
         status: 'not_integrated',
-        note: 'State development-instrument layers are integrated for Queensland only so far.',
+        // A reader's sentence, not a note on this platform's build: it reaches
+        // the client's page through every composer that reads this cell.
+        note: 'No state development-instrument register was searched for this jurisdiction: the only such register this report reads is Queensland\'s.',
       };
     }
 
@@ -582,6 +585,22 @@ Deno.serve(async (req) => {
           ? parseTasOverlays(r.body)
           : { asked: [], status: 'unavailable', readings: [], source: 'theLIST — Tasmanian Planning Scheme overlays', licence: 'CC BY 3.0 AU', note: r.message });
       }
+    } else if (jurisdiction === 'WA') {
+      // The one WA hazard register published under an open licence — see
+      // `WA_BUSHFIRE_MAPSERVER`. The scheme zones and the floodplain mapping
+      // stay unread; `NO_STATE_LAYER_NOTE.WA` says so beside this answer.
+      const bushfire = await fetchJson(buildWaBushfireIdentify(lng, lat));
+      constraintOutcomes.push(bushfire.ok
+        ? parseNamedLayerConstraints(bushfire.body, {
+          asked: ['bushfire'],
+          source: WA_BUSHFIRE_SOURCE,
+          licence: WA_BUSHFIRE_LICENCE,
+          instrument: WA_BUSHFIRE_INSTRUMENT,
+          family: { family: 'bushfire', kind: 'hazard' },
+          valueAttribute: 'Designation',
+          dateAttribute: 'Designation Date',
+        })
+        : { asked: [], status: 'unavailable', readings: [], source: WA_BUSHFIRE_SOURCE, licence: WA_BUSHFIRE_LICENCE, note: bushfire.message });
     }
 
     const merged = mergeConstraintOutcomes(constraintOutcomes);

@@ -6,6 +6,7 @@ import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
 
 // ── Builders Network aggregate (extraction plan §7 Phase 3) ────────────────
 import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
+import { agencyMessageRouteHeld } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
   HMAC_CONNECTION_HEADER,
   HMAC_SIGNATURE_HEADER,
@@ -49,9 +50,27 @@ async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promis
   for (const event of events || []) {
     try {
       const { data: connection } = await db.from('builder_network_connections')
-        .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id')
+        .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id, identity_mismatch_since, scopes')
         .eq('id', event.connection_id).maybeSingle();
       if (!connection || connection.state === 'revoked') { await release(event, 'connection_revoked', { dead: true }); dead++; continue; }
+      // A message never overtakes the activation it depends on: while an
+      // earlier activation on this connection is undelivered, it waits.
+      if (event.event_type === 'agency.message.posted') {
+        const { data: deferred, error: deferError } = await db.rpc('builder_network_defer_message_behind_activation', { _outbox_id: event.id, _worker_id: workerIdValue });
+        // A check that could not be made is not a pass: retry, never send unchecked.
+        if (deferError) { await release(event, 'activation_order_unchecked'); retried++; continue; }
+        if (deferred === true) { retried++; continue; }
+      }
+      if (agencyMessageRouteHeld(connection, String(event.event_type ?? ''))) {
+        // Claimed before the hold began: put it back to wait, spending no
+        // delivery attempt. The database re-decides under the connection's
+        // lock, so a recovery landing now is not overwritten by this park.
+        const { error: parkError } = await db.rpc('builder_network_park_held_message', { _outbox_id: event.id, _worker_id: workerIdValue });
+        // A park that did not happen still holds this worker's claim: release
+        // it, so a route that recovers is not left waiting on a stale lock.
+        if (parkError) { await release(event, 'route_hold_unrecorded'); retried++; continue; }
+        retried++; continue;
+      }
       if (!connection.network_inbound_url || !connection.outbound_hmac_secret) {
         // Not yet deliverable is not failure: transport arrives with
         // configuration, and the queue simply waits.

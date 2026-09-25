@@ -11,7 +11,7 @@
  * a behavioural spec that quietly did not run is the same as no spec. Locally
  * it skips with a message, as `scripts/aml/didit-migration-check.sh` does.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,8 @@ import { join } from 'node:path';
 export interface ThrowawayPostgres {
   /** Run SQL; returns stdout rows, `|`-separated, trimmed. */
   sql(statement: string): string;
+  /** The same, in its own session without blocking this one — for races. */
+  sqlAsync(statement: string): Promise<string>;
   /** Run a file of SQL, stopping on the first error. */
   file(path: string): void;
   stop(): void;
@@ -74,6 +76,10 @@ export function startThrowawayPostgres(): ThrowawayPostgres {
 
   return {
     sql: (statement) => exec(['-qAt', '-c', statement]).trim(),
+    sqlAsync: (statement) => new Promise((resolve, reject) => {
+      execFile(psql, [...connection, '-v', 'ON_ERROR_STOP=1', '-qAt', '-c', statement], { encoding: 'utf8' },
+        (error, stdout) => (error ? reject(error) : resolve(stdout.trim())));
+    }),
     file: (path) => { exec(['-q', '-f', path]); },
     stop: () => {
       try { run('pg_ctl', ['-D', data, '-m', 'immediate', 'stop']); } catch { /* already down */ }

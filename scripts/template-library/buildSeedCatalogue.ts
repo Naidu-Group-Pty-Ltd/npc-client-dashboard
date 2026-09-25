@@ -529,17 +529,62 @@ const REPO = resolve(__dirname, '../..');
  * because main had meanwhile taken both versions for its restatements
  * (`20261219000000_restate_mfa_recovery_code_consumption` onwards) — a version
  * is the order a migration runs in, so two files cannot share one.
+ *
+ * ## v21 — the lead photograph on the covers drawn without one
+ *
+ * Checked before editing on 25 Sep 2026, through the ledger (all 1,051
+ * recorded versions read). v20 IS recorded: the seed as `20261219060000` and
+ * its refresh as `20261219070000`. So this change is a **v21**, and v20's
+ * file is not touched.
+ *
+ * Five of the fifty Investment masters were designed around photographs. The
+ * other forty-five printed none, however many the report held. The owner
+ * asked for one on those covers (25 Sep 2026), and the cover's ground decides
+ * where it goes (`withCoverPhotograph`):
+ *   - The 16 FIELD covers take the lead photograph behind the whole sheet,
+ *     under two passes of the field's own scrim.
+ *   - The 18 BANDED covers take it inside the band, under the same two
+ *     passes.
+ *   - The 11 PAPER covers are left as drawn.
+ *
+ * Why two passes: one pass of the 0.55 scrim leaves the cover's small type at
+ * 3.48:1 over a white facade, measured on the Private Banking palette. Two
+ * passes come to about 0.80 and 7.89:1, which clears the 7:1 print floor in
+ * REPORT_RULES §2. The five photographic masters keep their one pass, because
+ * their type was designed for it.
+ *
+ * ## What the release is, measured rather than claimed
+ *
+ * Parsed out of the v20 and v21 files and compared row by row, 543 in each:
+ *
+ *   * **34 of 543 differ**, and they are exactly those 34 Investment Compass
+ *     masters. The other 16 Investment masters, the other nine formats' 450
+ *     masters and the 43 voice templates are byte-identical.
+ *   * In each of the 34, **the cover gains exactly three blocks**: the
+ *     photograph and two passes of the scrim, all conditional on the
+ *     photograph. Every other page, every other block, their order and their
+ *     ids are unchanged. The blocks are built after the rest of the master, so
+ *     they take new ids rather than shifting old ones. The cover's
+ *     `preview_schema` gains the same three. No other column changes except
+ *     these two:
+ *       - `required_bindings` gains `property.images.0` on all 34;
+ *       - fifteen field masters list `hero` among their block types for the
+ *         first time. The sixteenth, Ribbon, already drew one.
+ *
+ * `20261222100000` re-copies the ACTIVE masters from it, by the v15
+ * mechanism, unchanged. Run the same one-query check before editing this
+ * file: if `20261222090000` is already recorded, the next change needs a v22.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261219060000_seed_template_library_v20_continuous_front_matter';
+const RELEASE_ID = '20261222090000_seed_template_library_v21_cover_photograph';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261219060000_seed_template_library_v20_continuous_front_matter.sql',
+  'supabase/migrations/20261222090000_seed_template_library_v21_cover_photograph.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

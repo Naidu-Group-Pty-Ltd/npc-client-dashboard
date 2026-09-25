@@ -5,6 +5,12 @@ import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
 import { readEvidenceInventory } from '@/lib/reports/investment/chartEvidence.pure';
 import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
+import {
+  photographResumeRequest,
+  PHOTOGRAPH_RESUME_TIMEOUT_MS,
+  readPhotographCapture,
+  type PhotographCaptureReading,
+} from '@/lib/reports/urlExtractPhotographs';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
@@ -89,10 +95,30 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
  * report with none — or whose photographs could not be read — loads exactly as
  * it always did. See `reportPhotographs.pure.ts` for which may lead a client's
  * document.
+ *
+ * A URL-extract report's photographs are captured from its listing page after
+ * the report is created, and an attempt the listing's host did not answer
+ * leaves work over. The broker says so (`pending`), and this document asks for
+ * the rest before it is drawn — waiting a bounded time, and reading again only
+ * if the attempt ran — so it carries what the capture keeps rather than what
+ * the first attempt managed. Nothing about it can fail the read.
  */
 async function loadInvestmentReportWithPhotographs(
   reportId: string,
 ): Promise<{ report: any; photographs: SignedPhotograph[] } | null> {
+  const first = await readReportAndPhotographs(reportId);
+  if (!first) return null;
+  const resume = photographResumeRequest(first.capture);
+  if (!resume) return first;
+  const { error } = await invokeSecureFunction('listing-images', { ...resume }, { timeoutMs: PHOTOGRAPH_RESUME_TIMEOUT_MS })
+    .catch(() => ({ error: { message: 'unreachable' } }));
+  if (error) return first;
+  return (await readReportAndPhotographs(reportId)) ?? first;
+}
+
+async function readReportAndPhotographs(
+  reportId: string,
+): Promise<{ report: any; photographs: SignedPhotograph[]; capture: PhotographCaptureReading | null } | null> {
   const { data: resp, error } = await invokeSecureFunction('get-investment-reports', {
     table: 'investment_reports',
     reportId,
@@ -103,7 +129,7 @@ async function loadInvestmentReportWithPhotographs(
   const report = (resp as any)?.report ?? null;
   if (!report) return null;
   const photographs = Array.isArray((resp as any)?.photographs) ? (resp as any).photographs as SignedPhotograph[] : [];
-  return { report, photographs };
+  return { report, photographs, capture: readPhotographCapture(resp) };
 }
 
 /**

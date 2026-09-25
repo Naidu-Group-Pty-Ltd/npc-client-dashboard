@@ -46,6 +46,13 @@
  *     `MIN_PRINT_LONG_EDGE_PX` on its long side is set at the size of a page
  *     plate by these masters and prints soft. Unknown dimensions are not
  *     evidence of either, and pass.
+ *  4. **Of the report's own address** — the owner's rule (25 Sep 2026): a
+ *     report carries photographs of its address and property and nothing
+ *     else, never a picture chosen to fill a slot. The photographs are
+ *     always their source's own; what can differ is the report, whose address
+ *     can be typed or edited to another property. So the report's address and
+ *     the source's must be the same property (`photographsAreOfReportAddress`)
+ *     or nothing is taken.
  *
  * Duplicate intake RECORDS of one property share every photograph, so rule 2
  * leaves such a property with none. That is the conservative side on purpose,
@@ -57,6 +64,7 @@
  * signs what this returns.
  */
 import { bandOf, selectListingGallery } from './listingImageSelection.pure.ts';
+import { isSameProperty } from './addressMatch.pure.ts';
 
 /** The most photographs any master binds (`six_with_bleed`: a cover and five plates). */
 export const REPORT_PHOTOGRAPH_LIMIT = 6;
@@ -170,4 +178,504 @@ export function photographsForReport(
       width: image.row.width,
       height: image.row.height,
     }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Rule 4: the photographs are of the report's own address                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The address a set of photographs belongs to, as their source states it: a
+ * listing's composed street line and suburb, or what an extraction read off
+ * the listing page the photographs were attributed to.
+ */
+export interface PhotographSource {
+  address: string;
+  suburb: string;
+}
+
+/**
+ * Whether photographs of `source` may appear in a report written for
+ * `reportAddress`.
+ *
+ * The photographs are always their source's own: a listing's gallery, or a
+ * listing page's gallery matched by the page's own listing id. The report is
+ * what can differ. Its address is typed before it is generated and can be
+ * edited in the report editor afterwards. A report for 5/12 Smith Street must
+ * not carry the photographs of 12 Smith Street, and a report re-pointed at
+ * another house must not keep the first one's.
+ *
+ * So this answers yes only through `isSameProperty`, the rule the marketplace
+ * applies before it attaches a photograph to a card:
+ *   - street number, street name and suburb agree after normalisation;
+ *   - units agree whenever either side names one;
+ *   - an address with only a lot number never matches, because a lot is not
+ *     a street number.
+ * A source with no suburb answers no, because a street line alone could be
+ * any of several properties. Anything unreadable answers no. A missed match
+ * costs a cover without a photograph; a false one puts somebody else's house
+ * on a client's document.
+ */
+export function photographsAreOfReportAddress(
+  reportAddress: unknown,
+  source: { address?: unknown; suburb?: unknown } | null | undefined,
+): boolean {
+  const report = typeof reportAddress === 'string' ? reportAddress.trim() : '';
+  const address = typeof source?.address === 'string' ? source.address.trim() : '';
+  const suburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!report || !address || !suburb) return false;
+  return isSameProperty({ address, suburb }, { address: report });
+}
+
+/**
+ * The address an extraction read off its listing page, from the job's stored
+ * result (`extractedDetails`, written by `scrape-property-listing`); null
+ * where it read no street line or no suburb.
+ */
+export function extractionPhotographSource(result: unknown): PhotographSource | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const details = (result as Record<string, unknown>).extractedDetails;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const d = details as Record<string, unknown>;
+  const address = typeof d.extractedAddress === 'string' ? d.extractedAddress.trim() : '';
+  const suburb = typeof d.extractedSuburb === 'string' ? d.extractedSuburb.trim() : '';
+  return address && suburb ? { address, suburb } : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Photographs captured from a listing page, for a URL-extract report          */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A report made through URL extract has no listing in the image library, so
+ * its photographs are captured from the listing page (`listingPagePhotographs
+ * .pure.ts` names them; `listing-images`, `op: 'capture_report'`, fetches,
+ * checks and stores them). They are kept under the REPORT, in the same private
+ * bucket, and the object name carries everything a reader needs, so there is
+ * no table to keep in step with the files:
+ *
+ *   report-photographs/<report id>/<place>-<width>x<height>-<checksum16>-<signature16>.<ext>
+ *
+ * `place` is the photograph's position in the listing's own gallery — the
+ * index of the candidate it was kept from — not the order it happened to be
+ * kept in. So a photograph kept by a later attempt still takes its own place,
+ * and the listing's lead photograph is the one a cover draws whichever
+ * attempt kept it. The checksum and the perceptual signature are what a later
+ * attempt needs to refuse a second copy of a photograph already kept.
+ *
+ * Only a photograph that passed every check is ever written there: the
+ * server's own verdict that it is a photograph, the print floor, and one copy
+ * of each picture. So a reader takes what it finds, in place order.
+ */
+
+/** The folder a report's captured photographs live in, inside `listing-images`. */
+export const REPORT_PHOTOGRAPH_CAPTURE_PREFIX = 'report-photographs';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CAPTURE_NAME = /^(\d{2})-(\d{2,5})x(\d{2,5})-([0-9a-f]{16})-([0-9a-f]{16})\.(jpg|png|webp)$/;
+const HEX16 = /^[0-9a-f]{16}$/;
+
+/** Whether a value is a row id, in the shape the report and job tables use. */
+export function isRecordId(value: unknown): value is string {
+  return typeof value === 'string' && UUID.test(value.trim());
+}
+
+/** The folder for one report, or null for anything that is not a report id. */
+export function captureFolder(reportId: unknown): string | null {
+  return isRecordId(reportId)
+    ? `${REPORT_PHOTOGRAPH_CAPTURE_PREFIX}/${reportId.trim().toLowerCase()}`
+    : null;
+}
+
+const EXTENSION_BY_CONTENT_TYPE: Record<string, 'jpg' | 'png' | 'webp'> = {
+  'image/jpeg': 'jpg',
+  'image/pjpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+export interface CaptureObjectParts {
+  /** The candidate's index in the listing's gallery, 0–99. */
+  place: number;
+  width: number;
+  height: number;
+  /** The bytes' SHA-256, hex; the first 16 characters are kept. */
+  checksum: string;
+  /** The picture's 64-bit difference hash, as the server's analysis states it. */
+  signature: string;
+  contentType: string;
+}
+
+/** The object name for one captured photograph, or null where it cannot be named. */
+export function captureObjectName(parts: CaptureObjectParts): string | null {
+  const extension = EXTENSION_BY_CONTENT_TYPE[String(parts.contentType ?? '').toLowerCase()];
+  const checksum = /^[0-9a-f]{16,}$/i.test(parts.checksum ?? '') ? parts.checksum.slice(0, 16).toLowerCase() : null;
+  const signature = HEX16.test(String(parts.signature ?? '').toLowerCase()) ? parts.signature.toLowerCase() : null;
+  const { place, width, height } = parts;
+  if (!extension || !checksum || !signature) return null;
+  if (!Number.isInteger(place) || place < 0 || place > 99) return null;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 10 || height < 10) return null;
+  if (width > 99_999 || height > 99_999) return null;
+  return `${String(place).padStart(2, '0')}-${width}x${height}-${checksum}-${signature}.${extension}`;
+}
+
+export interface CapturedPhotograph {
+  name: string;
+  /** The candidate's index in the listing's gallery. */
+  place: number;
+  width: number;
+  height: number;
+  checksum: string;
+  signature: string;
+}
+
+/** What one object name says, or null for anything this module did not write. */
+export function parseCaptureObjectName(name: unknown): CapturedPhotograph | null {
+  if (typeof name !== 'string') return null;
+  const match = CAPTURE_NAME.exec(name);
+  if (!match) return null;
+  return {
+    name,
+    place: Number(match[1]),
+    width: Number(match[2]),
+    height: Number(match[3]),
+    checksum: match[4],
+    signature: match[5],
+  };
+}
+
+/**
+ * Every captured photograph a report's folder holds, in place order.
+ *
+ * One per place and one per checksum: the capture never writes a second copy,
+ * and this is where that is also true of a folder written some other way, so
+ * the guarantee does not rest on the write path alone.
+ */
+export function heldCapturedPhotographs(
+  objects: ReadonlyArray<{ name?: unknown }> | null | undefined,
+): CapturedPhotograph[] {
+  if (!objects?.length) return [];
+  const sorted = objects
+    .map((object) => parseCaptureObjectName(object?.name))
+    .filter((photo): photo is CapturedPhotograph => photo !== null)
+    .sort((a, b) => a.place - b.place || a.name.localeCompare(b.name));
+  const places = new Set<number>();
+  const checksums = new Set<string>();
+  return sorted.filter((photo) => {
+    if (places.has(photo.place) || checksums.has(photo.checksum)) return false;
+    places.add(photo.place);
+    checksums.add(photo.checksum);
+    return true;
+  });
+}
+
+/**
+ * The captured photographs a report carries, lead first.
+ *
+ * Anything in the folder this module did not name is ignored, and the print
+ * floor is applied again on the way out, because a floor that held only at
+ * write time would not survive a file put there some other way.
+ */
+export function capturedPhotographsForReport(
+  objects: ReadonlyArray<{ name?: unknown }> | null | undefined,
+  limit = REPORT_PHOTOGRAPH_LIMIT,
+): CapturedPhotograph[] {
+  return heldCapturedPhotographs(objects)
+    .filter((photo) => Math.max(photo.width, photo.height) >= MIN_PRINT_LONG_EDGE_PX)
+    .slice(0, Math.max(0, limit));
+}
+
+/* -------------------------------------------------------------------------- */
+/* The capture's own record                                                    */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * `capture.json`, beside the photographs.
+ *
+ * The request that asks for a report's photographs is sent once, from the
+ * browser, as the report is created, and nothing about that moment can be
+ * relied on to finish the job: the tab may close, the connection may drop, a
+ * platform error may answer it, the listing's host may be slow or down. So the
+ * first thing the server does with a request is write down what was asked —
+ * which extraction, for which author — and everything after that can be done
+ * by a later request that names only the report. The work itself runs after
+ * the request has been answered, so nobody's wait bounds it.
+ *
+ * A candidate is SETTLED when it has a verdict another attempt could not
+ * change: kept, or refused for a lasting reason (not a photograph, too small to
+ * print, a copy of one already kept, gone from its host). One refused for a
+ * passing reason — the host did not answer, the attempt ran out of time — is
+ * left for the next attempt. A capture is FINISHED when the report's
+ * photographs are final: the first `REPORT_PHOTOGRAPH_LIMIT` places of the
+ * listing's gallery are decided, or every candidate is settled, or
+ * `CAPTURE_MAX_ATTEMPTS` attempts have been made. After that, whatever was kept
+ * is what the report carries, and nothing asks again.
+ */
+
+/** The record's object name, inside the report's folder. Not a photograph name. */
+export const CAPTURE_RECORD_NAME = 'capture.json';
+/** Attempts a capture may make before what is left is given up. */
+export const CAPTURE_MAX_ATTEMPTS = 4;
+/** How long one attempt holds the capture: longer than any attempt can run. */
+export const CAPTURE_LEASE_MS = 150_000;
+/** How soon after an attempt that left work over a document may ask for another. */
+export const CAPTURE_RETRY_AFTER_MS = 60_000;
+
+export type CaptureFinish = 'limit' | 'exhausted' | 'attempts' | 'no_candidates';
+
+export interface CaptureRecord {
+  version: 1;
+  /** The extraction whose named photographs these are. */
+  scrapeJobId: string;
+  /**
+   * The address the extraction read off the listing page, which matched the
+   * report's when the capture was asked for. Every reader holds the report's
+   * address against it again (rule 4), because a report can be edited after.
+   */
+  source: PhotographSource;
+  /** The report's author, who asked. */
+  requestedBy: string;
+  requestedAt: string;
+  attempts: number;
+  lastAttemptAt: string | null;
+  /** Until when the attempt now running holds the capture. */
+  leaseUntil: string | null;
+  /** Candidate URLs decided for good: kept, or refused for a lasting reason. */
+  settled: string[];
+  /** Every refusal, counted by reason, across every attempt. */
+  refused: Record<string, number>;
+  finished: { at: string; reason: CaptureFinish } | null;
+}
+
+/**
+ * What a document drawn now should do about a report's photographs.
+ *
+ * - `none` — nothing was ever asked for.
+ * - `complete` — the photographs are final.
+ * - `running` — an attempt holds the capture now.
+ * - `waiting` — work is left over, and the last attempt was too recent to ask again.
+ * - `pending` — work is left over and may be asked for now.
+ */
+export type CaptureState = 'none' | 'complete' | 'running' | 'waiting' | 'pending';
+
+export const CAPTURE_STATES: readonly CaptureState[] = ['none', 'complete', 'running', 'waiting', 'pending'];
+
+const FINISHES: readonly CaptureFinish[] = ['limit', 'exhausted', 'attempts', 'no_candidates'];
+
+function instant(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+function stamp(value: unknown): string | null {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+/** A new record, for a capture nothing has been asked for yet. */
+export function newCaptureRecord(args: {
+  scrapeJobId: string;
+  requestedBy: string;
+  now: number;
+  source: PhotographSource;
+}): CaptureRecord {
+  return {
+    version: 1,
+    scrapeJobId: args.scrapeJobId.trim().toLowerCase(),
+    source: { address: args.source.address.trim(), suburb: args.source.suburb.trim() },
+    requestedBy: args.requestedBy,
+    requestedAt: instant(args.now),
+    attempts: 0,
+    lastAttemptAt: null,
+    leaseUntil: null,
+    settled: [],
+    refused: {},
+    finished: null,
+  };
+}
+
+/** A stored record, or null for anything that is not one — which is then treated as never written. */
+export function parseCaptureRecord(value: unknown): CaptureRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.version !== 1) return null;
+  if (!isRecordId(v.scrapeJobId)) return null;
+  if (typeof v.requestedBy !== 'string' || !v.requestedBy.trim()) return null;
+  // A record that cannot say whose address its photographs are of is not one
+  // any reader may act on (rule 4).
+  const source = v.source && typeof v.source === 'object' && !Array.isArray(v.source)
+    ? v.source as Record<string, unknown>
+    : null;
+  const sourceAddress = typeof source?.address === 'string' ? source.address.trim() : '';
+  const sourceSuburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!sourceAddress || !sourceSuburb) return null;
+  const requestedAt = stamp(v.requestedAt);
+  if (!requestedAt) return null;
+  const attempts = Number(v.attempts);
+  if (!Number.isInteger(attempts) || attempts < 0) return null;
+
+  const settled = Array.isArray(v.settled)
+    ? [...new Set(v.settled.filter((url): url is string => typeof url === 'string' && url.length > 0))]
+    : [];
+  const refused: Record<string, number> = {};
+  if (v.refused && typeof v.refused === 'object' && !Array.isArray(v.refused)) {
+    for (const [why, count] of Object.entries(v.refused as Record<string, unknown>)) {
+      if (Number.isInteger(count) && (count as number) > 0) refused[why] = count as number;
+    }
+  }
+  let finished: CaptureRecord['finished'] = null;
+  if (v.finished && typeof v.finished === 'object') {
+    const f = v.finished as Record<string, unknown>;
+    const at = stamp(f.at);
+    if (at && FINISHES.includes(f.reason as CaptureFinish)) finished = { at, reason: f.reason as CaptureFinish };
+  }
+  return {
+    version: 1,
+    scrapeJobId: v.scrapeJobId.trim().toLowerCase(),
+    source: { address: sourceAddress, suburb: sourceSuburb },
+    requestedBy: v.requestedBy,
+    requestedAt,
+    attempts,
+    lastAttemptAt: stamp(v.lastAttemptAt),
+    leaseUntil: stamp(v.leaseUntil),
+    settled,
+    refused,
+    finished,
+  };
+}
+
+/** The state a record describes at `now` (epoch milliseconds). */
+export function captureStateOf(record: CaptureRecord | null, now: number): CaptureState {
+  if (!record) return 'none';
+  if (record.finished) return 'complete';
+  const lease = Date.parse(record.leaseUntil ?? '');
+  if (Number.isFinite(lease) && lease > now) return 'running';
+  const last = Date.parse(record.lastAttemptAt ?? '');
+  if (Number.isFinite(last) && now - last < CAPTURE_RETRY_AFTER_MS) return 'waiting';
+  return 'pending';
+}
+
+/** The record with an attempt begun: counted, and holding the capture for its lease. */
+export function beginCaptureAttempt(record: CaptureRecord, now: number): CaptureRecord {
+  return {
+    ...record,
+    attempts: record.attempts + 1,
+    lastAttemptAt: instant(now),
+    leaseUntil: instant(now + CAPTURE_LEASE_MS),
+  };
+}
+
+const LASTING_REFUSALS = new Set([
+  'page_furniture',
+  'blocked_url',
+  'unsupported_type',
+  'too_large',
+  'too_small',
+  'not_a_photograph',
+  'unreadable',
+  'below_print_floor',
+  'duplicate',
+  'floorplan',
+  'graphic',
+  'undecodable',
+  'unnameable',
+]);
+
+/**
+ * Whether a refusal is a verdict another attempt could not change.
+ *
+ * Passing: the host did not answer (`fetch_failed`, a 5xx, 408, 425 or 429),
+ * the attempt ran out of time or pixels (`out_of_time`, `deferred`), the
+ * decoder gave no verdict (`unanalysed`), the upload failed. Anything not
+ * named here counts as passing: `CAPTURE_MAX_ATTEMPTS` bounds what a wrong
+ * guess that way costs, while a passing failure counted as lasting loses a
+ * photograph for good.
+ */
+export function isLastingRefusal(reason: string): boolean {
+  const http = /^http_(\d{3})$/.exec(reason);
+  if (http) {
+    const status = Number(http[1]);
+    return status >= 400 && status < 500 && status !== 408 && status !== 425 && status !== 429;
+  }
+  return LASTING_REFUSALS.has(reason);
+}
+
+/** How many photographs are held at places ahead of `place` in the listing's gallery. */
+export function placesTakenBefore(held: Iterable<number>, place: number): number {
+  let count = 0;
+  for (const taken of held) if (taken < place) count += 1;
+  return count;
+}
+
+/**
+ * The candidates an attempt should try, as indexes into the listing's gallery,
+ * in its order: every one not yet settled and not already kept, up to the
+ * point where the first `limit` places are taken.
+ */
+export function candidatesToTry(
+  candidates: readonly string[],
+  settled: ReadonlySet<string>,
+  held: readonly CapturedPhotograph[],
+  limit = REPORT_PHOTOGRAPH_LIMIT,
+): number[] {
+  const kept = new Set(held.map((photo) => photo.place));
+  const indexes: number[] = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (placesTakenBefore(kept, index) >= limit) break;
+    if (kept.has(index) || settled.has(candidates[index])) continue;
+    indexes.push(index);
+  }
+  return indexes;
+}
+
+/**
+ * Whether the report's photographs are final, and why.
+ *
+ * `limit` once the first `limit` places are taken and nothing ahead of the
+ * last of them is still undecided — a photograph ahead of it could still
+ * displace one. `exhausted` once every candidate is settled.
+ */
+export function captureIsFinal(
+  candidates: readonly string[],
+  settled: ReadonlySet<string>,
+  held: readonly CapturedPhotograph[],
+  limit = REPORT_PHOTOGRAPH_LIMIT,
+): 'limit' | 'exhausted' | null {
+  const kept = new Set(held.map((photo) => photo.place));
+  const decided = (index: number) => kept.has(index) || settled.has(candidates[index]);
+  const places = [...kept].sort((a, b) => a - b);
+  if (limit > 0 && places.length >= limit) {
+    const cutoff = places[limit - 1];
+    let ahead = true;
+    for (let index = 0; index < cutoff && index < candidates.length; index += 1) {
+      if (!decided(index)) { ahead = false; break; }
+    }
+    if (ahead) return 'limit';
+  }
+  return candidates.every((_, index) => decided(index)) ? 'exhausted' : null;
+}
+
+/** The record once an attempt is over: what it settled, what it refused, and whether that was the last. */
+export function finishCaptureAttempt(
+  record: CaptureRecord,
+  args: {
+    now: number;
+    candidates: readonly string[];
+    settledNow: readonly string[];
+    refusalsNow: readonly string[];
+    held: readonly CapturedPhotograph[];
+  },
+): CaptureRecord {
+  const settled = [...new Set([...record.settled, ...args.settledNow])];
+  const refused = { ...record.refused };
+  for (const why of args.refusalsNow) refused[why] = (refused[why] ?? 0) + 1;
+  const final: CaptureFinish | null = args.candidates.length === 0
+    ? 'no_candidates'
+    : captureIsFinal(args.candidates, new Set(settled), args.held)
+      ?? (record.attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+  return {
+    ...record,
+    settled,
+    refused,
+    leaseUntil: null,
+    finished: final ? { at: instant(args.now), reason: final } : null,
+  };
 }

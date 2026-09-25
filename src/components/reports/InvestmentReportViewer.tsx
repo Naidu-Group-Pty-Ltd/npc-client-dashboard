@@ -28,6 +28,7 @@ import { RegenerateWithPerplexityButton } from './RegenerateWithPerplexityButton
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { TierBadge, type ReportTier } from './TierBadge';
 import { TierSwitcher } from './TierSwitcher';
+import { generatedAtLabel, reportGeneratedAt } from '@/lib/reports/investment/reportGeneratedAt.pure';
 
 interface InvestmentReport {
   id: string;
@@ -36,6 +37,11 @@ interface InvestmentReport {
   report_content: string; // Required for the viewer (lazy-fetched before opening)
   sources_content?: string | null;
   created_at: string;
+  updated_at?: string | null;
+  variant_generated_at?: string | null;
+  /** When this report was generated — see `reportGeneratedAt.pure.ts`. */
+  generated_at?: string | null;
+  generated_at_basis?: 'generation' | 'activity' | 'created' | null;
   current_version?: number;
   status?: string;
   report_tier?: ReportTier;
@@ -233,7 +239,7 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(report.created_at), 'yyyy-MM-dd')}.txt`;
+    a.download = `investment-report-${report.property_address.replace(/[^a-zA-Z0-9]/g, '-')}-${format(new Date(reportGeneratedAt(report)?.at ?? report.created_at), 'yyyy-MM-dd')}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -435,7 +441,7 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                     </CardTitle>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Calendar className="h-3 w-3 shrink-0" />
-                      Generated on {format(new Date(report.created_at), 'PPpp')}
+                      {generatedAtLabel(reportGeneratedAt(report)?.basis)} on {format(new Date(reportGeneratedAt(report)?.at ?? report.created_at), 'PPpp')}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">

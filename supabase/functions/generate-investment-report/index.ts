@@ -89,6 +89,7 @@ import {
   withdrawReuse,
   type AcquisitionSubject,
 } from '../_shared/reports/investment/acquisitionReuse.pure.ts';
+import { PLANNING_ANSWER_VERSION } from '../_shared/planning/planningAnswerVersion.pure.ts';
 import {
   coordinateProvenance,
   enrichmentCoordinate,
@@ -3154,6 +3155,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             storedPacket: (priorRun?.data_packet ?? null) as Record<string, unknown> | null,
             subject: acquisitionSubject,
             nowMs: Date.now(),
+            // A planning answer read under another version is asked again.
+            planningAnswerVersion: PLANNING_ANSWER_VERSION,
           });
 
           if (Object.keys(plan.values).length > 0) {
@@ -4276,6 +4279,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                     lat: planningCoords!.lat,
                     lng: planningCoords!.lng,
                   },
+                  // …and under which answer version it was read, so a later
+                  // generation does not keep an answer an older service shaped
+                  // (`planningAnswerVersionOf`).
+                  answerVersion: PLANNING_ANSWER_VERSION,
                 },
               };
               console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });

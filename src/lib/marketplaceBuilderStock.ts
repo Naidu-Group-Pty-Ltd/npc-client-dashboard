@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { BuilderStockItem, BuilderStockSelection } from '@/lib/builderStock';
 import type { MirrorSource } from '../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
+import type { PropertyDetail } from '../../supabase/functions/_shared/builderStock/propertyDetail.pure';
 
 export const marketplaceStockKeys = {
   root: () => ['marketplace', 'builder-stock'] as const,
@@ -178,4 +179,41 @@ export async function marketplaceStockImageUrl(imageId: string): Promise<string 
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// One property — the page a card, a map pin or a link opens.
+// ---------------------------------------------------------------------------
+
+export type {
+  PropertyActivation as MarketplaceStockActivation,
+  PropertyDocument as MarketplaceStockDocument,
+  PropertyPhoto as MarketplaceStockPhoto,
+} from '../../supabase/functions/_shared/builderStock/propertyDetail.pure';
+
+/**
+ * What `get_stock_item` answers: the card's own record, plus the property's
+ * photographs and documents as the Builders Network published them, and its
+ * activation record. `clients_visible` is false when the server withheld
+ * client names from this reader.
+ */
+export interface MarketplaceStockDetail extends PropertyDetail {
+  record: BuilderStockItem;
+}
+
+/** The address a builder property is opened at. One spelling, used everywhere. */
+export function builderStockPropertyPath(stockItemId: string): string {
+  return `/listings/builder-stock/${encodeURIComponent(stockItemId)}`;
+}
+
+export function useMarketplaceStockItem(stockItemId: string, enabled = true) {
+  return useQuery({
+    queryKey: [...marketplaceStockKeys.root(), 'item', stockItemId] as const,
+    enabled: enabled && !!stockItemId,
+    // A property that is not there is an answer, not a transient fault.
+    retry: (count, error) => !/not found/i.test((error as Error)?.message ?? '') && count < 2,
+    queryFn: () => invoke<MarketplaceStockDetail & { success?: boolean }>({
+      operation: 'get_stock_item', stock_item_id: stockItemId,
+    }),
+  });
 }

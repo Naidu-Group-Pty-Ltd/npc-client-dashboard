@@ -163,7 +163,7 @@ import { planningCouncilName } from '../_shared/reports/market/openData/projecti
 import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
 import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
-import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
+import { attributeTableYearBuilt, composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
@@ -6247,7 +6247,15 @@ ${[
   ['Bedrooms', effectiveBeds || null],
   ['Bathrooms', effectiveBaths || null],
   ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
-  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
+  // An existing property's year may be filed under `constructionYear` (a
+  // listing extraction puts it there) and the stored spec reads it; a new
+  // build's construction year is the 10 Year Cash Flow's, and stays out.
+  ['Year Built', attributeTableYearBuilt({
+    buildType: effectiveBuildType,
+    overrides: mergedOverrides,
+    details: propertyDetails,
+    storedYearBuilt: propertySpecs.year_built,
+  })],
   ['Condition', propertyDetails?.condition ?? null],
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}

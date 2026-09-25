@@ -304,8 +304,13 @@ jobs:
       # without being on it". A list that has to be edited to stay correct will
       # be wrong again, so there is no list. Vitest matches these positionally
       # as path substrings, which is why a bare prefix picks up every file.
+      #
+      # The property page's specs sit beside the components and pages they
+      # pin, so their prefixes are named here too — again as prefixes. The
+      # media converger's spec starts a throwaway Postgres from the runner's
+      # own server binaries and refuses to skip in CI.
       - name: Unit tests (Builder Stock images)
-        run: npx vitest run src/lib/__tests__/builderStock
+        run: npx vitest run src/lib/__tests__/builderStock src/components/listings/__tests__/builderStock src/pages/__tests__/builderStock
 
       # The listing photographs' tests sit directly in `src/lib`, where no other
       # step's filter reaches them — so the thresholds `listingImageVision.test.ts`

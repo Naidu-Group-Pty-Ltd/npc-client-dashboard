@@ -80,6 +80,15 @@ export default function BuilderStockProperty() {
   const query = useMarketplaceStockItem(stockItemId);
   const detail = query.data ?? null;
   const item = detail?.record ?? null;
+  /*
+   * A FRONTEND CAN BE PUBLISHED AHEAD OF ITS FUNCTION. Until the deployment's
+   * `get_stock_item` returns them, these are absent rather than empty — so the
+   * page reads them as "nothing yet": the gallery falls back to the card's own
+   * picture, and no document or activation is listed.
+   */
+  const photos = detail?.photos ?? [];
+  const documents = detail?.documents ?? [];
+  const activations = detail?.activations ?? [];
 
   const back = (
     <Button asChild variant="ghost" size="sm" className="-ml-2 rounded-full">
@@ -164,7 +173,7 @@ export default function BuilderStockProperty() {
           <Badge variant="outline" className={cn('font-medium', STOCK_AVAILABILITY_CLASSES[availability])}>
             {STOCK_AVAILABILITY_LABELS[availability] ?? 'Not stated'}
           </Badge>
-          {detail?.activations.some((a) => a.status !== 'withdrawn') ? (
+          {activations.some((a) => a.status !== 'withdrawn') ? (
             <Badge variant="outline" className="border-primary/30 bg-primary/10 font-medium text-primary">
               <CheckCircle2 className="mr-1 h-3 w-3" aria-hidden />Activated
             </Badge>
@@ -182,7 +191,7 @@ export default function BuilderStockProperty() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:items-start">
         <div className="order-1 min-w-0 lg:order-none lg:col-start-1 lg:row-start-1">
           <BuilderStockGallery
-            photos={detail?.photos}
+            photos={photos}
             fallback={primaryStockImage(item)}
             alt={title}
           />
@@ -198,12 +207,12 @@ export default function BuilderStockProperty() {
             </Card>
           ) : null}
 
-          {detail?.documents.length ? (
+          {documents.length ? (
             <Card>
               <CardHeader><CardTitle className="text-base">Builder documents</CardTitle></CardHeader>
               <CardContent>
                 <ul aria-label="Documents" className="grid gap-2 sm:grid-cols-2">
-                  {detail.documents.map((document) => {
+                  {documents.map((document) => {
                     const Icon = DOCUMENT_ICON[document.kind] ?? FileText;
                     return (
                       <li key={document.key}>
@@ -276,9 +285,9 @@ export default function BuilderStockProperty() {
                 <CardTitle id="activation-heading" className="text-base">Activation</CardTitle>
               </CardHeader>
               <CardContent>
-                {detail?.activations.length ? (
+                {activations.length ? (
                   <ol className="space-y-3">
-                    {detail.activations.map((activation) => (
+                    {activations.map((activation) => (
                       <li key={activation.id} className="rounded-lg border border-border/60 p-3 text-sm">
                         <p className="font-medium text-foreground">
                           {STOCK_SELECTION_STATUS_LABELS[activation.status as StockSelectionStatus] ?? activation.status}

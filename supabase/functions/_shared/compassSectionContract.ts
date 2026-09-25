@@ -155,6 +155,38 @@ export function documentRules(tier: CanonicalTier): string {
   ].join('\n');
 }
 
+/**
+ * What each registry component IS, in a reader's words.
+ *
+ * The guide used to list the registry's own identifiers — "Required
+ * visual/data components: planningActionTable, attributeTable,
+ * confidenceChip" — and the model printed one as a label: page 10 of the
+ * 60 Lawley Street Compass (25 Sep 2026) read "ConfidenceChip: Desktop
+ * retrieval — parcel-level planning confirmation required". An identifier WE
+ * invented is debris on a client's page (`transportSourceName`'s rule), so
+ * the model is told what to draw, never what we call it. An id with no entry
+ * is described generically rather than printed.
+ */
+const COMPONENT_DESCRIPTION: Readonly<Record<string, string>> = {
+  amenityMatrix: 'a table of nearby amenities, each with its distance and how that distance was measured',
+  attributeTable: 'a short two-column table of the recorded attributes',
+  chart: 'one chart of measured figures',
+  confidenceChip: 'one closing line on how far the evidence goes, opening with the word "Confidence:"',
+  dueDiligenceChecklist: 'a checklist of the checks still owed, in the order they are owed',
+  infrastructureTimeline: 'the named projects, each with the milestone and the date the publisher recorded for it',
+  kpiTiles: 'a short row of headline figures',
+  narrative: 'continuous narrative',
+  planningActionTable: 'a table of each control with the action it calls for',
+  riskRegister: 'the risk register table',
+  scorecard: 'the scorecard',
+  strengthsWatchPoints: 'strengths and watch points as two short lists',
+  trendTable: 'a table of the measured trend',
+};
+
+export function describeComponent(id: string): string {
+  return COMPONENT_DESCRIPTION[id] ?? 'a supporting table or figure';
+}
+
 /** One section's entry in the guide: its budget, purpose, ceiling and visuals. */
 export function sectionGuideEntry(section: CompassSectionDefinition): string {
   return [
@@ -163,7 +195,8 @@ export function sectionGuideEntry(section: CompassSectionDefinition): string {
     `- Purpose: ${section.purpose}`,
     `- Narrative word ceiling: ${section.maxWordCount} (a ceiling, not a target)`,
     section.visualComponents.length
-      ? `- Required visual/data components: ${section.visualComponents.join(', ')}`
+      ? `- Required visual/data components: ${section.visualComponents.map(describeComponent).join('; ')}. `
+        + 'These describe what to draw; never print them, or any name for them, as a label.'
       : '- Required visual/data components: narrative only',
   ].join('\n');
 }

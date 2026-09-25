@@ -338,7 +338,7 @@ async function askNominatim(
   const paused = pausedAttempt('nominatim');
   if (paused) return paused;
   const allowance = await consumeOsmDailyAllowance(supabase, 'geocoding', opts.env);
-  if (!allowance.ok) {
+  if (allowance.ok === false) {
     return { ok: false, reason: 'budget', providerRefused: true, capReason: allowance.reason, detail: `nominatim: ${allowance.reason}` };
   }
   const base = (opts.env('GEOCODER_OSM_URL') || NOMINATIM_PUBLIC_BASE).trim();
@@ -381,7 +381,7 @@ async function askPhoton(
   // only (`isPublicPhotonBase`).
   if (isPublicPhotonBase(base)) {
     const allowance = await consumeOsmDailyAllowance(supabase, 'geocoding', opts.env);
-    if (!allowance.ok) {
+    if (allowance.ok === false) {
       return { ok: false, reason: 'budget', providerRefused: true, capReason: allowance.reason, detail: `photon: ${allowance.reason}` };
     }
     // Photon's operators ask for fair use rather than a rate; one request a
@@ -487,7 +487,7 @@ async function gnafManifest(base: string, timeoutMs: number): Promise<GnafRead<s
     return { ok: true, value: gnafManifestMemo.release };
   }
   const read = await gnafFetch(gnafUrl(base, GNAF_MANIFEST_PATH), timeoutMs);
-  if (!read.ok) return read;
+  if (read.ok === false) return { ok: false, attempt: read.attempt };
   const manifest = read.value ? gnafJson(await gnafText(read.value)) : null;
   if (!manifest || manifest.format !== GNAF_SHARD_FORMAT) {
     providerPausedUntil.set('gnaf', Date.now() + PAUSE_AFTER_STATUS_MS.tooMany);
@@ -509,7 +509,7 @@ async function gnafLocalities(base: string, timeoutMs: number): Promise<GnafRead
     return { ok: true, value: gnafLocalityMemo.lookup };
   }
   const read = await gnafFetch(gnafUrl(base, GNAF_LOCALITY_INDEX_PATH), timeoutMs);
-  if (!read.ok) return read;
+  if (read.ok === false) return { ok: false, attempt: read.attempt };
   const index = read.value ? gnafJson(await gnafText(read.value)) : null;
   if (!index || index.format !== GNAF_SHARD_FORMAT) return { ok: false, attempt: gnafUnavailable('the locality index is missing or unreadable') };
   const lookup = localityLookupOf(index as unknown as GnafLocalityIndex);
@@ -526,7 +526,7 @@ async function gnafShardRows(base: string, state: AuState, postcode: string, tim
     return { ok: true, value: memo.rows };
   }
   const read = await gnafFetch(gnafUrl(base, gnafShardPath(state, postcode)), timeoutMs);
-  if (!read.ok) return read;
+  if (read.ok === false) return { ok: false, attempt: read.attempt };
   let rows: GnafRow[] = [];
   if (read.value) {
     const parsed = parseGnafShard(await gnafText(read.value), state, postcode);
@@ -561,10 +561,10 @@ async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Prom
   const paused = pausedAttempt('gnaf');
   if (paused) return paused;
   const manifest = await gnafManifest(base, timeoutMs);
-  if (!manifest.ok) return manifest.attempt;
+  if (manifest.ok === false) return manifest.attempt;
 
   const target = gnafTargetOf(plan.ask);
-  if (!target.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${target.reason}` };
+  if (target.ok === false) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${target.reason}` };
   const asked = registerAskOf(plan);
   if (!asked) {
     return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the ask names no street number or lot — a street alone is not a register question' };
@@ -575,7 +575,7 @@ async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Prom
     postcodes = [target.postcode];
   } else {
     const lookup = await gnafLocalities(base, timeoutMs);
-    if (!lookup.ok) return lookup.attempt;
+    if (lookup.ok === false) return lookup.attempt;
     postcodes = postcodesForLocalities(lookup.value, target.state, plan.localityCandidates);
     if (postcodes.length === 0) {
       return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: no postal area in ${target.state} holds ${plan.localityCandidates.join(' / ') || 'an unnamed suburb'}` };
@@ -585,11 +585,11 @@ async function askGnaf(plan: GeocodePlan, base: string, timeoutMs: number): Prom
   const rows: GnafRow[] = [];
   for (const postcode of postcodes) {
     const shard = await gnafShardRows(base, target.state, postcode, timeoutMs);
-    if (!shard.ok) return shard.attempt;
+    if (shard.ok === false) return shard.attempt;
     rows.push(...shard.value);
   }
   const choice = chooseGnafRow(rows, asked, plan.localityCandidates);
-  if (!choice.ok) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${choice.reason}` };
+  if (choice.ok === false) return { ok: false, reason: 'no_match', providerRefused: false, detail: `gnaf: ${choice.reason}` };
   const result = fromGnaf(choice.match, manifest.value);
   if (result.precision === 'locality') {
     return { ok: false, reason: 'no_match', providerRefused: false, detail: 'gnaf: the register places this address only at its locality — the ABS is the authority on where a suburb is' };
@@ -753,7 +753,7 @@ async function betterRememberedStreet(args: {
     console.log(`[geocoder] ${feature}: gnaf address for "${address.slice(0, 80)}" — replaces a remembered ${remembered.provider} street answer`);
     return { ok: true, result, fromCache: false, tried };
   }
-  if (!attempt.ok && attempt.providerRefused) {
+  if (attempt.ok === false && attempt.providerRefused) {
     console.warn(`[geocoder] ${feature}: ${attempt.detail} — the remembered ${remembered.provider} street answer stands`);
     return { ok: true, result: remembered, fromCache: true, tried };
   }
@@ -854,9 +854,9 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
       // one street through two) makes the structured search find nothing, so
       // the plan's second question drops it — and accepts only the street,
       // in the postal area asked (`suburblessAnswerRefusal`).
-      if (!attempt.ok && attempt.reason === 'no_match' && plan.withoutSuburb) {
+      if (attempt.ok === false && attempt.reason === 'no_match' && plan.withoutSuburb) {
         const second = await askNominatim(supabase, plan.withoutSuburb, { timeoutMs, env }, plan.withoutSuburb.postcode ?? null);
-        if (second.ok || second.reason !== 'no_match') attempt = second;
+        if (second.ok === true || second.reason !== 'no_match') attempt = second;
       }
     } else if (provider === 'photon') {
       tried.push(provider);
@@ -873,18 +873,18 @@ export async function geocodeAddress(supabase: any, ask: GeocodeAsk, options: Ge
       const [first, ...rest] = plan.localityCandidates;
       attempt = await askAbsLocality(fullAsk, first ?? null, state, postcode, timeoutMs);
       for (const alternative of rest) {
-        if (attempt.ok || attempt.reason !== 'no_match') break;
+        if (attempt.ok === true || attempt.reason !== 'no_match') break;
         const next = await askAbsLocality(fullAsk, alternative, state, postcode, timeoutMs);
-        if (next.ok || next.reason !== 'no_match') attempt = next;
+        if (next.ok === true || next.reason !== 'no_match') attempt = next;
       }
     } else {
       tried.push(provider);
       attempt = await askGoogle(supabase, fullAsk, { timeoutMs, env, feature });
     }
-    if (attempt.ok) {
+    if (attempt.ok === true) {
       const result = await withCouncil(attempt.result, options.wantLga, timeoutMs);
       const verdict = cacheVerdict(result, failures);
-      if (verdict.write) {
+      if (verdict.write === true) {
         await writeCache(supabase, key, fullAsk, result);
       } else {
         console.warn(`[geocoder] ${feature}: ${verdict.reason}`);

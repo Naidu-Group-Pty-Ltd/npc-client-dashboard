@@ -237,7 +237,7 @@ describe('a remembered suburb centroid is provisional', () => {
     const db = fakeDb(cachedLocality(10 * 60_000));
     const out = await chain.geocodeAddress(db, ASK, { env: ENV, feature: 'spec', allowLocalityFallback: false });
     expect(out.ok).toBe(false);
-    if (out.ok) return;
+    if (out.ok === true) return;
     expect(out.providerRefused).toBe(true);
   });
 });

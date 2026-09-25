@@ -45,24 +45,23 @@ export function DashboardSidebar() {
   const matchesFilter = (title: string) =>
     normalisedFilter.length === 0 || title.toLowerCase().includes(normalisedFilter);
 
-  const groupedNavItems = useMemo(
-    () =>
-      NAVIGATION_GROUP_ORDER.map((title) => ({
-        title,
-        items: visibleNavItems.filter(
-          (item) => item.group === title && matchesFilter(item.title),
-        ),
-      })).filter((group) => group.items.length > 0),
-     
-    [visibleNavItems, normalisedFilter],
-  );
+  const groupedNavItems = useMemo(() => {
+    const portalItems = visibleAdminItems.filter((item) => item.group === 'Portals');
+    return NAVIGATION_GROUP_ORDER.map((title) => ({
+      title,
+      items: (title === 'Portals' ? portalItems : visibleNavItems).filter(
+        (item) => item.group === title && matchesFilter(item.title),
+      ),
+    })).filter((group) => group.items.length > 0);
+  }, [visibleAdminItems, visibleNavItems, normalisedFilter]);
 
   const groupedAdminItems = useMemo(
     () => ({
       title: 'Administration',
-      items: visibleAdminItems.filter((item) => matchesFilter(item.title)),
+      items: visibleAdminItems.filter(
+        (item) => item.group === 'Administration' && matchesFilter(item.title),
+      ),
     }),
-     
     [visibleAdminItems, normalisedFilter],
   );
 

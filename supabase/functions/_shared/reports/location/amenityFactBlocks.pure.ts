@@ -90,6 +90,39 @@ export const TRANSPORT_WEB_SEARCH_RULE = webSearchIsNotARetrieval(
   'the stop register above',
 );
 
+/**
+ * What may be said about a bus route or a timetable this report did not read.
+ *
+ * The Compass for 60 Lawley Street, Spalding (25 Sep 2026) described route 852
+ * as running "five daily services, two weekday school-bus runs and three
+ * Saturday-morning services", from the City's locality profile. The
+ * operator's own current timetable (the PTA's GTFS, valid 22 Sep to 21 Dec
+ * 2026) runs it roughly hourly on weekdays. A profile is not a timetable, and
+ * this report reads neither, so the permitted form is the one a reader can
+ * act on: who publishes the timetable, and that it should be checked.
+ */
+export const TRANSPORT_TIMETABLE_RULE = 'A bus route, a stop or a timetable a live search finds is not a '
+  + 'retrieval either. You may say that the operator publishes routes or a timetable for the area and name '
+  + 'the operator, attributing it as the operator\'s published information. Do NOT state a frequency, a '
+  + 'number of services, a first or last service time or a walking time from any of it, and never take '
+  + 'service information from a council, community or locality profile — a profile is not a timetable and '
+  + 'goes out of date. Write instead that the current service pattern should be checked on the operator\'s '
+  + 'own timetable.';
+
+/** A reader's name for where a station count came from, and the radius that source searched. */
+const STATION_COUNT_SOURCE: Readonly<Record<string, { label: string; radiusKm: number; counts: string }>> = {
+  osm_amenity_register: {
+    label: 'the OpenStreetMap amenity register held by this platform',
+    radiusKm: 2,
+    counts: 'rail stations, halts, tram stops and transport interchanges — bus stops are not in it',
+  },
+  google_places: {
+    label: 'Google Places',
+    radiusKm: 5,
+    counts: 'places Google types as transit stations, which does not reliably include bus stops',
+  },
+};
+
 /** What a provider key means in a reader's words. */
 export const AMENITY_PROVIDER_LABEL: Readonly<Record<string, string>> = {
   register: 'the OpenStreetMap amenity register held by this platform',
@@ -341,6 +374,29 @@ export function transportFactBlocks(li: unknown): string {
     : undefined;
   if (verdictSentence) parts.push(verdictSentence);
 
+  /*
+   * No operator feed covers the property, and the enrichment fell back to a
+   * station COUNT (`stationsWithin2km`, whatever radius its source searched).
+   * This block never read that field, so it told the model "no public-transport
+   * reading was retrieved" while the Location score used a count of zero — and
+   * the model went to a live search, found a bus route, and the report then
+   * said both that there was a bus stop on the street and that there was "no
+   * public transport within the searched radius". The count is stated here as
+   * what it is, with what it cannot see.
+   */
+  const stationCount = verdict ? null : num(t['stationsWithin2km']);
+  const stationSource = STATION_COUNT_SOURCE[text(t['source']) ?? ''];
+  if (stationCount !== null) {
+    parts.push(
+      `Transit stations within ${stationSource ? `${stationSource.radiusKm} km` : 'the search radius'}`
+      + `${stationSource ? `, in ${stationSource.label}` : ''}: **${stationCount}**. `
+      + `This counts ${stationSource ? stationSource.counts : 'stations only, not bus stops'}, and it says nothing `
+      + 'about how often any service runs. It is the reading the investment score\'s Location dimension used.',
+      'No operator stop file (GTFS) covering this location is loaded, so no bus stop, route or timetable was '
+      + 'measured for this property. A count of stations is not a finding that the area has no public transport.',
+    );
+  }
+
   const commute = commuteSentence(o['commute'], stagesOf(li));
   if (commute) parts.push(commute);
 
@@ -351,6 +407,7 @@ export function transportFactBlocks(li: unknown): string {
       + 'call the area well served or car-dependent. Car dependence is a finding that needs a '
       + 'measurement like any other.',
       TRANSPORT_WEB_SEARCH_RULE,
+      TRANSPORT_TIMETABLE_RULE,
     ]).join(' ');
   }
 
@@ -367,6 +424,7 @@ export function transportFactBlocks(li: unknown): string {
     'Mode and service frequency are NOT measured: a stops file carries neither, so no line, no '
     + 'route, no timetable and no "trains every N minutes" may be stated. Nothing above is a score.',
     TRANSPORT_WEB_SEARCH_RULE,
+    TRANSPORT_TIMETABLE_RULE,
   ]).join('\n\n');
 }
 
@@ -399,7 +457,23 @@ export function commuteSentence(commute: unknown, stages: Record<string, unknown
     km !== null ? `${Math.round(km * 10) / 10} km` : null,
   ]).join(' / ');
 
-  const base = `Measured driving commute to **${destination}**: ${measure}.`;
+  /*
+   * The mode is the reading's own, and so is what it is NOT. OSRM routes a
+   * car over the road network with no traffic at all, so its minutes are a
+   * free-flow drive and never a peak-hour commute — the Compass for 60 Lawley
+   * Street (25 Sep 2026) was right to print "without traffic" on one page and
+   * had nothing to stop it calling the same figure a commute on another. The
+   * Distance Matrix fallback answers `public_transit`, which this sentence
+   * used to call a drive as well.
+   */
+  const mode = text(c['mode']);
+  const base = mode === 'public_transit'
+    ? `Measured public-transport journey to **${destination}**: ${measure}, from a journey planner at the `
+      + 'time it was asked — not a peak-hour or guaranteed travel time.'
+    : mode === 'driving'
+      ? `Measured drive to **${destination}**: ${measure}, routed over the road network with no traffic — a `
+        + 'free-flow driving time, not a peak-hour commute.'
+      : `Measured journey to **${destination}**: ${measure}.`;
   if (own === 'no' || own === false) {
     return `${base} ${destination} is NOT this property's own urban centre — it is the state `
       + 'capital, and the centre this property actually belongs to is nearer. Report this figure '

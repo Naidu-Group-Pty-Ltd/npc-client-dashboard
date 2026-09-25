@@ -147,7 +147,12 @@ const PROVIDER_LABEL: Readonly<Record<EvidenceProvider, string>> = {
   cotality: 'Cotality',
   proptrack: 'PropTrack',
   sqm_research: 'SQM Research',
-  abs_res_dwell: 'Australian Bureau of Statistics — Residential Dwellings',
+  // The MEASURE is part of the name, because this series is a mean price of
+  // the whole dwelling stock — not a median sale price, not a price index and
+  // not the stock's total value — and the short form "Residential Dwellings"
+  // let a Compass call it "all-dwelling price growth" (60 Lawley Street,
+  // 25 Sep 2026). The full citation is `ABS_RES_DWELL_SOURCE_LABEL`.
+  abs_res_dwell: 'Australian Bureau of Statistics — mean price of residential dwellings',
   abs_census: 'Australian Bureau of Statistics — Census',
   abs_erp: 'Australian Bureau of Statistics — Estimated Resident Population',
   nsw_valuer_general: 'NSW Valuer General',
@@ -501,6 +506,29 @@ export function growthDivergenceRule(d: GrowthDivergence): string | null {
     + 'publisher and its period. Reconciling them is the adviser\'s judgement, not this report\'s.';
 }
 
+/**
+ * What to write where a listing portal publishes a figure this report does not
+ * hold — the permitted form beside rule 1's prohibition.
+ *
+ * The Compass for 60 Lawley Street, Spalding (25 Sep 2026) quoted REIWA's
+ * median and growth, Domain's median and days on market and PropertyValue's
+ * sales count on two pages, under a pinned rule that forbade every one of
+ * them, and the composed chapters then said, correctly, that no register this
+ * report reads holds any of those measures. A prohibition with no permitted
+ * form is one a model routes around (`compassDocumentContract`), and these
+ * are proprietary statistics whose terms of reuse nobody here has confirmed —
+ * a public web page is not a licence to republish (the owner's rule, 25 Sep
+ * 2026). So the model is given the sentence it MAY write: that such figures
+ * are published and where a reader can see them, never the figure.
+ */
+export const PORTAL_FIGURE_PERMITTED_FORM = 'A figure a listing portal or an industry body publishes (a suburb '
+  + 'median, a days-on-market figure, a sales count, an annual growth rate) is that publisher\'s own statistic, '
+  + 'not a register reading, and its terms of reuse have not been confirmed for this report — so it is not '
+  + 'reproduced. Where the discussion needs it, write that listing portals publish suburb medians and selling-time '
+  + 'figures for this locality and that the reader can consult them there — e.g. "listing portals publish suburb '
+  + 'medians and days-on-market figures for this locality; this report does not reproduce them, because they are '
+  + 'not register readings" — and state no number from one.';
+
 export function marketFactRules(facts: MarketFacts): string {
   const head = 'MARKET FIGURE RULES FOR THE WHOLE REPORT — they apply in every section, including the executive '
     + 'verdict, risk registers, SWOT tables, checklists and summaries, and they override any example elsewhere '
@@ -523,6 +551,7 @@ export function marketFactRules(facts: MarketFacts): string {
       + 'figure, an auction clearance rate or a sales volume — not for the suburb, the postcode, the council or '
       + 'the state, and not from a live web search, a listing portal, a news article or your own knowledge. '
       + 'There is no figure here to state.',
+      `1a. ${PORTAL_FIGURE_PERMITTED_FORM}`,
       `2. ${noAgentless}`,
       '3. Say in one sentence that no market price or rent series was retrieved for this location and that the '
       + 'market discussion below is therefore qualitative. Then write it qualitatively — position, dwelling mix, '
@@ -542,6 +571,7 @@ export function marketFactRules(facts: MarketFacts): string {
     `1. The market evidence table above is supplied complete. Exactly these measures are held and may be stated: `
     + `${stated.join('; ') || 'none for this subject'}. Every other market figure is NOT held — do not state one, `
     + 'and do not supply one from a live web search, a listing portal, a news article or your own knowledge.',
+    `1a. ${PORTAL_FIGURE_PERMITTED_FORM}`,
     `2. ${noAgentless}`,
     '3. State each figure with the geography and dwelling split the table names beside it. A postcode figure is '
     + 'not the suburb’s, an "all dwelling types" figure is not the house figure, and a period is part of the '

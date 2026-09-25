@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  composeGradeMethodology,
   buildMonitorRows,
   buildSwot,
   composeExitOutlook,
@@ -225,7 +226,18 @@ describe('rule 3 — the modelling travels only where the tier carries it', () =
   const NUMERIC_FINANCE = [/\$363,537/, /\$926 a week/, /2\.18% net/, /\$1,192,000/, /80% lending/];
 
   it('permits exactly one gross-yield reference on the Compass, inside the grade rationale', () => {
-    const doc = composeSwot(base({ finance: null }), 'SWOT');
+    /*
+     * The grade rationale left the SWOT for the appendix (60 Lawley Street,
+     * 25 Sep 2026: the method ran two of the SWOT's three pages). The
+     * allocation is unchanged — one reference, only in the rationale — and
+     * the SWOT itself now carries none.
+     */
+    const swot = composeSwot(base({ finance: null }), 'SWOT');
+    expect(swot.match(/2\.97%/g) ?? [], 'the SWOT carries no gross-yield figure').toHaveLength(0);
+    // The table is gone; only the pointer to where it now lives remains.
+    expect(swot).not.toContain('### How this grade was reached');
+    expect(swot).toContain('set out in the appendix, under *How this grade was reached*');
+    const doc = composeGradeMethodology(base({ finance: null })) ?? '';
     const hits = doc.match(/2\.97%/g) ?? [];
     expect(hits, 'the allocation permits one gross-yield reference, not several').toHaveLength(1);
     const table = doc.indexOf('How this grade was reached');
@@ -326,7 +338,12 @@ describe('rule 6 — monitoring names the register and promises nothing', () => 
       planning: { zone: null, zoneStatus: 'not_served', zoneSource: null, zoneEffectiveDate: null, council: 'Fraser Coast Regional', verification: null, retrievedAt: null },
     }));
     const planning = rows.find((r) => r.what.includes('planning'));
-    expect(planning?.changesIf).toContain('not a re-check but a first check');
+    expect(planning?.changesIf).toContain('This is a first check, not a re-check');
+    expect(planning?.firstCheck).toBe(true);
+    // "On request" is how a certificate is obtained, not how often a control
+    // changes — the cadence names the event that changes it.
+    expect(planning?.cadence).not.toMatch(/^On request$/);
+    expect(planning?.cadence).toMatch(/amends its planning scheme/);
   });
 });
 
@@ -452,6 +469,7 @@ describe('the monitoring plan is blocks, not a five-column table', () => {
 
   it('keeps the promise it exists to make', () => {
     expect(plan()).toContain('watches these on your behalf');
-    expect(plan()).toContain('this report does not set one');
+    // Events prompt a re-read; the report keeps no schedule of its own.
+    expect(plan()).toContain('rather than a schedule this report keeps');
   });
 });

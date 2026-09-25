@@ -144,6 +144,7 @@ import {
 } from './investmentProgramme.pure.ts';
 import { ABSENCE_GUIDE, INFRASTRUCTURE_GUIDE_LEAD_IN, guidesForKinds } from './infrastructureGuide.pure.ts';
 import { auDate } from './auDate.pure.ts';
+import { readerNote } from './serviceNote.pure.ts';
 import { NATIONAL_PIPELINE_COVERAGE_PHRASE } from './nationalPipeline.pure.ts';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -440,6 +441,7 @@ export interface InfrastructureEvidenceInput {
 export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput): InfrastructureEvidence {
   const data = isRecord(input.planningData) ? input.planningData : null;
   const retrievedAt = data ? str(data.fetchedAt) : null;
+  const jurisdiction = data ? str(data.jurisdiction) : null;
   const items: InfrastructureItem[] = [];
   const readings: RegisterReading[] = [];
 
@@ -460,7 +462,9 @@ export function buildInfrastructureEvidence(input: InfrastructureEvidenceInput):
     readings.push({
       register,
       reading: str(block.status) === 'none_at_point' ? 'searched_empty' : 'not_searched',
-      note: str(block.note) ?? fallback,
+      // The service's words, unless they describe our build rather than the
+      // register — `serviceNote.pure.ts` says why.
+      note: readerNote(str(block.note), jurisdiction) ?? fallback,
     });
   };
 

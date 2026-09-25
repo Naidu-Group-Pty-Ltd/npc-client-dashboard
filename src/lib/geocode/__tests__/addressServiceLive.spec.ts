@@ -70,7 +70,7 @@ describe.skipIf(!BASE)('the address service answers the chain', () => {
         timeoutMs: 10_000,
       });
       const ms = Date.now() - started;
-      if (out.ok) {
+      if (out.ok === true) {
         const r = out.result;
         // Inside Australia, whoever answered.
         expect(r.lat).toBeLessThan(-9);

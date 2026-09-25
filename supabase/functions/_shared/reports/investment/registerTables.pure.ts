@@ -148,6 +148,27 @@ export interface RegisterDedupeResult {
 export const REGISTER_POINTER = `*Set out in full under “${PLANNING_REGISTER_SECTION}”.*`;
 
 /**
+ * Every heading the composed registers are appended under.
+ *
+ * The first is the section the registers were once a section of their own
+ * under, kept because every stored report still carries it. The rest are the
+ * sub-headings the registers now carry INSIDE the chapter each one is the
+ * evidence for (`mergeBlocksIntoSections`, 25 Sep 2026) — and their fallback
+ * section, used where that chapter is absent.
+ */
+export const REGISTER_HEADINGS: readonly string[] = [
+  PLANNING_REGISTER_SECTION,
+  'Planning controls retrieved for this property',
+  'Infrastructure and development retrieved for this property',
+  'Infrastructure and development registers',
+];
+
+/** The pointer that stands where a reproduction did, naming where the register is. */
+export function registerPointer(heading: string): string {
+  return `*Set out in full under “${heading}”.*`;
+}
+
+/**
  * Find every register table in the document and keep exactly one copy of each.
  *
  * Returns the source unchanged, and an empty list, for a document in which no
@@ -157,16 +178,31 @@ export function dedupeRegisterTables(markdown: string): RegisterDedupeResult {
   if (!markdown) return { markdown: '', replaced: [] };
   const lines = markdown.split('\n');
 
-  // Where the appended register section begins. A document with no such
-  // section keeps its first copy of each table instead.
-  const sectionRe = new RegExp(
-    `^#{1,6}\\s+${PLANNING_REGISTER_SECTION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
-    'i',
-  );
-  let registerAt = -1;
+  /*
+   * Where the composed registers are. Each is a SPAN — its heading to the next
+   * heading at the same depth or shallower — because since the registers moved
+   * inside the chapters they are the evidence for, a copy AFTER a register's
+   * heading is no longer necessarily inside it: the next chapter may carry a
+   * model's reproduction too. The OUTERMOST span a table sits in names it, so
+   * a stored document with the old section keeps its old pointer word for word.
+   * A document with no register at all keeps its first copy of each table.
+   */
+  const wanted = new Set(REGISTER_HEADINGS.map((h) => h.toLowerCase()));
+  const spans: Array<{ heading: string; start: number; end: number }> = [];
   for (let i = 0; i < lines.length; i += 1) {
-    if (sectionRe.test(lines[i].trim())) { registerAt = i; break; }
+    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(lines[i].trim());
+    if (!m || !wanted.has(m[2].toLowerCase())) continue;
+    const depth = m[1].length;
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const n = /^(#{1,6})\s+\S/.exec(lines[j].trim());
+      if (n && n[1].length <= depth) { end = j; break; }
+    }
+    spans.push({ heading: m[2], start: i, end });
   }
+  const spanOf = (line: number) => spans
+    .filter((sp) => line > sp.start && line < sp.end)
+    .sort((a, b) => a.start - b.start)[0] ?? null;
 
   const found: FoundTable[] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -176,7 +212,7 @@ export function dedupeRegisterTables(markdown: string): RegisterDedupeResult {
     if (!(i + 1 < lines.length && isRule(lines[i + 1]))) continue;
     let end = i + 2;
     while (end < lines.length && isRow(lines[end])) end += 1;
-    found.push({ key, start: i, end, inRegister: registerAt >= 0 && i > registerAt });
+    found.push({ key, start: i, end, inRegister: spanOf(i) !== null });
     i = end - 1;
   }
 
@@ -187,13 +223,15 @@ export function dedupeRegisterTables(markdown: string): RegisterDedupeResult {
     byKey.set(t.key, list);
   }
 
-  const drop: FoundTable[] = [];
+  const drop: Array<FoundTable & { pointer: string }> = [];
   for (const list of byKey.values()) {
     if (list.length < 2) continue;
     // The register's copy is the retrieval. With no register section — an area
     // report, or a format that appends none — the first copy stands.
     const keep = list.find((t) => t.inRegister) ?? list[0];
-    for (const t of list) if (t !== keep) drop.push(t);
+    const span = spanOf(keep.start);
+    const pointer = span ? registerPointer(span.heading) : REGISTER_POINTER;
+    for (const t of list) if (t !== keep) drop.push({ ...t, pointer });
   }
   if (!drop.length) return { markdown, replaced: [] };
 
@@ -203,7 +241,7 @@ export function dedupeRegisterTables(markdown: string): RegisterDedupeResult {
   const replaced: Array<{ key: string; rows: number }> = [];
   for (const t of drop) {
     replaced.push({ key: t.key, rows: t.end - t.start - 2 });
-    out.splice(t.start, t.end - t.start, REGISTER_POINTER);
+    out.splice(t.start, t.end - t.start, t.pointer);
   }
   replaced.reverse();
   return { markdown: out.join('\n'), replaced };

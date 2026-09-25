@@ -64,6 +64,7 @@
 
 import { auDate } from './auDate.pure.ts';
 import { GNAF_ATTRIBUTION } from '../geocode/gnafShard.pure.ts';
+import { readerNote } from './serviceNote.pure.ts';
 
 import {
   VERIFICATION_INSTRUMENT,
@@ -164,7 +165,11 @@ export interface PlanningFacts {
   /** The residential reading, where a table was retrieved. */
   residential: ResidentialReading | null;
   overlays: PlanningCell;
-  /** Minimum lot size, height and floor space ratio, in that order. */
+  /**
+   * The numeric controls in the jurisdiction's own terms — minimum lot size,
+   * height and floor space ratio almost everywhere; the R-Code, height and
+   * plot ratio in Western Australia (`numericControlSpecs`).
+   */
   controls: PlanningCell[];
   /**
    * Every control, overlay and hazard a register actually returned at this
@@ -529,14 +534,8 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
   // operator figure outranks a layer (rule 2, and it says so on the page);
   // below it a RETRIEVED figure now stands where NSW publishes one; below
   // that the cell still states the absence and carries no number.
-  const controlSpecs: Array<{
-    label: string; value: unknown; suffix: string; family: ConstraintFamily;
-  }> = [
-    { label: 'Minimum lot size', value: o.minimumLotSize, suffix: ' m²', family: 'minimumLotSize' },
-    { label: 'Maximum building height', value: o.maximumHeight, suffix: ' m', family: 'height' },
-    { label: 'Floor space ratio', value: o.floorSpaceRatio, suffix: ':1', family: 'floorSpaceRatio' },
-  ];
-  const controls = controlSpecs.map(({ label, value, suffix, family }) => {
+  const controlSpecs = numericControlSpecs(jurisdiction, o);
+  const controls = controlSpecs.map(({ label, value, suffix, family, absenceNote }) => {
     const stated = num(value) ?? (str(value) ? Number(str(value)) : null);
     if (stated !== null && Number.isFinite(stated)) {
       return operatorCell(label, `${stated}${suffix}`, retrievedAt);
@@ -565,8 +564,9 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
       asked
         ? 'The register that carries this control answered for this point and published no figure. '
         + 'Read it from the planning certificate.'
-        : `Set by the ${jurisdiction === 'QLD' ? 'council planning scheme' : 'planning instrument'} and not published on any layer this platform reads. `
-        + 'No figure is stated here; read it from the scheme or the certificate.');
+        : absenceNote
+          ?? `Set by the ${jurisdiction === 'QLD' ? 'council planning scheme' : 'planning instrument'} and not published on any layer this platform reads. `
+          + 'No figure is stated here; read it from the scheme or the certificate.');
   });
 
   // ── state development instruments ─────────────────────────────────────────
@@ -601,7 +601,8 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
         standing: 'adopted' as const,
       }
       : absent('State development instruments', statusOf(instrumentsRaw?.status),
-        str(instrumentsRaw?.note) ?? 'No state development instrument reading for this point.');
+        readerNote(str(instrumentsRaw?.note), jurisdiction)
+          ?? 'No state development instrument reading for this point.');
 
   // ── development activity ──────────────────────────────────────────────────
   const activitySummary = isRecord(activityRaw?.summary)
@@ -710,6 +711,83 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     anyStated: cells.some((c) => c.status === 'stated' || c.status === 'operator_stated'),
     enrichmentMissing: !data,
   };
+}
+
+interface NumericControlSpec {
+  readonly label: string;
+  readonly value: unknown;
+  readonly suffix: string;
+  readonly family: ConstraintFamily;
+  /** The absence sentence in this jurisdiction's own terms; null takes the generic one. */
+  readonly absenceNote: string | null;
+}
+
+/**
+ * The numeric controls, in the vocabulary of the jurisdiction's own instrument.
+ *
+ * The three rows — minimum lot size, maximum building height, floor space
+ * ratio — are how a New South Wales Local Environmental Plan states its
+ * controls, and they were printed for every jurisdiction. The Compass for 60
+ * Lawley Street, Spalding WA (25 Sep 2026) then told a Western Australian
+ * buyer, in three places, that no "floor space ratio" had been retrieved, and
+ * asked them to get one confirmed by the City: Western Australia's schemes do
+ * not use the term. A residential lot there is controlled through its density
+ * code (the R-Code) on the local planning scheme map, which under the
+ * Residential Design Codes sets the site area each dwelling needs, and where a
+ * floor-area control applies it is called a plot ratio.
+ *
+ * So the rows follow the jurisdiction. Only Western Australia is written out,
+ * because it is the one this report measured; every other jurisdiction keeps
+ * the three rows it had, byte for byte. An operator's recorded minimum lot
+ * size is never dropped by the change — a recorded figure outranks a label.
+ */
+function numericControlSpecs(
+  jurisdiction: string | null,
+  o: PlanningOverrides,
+): NumericControlSpec[] {
+  if (jurisdiction === 'WA') {
+    const notRead = 'is not published on any layer this platform reads';
+    const rows: NumericControlSpec[] = [
+      {
+        label: 'Residential density code (R-Code)',
+        value: null,
+        suffix: '',
+        // A density coding, which is what a register reading one would file
+        // it under — never the lot-size family, whose value is an area.
+        family: 'dwellingDensity',
+        absenceNote: `Shown on the local planning scheme map and ${notRead}. Under the Residential Design `
+          + 'Codes of Western Australia the code sets the site area each dwelling needs, so it — not the land '
+          + 'size — decides how many dwellings a lot may carry. No code is stated here; read it from the '
+          + 'scheme map or the local government\'s written planning enquiry.',
+      },
+      {
+        label: 'Maximum building height',
+        value: o.maximumHeight,
+        suffix: ' m',
+        family: 'height',
+        absenceNote: `Set by the local planning scheme, the Residential Design Codes or a local planning policy, `
+          + `and ${notRead}. No figure is stated here; read it from the scheme or the planning enquiry.`,
+      },
+      {
+        label: 'Plot ratio',
+        value: o.floorSpaceRatio,
+        suffix: ':1',
+        family: 'floorSpaceRatio',
+        absenceNote: `Western Australia's floor-area control, which applies only where the scheme or the `
+          + `Residential Design Codes set one, and ${notRead}. No figure is stated here.`,
+      },
+    ];
+    const lot = o.minimumLotSize;
+    const recordedLot = typeof lot === 'number' ? Number.isFinite(lot) : typeof lot === 'string' && lot.trim() !== '';
+    return recordedLot
+      ? [{ label: 'Minimum lot size', value: lot, suffix: ' m²', family: 'minimumLotSize', absenceNote: null }, ...rows]
+      : rows;
+  }
+  return [
+    { label: 'Minimum lot size', value: o.minimumLotSize, suffix: ' m²', family: 'minimumLotSize', absenceNote: null },
+    { label: 'Maximum building height', value: o.maximumHeight, suffix: ' m', family: 'height', absenceNote: null },
+    { label: 'Floor space ratio', value: o.floorSpaceRatio, suffix: ':1', family: 'floorSpaceRatio', absenceNote: null },
+  ];
 }
 
 /** Where the answering registers were asked, off the answer's own `pointBasis`. */

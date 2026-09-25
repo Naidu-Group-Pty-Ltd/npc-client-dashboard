@@ -2738,7 +2738,7 @@ go missing. The **Australian Capital Territory** did: its zone IS read, so it
 never looked unserved, while its overlay registers have no branch at all, so
 the page fell through to the generic sentence naming neither the territory nor
 the remedy. `OVERLAY_COVERAGE` declares all eight (`state_layers_read` for
-NSW/VIC/TAS, `partial` for QLD, `not_read` for WA/SA/NT/ACT) and the invariant
+NSW/VIC/TAS, `partial` for QLD and WA, `not_read` for SA/NT/ACT) and the invariant
 is asserted both ways — anything not read in full owes a note, and anything
 read in full must not carry one, because a false limitation teaches a reader to
 discount the true ones. It **decides something**: `overlayCoverage` rides
@@ -2886,6 +2886,22 @@ the scoring policy, and the Generated Reports card showed that D as the
 property's grade — the child restates the parent's decision, a variant score
 never stands for the property while a composite exists, and the literal `N/A`
 the scoring service stores is a placeholder no surface draws.
+
+## The 60 Lawley Street rectification (25 Sep 2026)
+Read [`LAWLEY_RECTIFICATION.md`](./docs/reports/LAWLEY_RECTIFICATION.md)
+before touching `verdictWatchPoints`, `mergeBlocksIntoSections`,
+`composeGradeMethodology`, `scaffoldingLabels.pure.ts`, `serviceNote.pure.ts`,
+`numericControlSpecs` or the WA branch of `planning-data-service`. Twenty-four
+defects on one delivered Compass, each traced to a cause before it was
+repaired, and the score did not move: the same frozen input scores identically
+on both revisions, pinned by `lawleyRectification.spec.ts`. Four rules bite.
+**A licence is read per RESOURCE, never per jurisdiction** — WA's scheme data
+is restricted and its bush fire map is CC BY 4.0, and treating the state as one
+licence left a WA report with no bushfire reading at all. **Evidence closes the
+chapter it is evidence for**, so the recommendation stays the last assessment.
+**A comparison with one side left is not drawn, and neither is its caption.**
+And **our words never reach the page as labels** — a registry id or a phrase of
+the prompt is described to the model and scrubbed on read.
 
 ## A premium document, and the eighteen per cent that was bold
 

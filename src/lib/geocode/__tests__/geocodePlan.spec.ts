@@ -104,9 +104,12 @@ describe('suburblessAnswerRefusal', () => {
 describe('the chain follows the plan', () => {
   const CHAIN = readFileSync(join(__dirname, '..', '..', '..', '..', 'supabase', 'functions', '_shared', 'geocode', 'geocoder.ts'), 'utf8');
 
+  // The chain narrows its result union with `x.ok === false` / `x.ok === true`
+  // as well as `!x.ok` / `x.ok` — the same test either way, so both spellings
+  // pass and what is pinned is the ORDER of the questions, not the syntax.
   it('plans before it asks, and asks the second question only after a no-match', () => {
     expect(CHAIN).toContain('const plan = planGeocode(ask);');
-    expect(CHAIN).toMatch(/!attempt\.ok && attempt\.reason === 'no_match' && plan\.withoutSuburb/);
+    expect(CHAIN).toMatch(/(?:!attempt\.ok|attempt\.ok === false) && attempt\.reason === 'no_match' && plan\.withoutSuburb/);
     // The answer to the second question must stay in the asked postal area.
     expect(CHAIN).toMatch(/askNominatim\(supabase, plan\.withoutSuburb, \{ timeoutMs, env \}, plan\.withoutSuburb\.postcode \?\? null\)/);
     expect(CHAIN).toMatch(/const refusal = suburblessAnswerRefusal\(mapped, withinPostcode\);/);
@@ -114,6 +117,6 @@ describe('the chain follows the plan', () => {
 
   it('tries each locality candidate only after the one before it found nothing', () => {
     expect(CHAIN).toMatch(/const \[first, \.\.\.rest\] = plan\.localityCandidates;/);
-    expect(CHAIN).toMatch(/if \(attempt\.ok \|\| attempt\.reason !== 'no_match'\) break;/);
+    expect(CHAIN).toMatch(/if \(attempt\.ok(?: === true)? \|\| attempt\.reason !== 'no_match'\) break;/);
   });
 });

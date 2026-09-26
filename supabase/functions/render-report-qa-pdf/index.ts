@@ -76,6 +76,7 @@ import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { buildReportQaDocument } from '../_shared/reports/reportQa/normalise.pure.ts';
 import { renderReportQaFromBrand } from '../_shared/reports/reportQa/render.pure.ts';
+import { resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   parseRenderRequest,
@@ -474,6 +475,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // page one of a single global `report_structure_templates` row.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: request.design,
+      reportType: 'qa',
+      actor: { userId: auth.userId, authMethod: auth.authMethod },
+      route: 'render-report-qa-pdf',
+    });
+
     const rendered = renderReportQaFromBrand({
       document,
       snapshot,
@@ -481,6 +493,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: reportQaReference(id),
+      design,
     });
 
     // A spine that violates its own archetype is a defect, not a preference.
@@ -626,6 +639,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       generated,
       attachment,
       durationMs,
+      design: designEcho,
     };
     return json(response);
   } catch (e) {

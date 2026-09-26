@@ -239,6 +239,92 @@ async function summaries(
   };
 }
 
+/** One message a builder wrote, as the new-message popup names it. */
+export interface NewBuilderMessage {
+  message_id: string;
+  conversation_id: string;
+  builder_name: string | null;
+  sender_display_name: string;
+  lot_number: string | null;
+  address: string | null;
+  received_at: string;
+}
+
+/** How many new messages one read returns: a popup names a few, never a flood. */
+const NEW_MESSAGE_LIMIT = 20;
+
+/**
+ * The builder-side messages that arrived after `since`, in the conversations
+ * the viewer is in now — what the Command Centre's "new message" popup shows.
+ * The cursor is the arrival clock of THIS database (`created_at`, stamped when
+ * the message landed), never a browser's, so no clock skew can hide or repeat
+ * one. With no `since`, it answers only the cursor: a session that has just
+ * opened is told nothing about messages it arrived after.
+ */
+export async function newBuilderMessages(
+  supabase: Client, args: { viewerUserId: string; since: string | null },
+): Promise<{ ok: true; cursor: string; messages: NewBuilderMessage[] } | { ok: false }> {
+  const ids = await joinedConversationIds(supabase, args.viewerUserId);
+  if (!ids) return { ok: false };
+  const now = new Date().toISOString();
+  if (!ids.length) return { ok: true, cursor: args.since ?? now, messages: [] };
+
+  const found: Row[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    let query = supabase.from('builder_network_messages')
+      .select('id, conversation_id, sender_display_name, created_at')
+      .in('conversation_id', ids.slice(i, i + IN_CHUNK))
+      .eq('side', 'builder');
+    query = args.since
+      ? query.gt('created_at', args.since).order('created_at', { ascending: true }).limit(NEW_MESSAGE_LIMIT)
+      : query.order('created_at', { ascending: false }).limit(1);
+    const { data, error } = await query;
+    if (error) return { ok: false };
+    found.push(...((data ?? []) as Row[]));
+  }
+  const latest = found.reduce<string | null>(
+    (max, row) => (!max || String(row.created_at) > max ? String(row.created_at) : max), null);
+  if (!args.since) return { ok: true, cursor: latest ?? now, messages: [] };
+
+  const fresh = found.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+    .slice(0, NEW_MESSAGE_LIMIT);
+  if (!fresh.length) return { ok: true, cursor: args.since, messages: [] };
+
+  const conversations = await readIn(supabase, 'builder_network_conversations',
+    'id, stock_item_id, builder_organisation_id', 'id', [...new Set(fresh.map((m) => m.conversation_id))]);
+  if (conversations.error) return { ok: false };
+  const conversationById = new Map(((conversations.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const [items, orgs] = await Promise.all([
+    readIn(supabase, 'builder_network_stock_items', 'id, address_line, lot_number',
+      'id', [...conversationById.values()].map((c) => c.stock_item_id)),
+    readIn(supabase, 'builder_network_stock_organisations', 'id, legal_name, trading_name',
+      'id', [...conversationById.values()].map((c) => c.builder_organisation_id)),
+  ]);
+  if (items.error || orgs.error) return { ok: false };
+  const itemById = new Map(((items.data ?? []) as Row[]).map((row) => [row.id, row]));
+  const orgById = new Map(((orgs.data ?? []) as Row[]).map((row) => [row.id, row]));
+
+  return {
+    ok: true,
+    // The newest arrival returned: the next read starts after it. When the
+    // limit was reached, the rest are returned by the next read.
+    cursor: String(fresh[fresh.length - 1].created_at),
+    messages: fresh.map((m) => {
+      const conversation = conversationById.get(m.conversation_id);
+      const item = conversation ? itemById.get(conversation.stock_item_id) : undefined;
+      return {
+        message_id: String(m.id),
+        conversation_id: String(m.conversation_id),
+        builder_name: conversation ? builderName(orgById.get(conversation.builder_organisation_id)) : null,
+        sender_display_name: String(m.sender_display_name),
+        lot_number: item?.lot_number ?? null,
+        address: item?.address_line ?? null,
+        received_at: String(m.created_at),
+      };
+    }),
+  };
+}
+
 export function listMyConversations(supabase: Client, args: { viewerUserId: string }) {
   return summaries(supabase, args.viewerUserId, {});
 }

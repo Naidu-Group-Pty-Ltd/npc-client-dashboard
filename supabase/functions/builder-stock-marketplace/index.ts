@@ -49,7 +49,7 @@ import {
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
 import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
 import {
-  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
+  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, newBuilderMessages, listPropertyConversations,
   markAcknowledgementNoticesRead, readParticipantConversation,
 } from '../_shared/builderStock/privateConversations.ts';
 import { agencyMessageRefusal, projectConversationMessages } from '../_shared/builderStock/agencyMessages.pure.ts';
@@ -667,6 +667,15 @@ Deno.serve(async (req) => {
       const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId, asOf });
       if (!done.ok) return json({ success: false, error: 'acknowledgements_could_not_be_marked' }, 503);
       return json({ success: true });
+    }
+
+    // The "new message from <builder>" popup: builder messages that arrived
+    // after the cursor, in the reader's own conversations. Read-only.
+    if (operation === 'list_new_builder_messages') {
+      const since = typeof body.since === 'string' && Number.isFinite(Date.parse(body.since)) ? body.since : null;
+      const read = await newBuilderMessages(supabase, { viewerUserId: userId, since });
+      if (!read.ok) return json({ success: false, error: 'messages_could_not_be_read' }, 503);
+      return json({ success: true, cursor: read.cursor, messages: read.messages });
     }
 
     if (operation === 'list_my_builder_conversations') {

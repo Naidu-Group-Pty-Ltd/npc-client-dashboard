@@ -279,7 +279,16 @@ Deno.serve(async req=>{
   let authorised=Boolean(secret)&&presentedSecret===secret;
   if(!authorised&&req.headers.get('x-internal-signature')){
     const db0=createClient(Deno.env.get('SUPABASE_URL')!,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const ctx=await verifyInternal(db0,req,rawBody,{allowedCallers:['pg_cron']});
+    /*
+     * `agency_message` is the builder conversations' own "deliver now" kick
+     * (`builder_network_kick_outbox`, signed by the same database function as
+     * pg_cron's). Left off this list, every kick was refused — 99 refusals in
+     * the 24 hours to 26 Sep 2026, the last three seconds after a message — so
+     * a message to a builder, and the receipt that marks a builder's message
+     * Delivered, waited for the next minute's tick. A caller name is part of
+     * the signed envelope, so naming one here admits nothing unsigned.
+     */
+    const ctx=await verifyInternal(db0,req,rawBody,{allowedCallers:['pg_cron','agency_message']});
     authorised=ctx.ok===true&&ctx.authType==='internal_service';
     /*
      * Say WHY, the way every other guarded function here does.

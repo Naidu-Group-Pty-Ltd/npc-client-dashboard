@@ -1212,6 +1212,22 @@
     @apply translate-y-0 scale-[0.99] shadow-sm;
   }
 
+  /* A Radix checkbox is a <button role="checkbox">, so the rules above would
+     stretch it into a 40px-tall pill and lift it on hover. The attribute makes
+     these more specific than those, whatever their order, and gives a checkbox
+     back its own square shape. */
+  .reports-page-premium button[role='checkbox'],
+  .reports-investment-generator button[role='checkbox'] {
+    @apply min-h-0 rounded-sm;
+  }
+
+  .reports-page-premium button[role='checkbox']:not(:disabled):hover,
+  .reports-investment-generator button[role='checkbox']:not(:disabled):hover,
+  .reports-page-premium button[role='checkbox']:not(:disabled):active,
+  .reports-investment-generator button[role='checkbox']:not(:disabled):active {
+    @apply translate-y-0 scale-100 shadow-none;
+  }
+
   .reports-page-premium button:disabled,
   .reports-investment-generator button:disabled {
     @apply border-border/70 bg-muted/70 text-muted-foreground opacity-80;

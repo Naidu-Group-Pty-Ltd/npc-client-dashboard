@@ -22,8 +22,8 @@
  *   `details.listing` inside `window.ArgonautExchange`, three JSON documents
  *   deep (the exchange, its `urqlClientCache`, each entry's `data`). Its
  *   photographs are `media.images[].templatedUrl`; its floor plans are a
- *   separate `media.floorplans` list, which is never read. The object must
- *   name the listing id the page URL names, or none of it is taken.
+ *   separate `media.floorplans` list. The object must name the listing id
+ *   the page URL names, or none of it is taken.
  * - **Everywhere else**, and on a realestate.com.au page whose data cannot be
  *   read: nothing. The owner's rule (25 Sep 2026) is that a report's
  *   photographs are of its address and property and are never chosen to fill
@@ -35,6 +35,19 @@
  * Domain was probed and not built: its pages and both image hosts refuse the
  * environment this was written in (403 on all three, 25 Sep 2026), so no rule
  * about its markup could be checked. A Domain listing names no photographs.
+ *
+ * ## Floor plans: the page's own list, kept apart
+ *
+ * The owner asked for the plan beside the photographs (25 Sep 2026). A plan is
+ * taken on the same attribution a photograph is — the listing object that
+ * names the page's listing id — and only from the list the page itself calls
+ * floor plans, never guessed from a gallery. It travels as its own candidate
+ * list (`floorPlanCandidatesFromPage`), because every photo slot crops to fill
+ * its frame and a cropped plan is a plan with a room missing. For the same
+ * reason an asset the page lists as a floor plan is never offered as a
+ * photograph, even where the agent put it in the gallery too: the server's
+ * reading of the pixels would refuse most plans, but a coloured or rendered
+ * plan can read as a photograph, and then it would lead a cover.
  *
  * ## Renditions (measured on i2.au.reastatic.net, 25 Sep 2026)
  *
@@ -54,6 +67,8 @@ import { canonicalAssetKey } from './listingImageAsset.pure.ts';
 
 /** Candidates named per page. More than a report can carry, because some will fail a check. */
 export const PAGE_PHOTOGRAPH_CANDIDATE_LIMIT = 12;
+/** Floor plans named per page. More than a report carries (two), because some will fail a check. */
+export const PAGE_FLOOR_PLAN_CANDIDATE_LIMIT = 4;
 
 /** The rendition stored and printed: the original's own frame, at most 2,000 px on its long edge. */
 export const REA_STORE_RENDITION = '2000x2000-fit';
@@ -66,6 +81,14 @@ export type PagePhotographOrigin = 'listing_gallery';
 export interface PagePhotographCandidate {
   url: string;
   origin: PagePhotographOrigin;
+}
+
+/** The one attribution a floor plan may carry: the page's own data lists it among this listing's floor plans. */
+export type PageFloorPlanOrigin = 'listing_floorplans';
+
+export interface PageFloorPlanCandidate {
+  url: string;
+  origin: PageFloorPlanOrigin;
 }
 
 export interface PagePhotographEvidence {
@@ -240,7 +263,7 @@ function templatedUrlOf(entry: unknown): string | null {
 
 /**
  * The listing's own photographs, in the agent's order, as realestate.com.au
- * asset URLs. Floor plans are never read — they are a different list.
+ * asset URLs. Floor plans are a different list (`reaListingFloorPlans`).
  */
 export function reaListingGallery(rawHtml: string, listingId: string): string[] {
   for (const listing of argonautListings(rawHtml)) {
@@ -251,6 +274,24 @@ export function reaListingGallery(rawHtml: string, listingId: string): string[] 
       templatedUrlOf(media.mainImage),
       ...(Array.isArray(media.images) ? media.images.map(templatedUrlOf) : []),
     ].filter((url): url is string => typeof url === 'string' && reaImageAsset(url) !== null);
+    if (urls.length) return urls;
+  }
+  return [];
+}
+
+/**
+ * The listing's own floor plans, in the agent's order, as realestate.com.au
+ * asset URLs: `media.floorplans` of the listing object that names this
+ * listing id, and nothing else.
+ */
+export function reaListingFloorPlans(rawHtml: string, listingId: string): string[] {
+  for (const listing of argonautListings(rawHtml)) {
+    if (!namesListing(listing, listingId)) continue;
+    const media = isRecord(listing.media) ? listing.media : null;
+    if (!media || !Array.isArray(media.floorplans)) continue;
+    const urls = media.floorplans
+      .map(templatedUrlOf)
+      .filter((url): url is string => typeof url === 'string' && reaImageAsset(url) !== null);
     if (urls.length) return urls;
   }
   return [];
@@ -291,9 +332,46 @@ export function photographCandidatesFromPage(evidence: PagePhotographEvidence): 
   try {
     const listingId = reaListingIdFromUrl(pageUrl);
     if (listingId && rawHtml) {
+      // An asset the page lists as a floor plan is never a photograph, even
+      // where the agent put it in the gallery as well.
+      for (const url of reaListingFloorPlans(rawHtml, listingId)) seen.add(assetKey(url));
       for (const url of reaListingGallery(rawHtml, listingId)) {
         push(reaRendition(url, REA_STORE_RENDITION), 'listing_gallery');
       }
+    }
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+/**
+ * The floor plans a report may take from this listing page, in the agent's
+ * order.
+ *
+ * The list the page's own data calls this listing's floor plans, attributed
+ * by the listing id the page URL names, exactly as its photographs are;
+ * otherwise nothing. Stored at the photographs' rendition, which keeps the
+ * original's frame: a plan is never cropped or padded on its way in. Never
+ * throws.
+ */
+export function floorPlanCandidatesFromPage(evidence: PagePhotographEvidence): PageFloorPlanCandidate[] {
+  const pageUrl = String(evidence?.pageUrl ?? '');
+  if (!hostOf(pageUrl)) return [];
+  const rawHtml = typeof evidence.rawHtml === 'string' ? evidence.rawHtml : '';
+
+  const out: PageFloorPlanCandidate[] = [];
+  const seen = new Set<string>();
+  try {
+    const listingId = reaListingIdFromUrl(pageUrl);
+    if (!listingId || !rawHtml) return [];
+    for (const url of reaListingFloorPlans(rawHtml, listingId)) {
+      const stored = reaRendition(url, REA_STORE_RENDITION);
+      if (!stored || out.length >= PAGE_FLOOR_PLAN_CANDIDATE_LIMIT) continue;
+      const key = assetKey(stored);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ url: stored, origin: 'listing_floorplans' });
     }
   } catch {
     return [];
@@ -331,6 +409,40 @@ export function readPageCandidates(value: unknown): PagePhotographCandidate[] {
     seen.add(key);
     out.push({ url: url.toString(), origin });
     if (out.length >= PAGE_PHOTOGRAPH_CANDIDATE_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * The floor-plan list a stored scrape job carries, re-checked on the way in.
+ *
+ * Stricter than the photographs' check, and deliberately not the same one:
+ * only realestate.com.au's own image host names a plan (nothing else is read
+ * for one), and the photographs' furniture rule is not applied, because it
+ * refuses a file called `floorplan` — which is exactly what keeps a plan off
+ * a photo slot, and exactly what a plan may be called.
+ */
+export function readPageFloorPlanCandidates(value: unknown): PageFloorPlanCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const out: PageFloorPlanCandidate[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.url !== 'string') continue;
+    if (entry.origin !== 'listing_floorplans') continue;
+    let url: URL;
+    try {
+      url = new URL(entry.url);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== 'https:') continue;
+    const href = url.toString();
+    if (!reaImageAsset(href)) continue;
+    const key = assetKey(href);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ url: href, origin: 'listing_floorplans' });
+    if (out.length >= PAGE_FLOOR_PLAN_CANDIDATE_LIMIT) break;
   }
   return out;
 }

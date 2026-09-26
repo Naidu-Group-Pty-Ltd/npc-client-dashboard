@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { OVERALL_GRADE_UNAVAILABLE } from '@/lib/reports/market/scoringInputPolicy.pure';
 import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
 import { readEvidenceInventory } from '@/lib/reports/investment/chartEvidence.pure';
+import { withoutHouseMasthead } from '@/lib/reports/issuerIdentity.pure';
+import { isPrimeDeployment } from '@/lib/primeDeployment';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -195,10 +197,18 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
   // scrub every renderer applies (`presentStoredMarkdown`), so a "N/A" cell a
   // derived report stored before the write-path hygiene is neither shown here
   // nor printed anywhere.
+  //
+  // On a clone, the masthead a report was generated with leaves out NPC's
+  // tagline and a heading naming NPC: the renderers already drop that block,
+  // and the screen was the one place a clone's operator saw the house's words
+  // above their own report (`withoutHouseMasthead`). The prime is untouched.
   const presentedContent = useMemo(
-    () => presentStoredMarkdown(
-      report.report_content,
-      readEvidenceInventory(report as unknown as Record<string, unknown>),
+    () => withoutHouseMasthead(
+      presentStoredMarkdown(
+        report.report_content,
+        readEvidenceInventory(report as unknown as Record<string, unknown>),
+      ),
+      { prime: isPrimeDeployment() },
     ),
     [report.report_content],
   );

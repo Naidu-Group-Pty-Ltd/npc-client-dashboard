@@ -73,6 +73,13 @@ jobs:
       - name: A clone's email is sent as the clone
         run: npx vitest run src/lib/__tests__/emailIdentity.spec.ts src/lib/__tests__/emailIdentityRead.spec.ts src/lib/__tests__/emailIdentity.contract.spec.ts
 
+      # Who a deployment's assistants, portal labels and staff screens speak
+      # for (WHITE_LABEL_DOCUMENTS.md §12-§13). Both specs sit in
+      # `src/lib/__tests__/`, which no directory path here reaches, so they are
+      # named or they never run.
+      - name: A clone's tools and labels speak for the clone
+        run: npx vitest run src/lib/__tests__/workspaceIdentity.spec.ts src/lib/__tests__/houseLabelsGuard.spec.ts
+
       # Every build-time variable is read in the one form the bundler replaces.
       #
       # Vite substitutes the literal `import.meta.env.VITE_X` and nothing else.
@@ -213,8 +220,11 @@ jobs:
 
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
+      # `src/lib/brandDesign` resolves an imported design system into the same
+      # palette. It ran nowhere, so a spec there stayed red after the floors
+      # were corrected and nothing reported it.
       - name: Unit tests (report design system)
-        run: npx vitest run src/lib/reportDesign
+        run: npx vitest run src/lib/reportDesign src/lib/brandDesign
 
       # Renders the shipping generator and pins page count, sections, typeface
       # and the cover's identity. This is the reference the migration is
@@ -1295,6 +1305,14 @@ jobs:
       - name: The cover photograph moves nothing, and without one the cover is unchanged
         if: ${{ !cancelled() }}
         run: npx vitest run src/lib/templateLibrary/__tests__/investmentCompassCoverPhotograph.spec.ts
+
+      # Seed v22 put a new build's floor plan on a sheet of its own in all 50
+      # Investment masters. Its promise: without a plan every master draws
+      # exactly what it drew before, and with one the plan is printed whole.
+      # This spec renders all 50 both ways through the production renderer.
+      - name: The floor plan is printed whole, and without one nothing changes
+        if: ${{ !cancelled() }}
+        run: npx vitest run src/lib/templateLibrary/__tests__/investmentCompassFloorPlan.spec.ts
 
       # The renders themselves, when it fails: a reviewer should be able to
       # look at the page rather than read a coordinate.

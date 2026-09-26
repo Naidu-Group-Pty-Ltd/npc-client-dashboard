@@ -73,10 +73,16 @@ export const PHOTOGRAPH_RESUME_TIMEOUT_MS = 45_000;
 
 const CAPTURE_STATES: readonly PhotographCaptureState[] = ['none', 'complete', 'running', 'waiting', 'pending'];
 
-/** How many photographs a finished extraction named, from its polled result. */
+/**
+ * How many pictures a finished extraction named, from its polled result: its
+ * photographs and its floor plans, which one capture keeps. The count decides
+ * only whether there is anything to ask for, so a listing whose page names a
+ * plan and no photograph still has its plan kept.
+ */
 export function namedPhotographCount(scrapedResult: unknown): number {
-  const candidates = (scrapedResult as { photographs?: { candidates?: unknown } } | null)?.photographs?.candidates;
-  return Array.isArray(candidates) ? candidates.length : 0;
+  const named = (scrapedResult as { photographs?: { candidates?: unknown; floorPlans?: unknown } } | null)?.photographs;
+  const count = (list: unknown) => (Array.isArray(list) ? list.length : 0);
+  return count(named?.candidates) + count(named?.floorPlans);
 }
 
 /** The capture request for a new report, or null where there is nothing to keep. */

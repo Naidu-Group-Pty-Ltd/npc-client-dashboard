@@ -3,7 +3,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
-import { getBrandConfig } from '../_shared/brand-config.ts';
 import { evidenceCautionLine, publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
@@ -181,6 +180,19 @@ import {
   resolveRentalEvidence,
   statedYield,
 } from '../_shared/reports/investment/rentalEvidence.pure.ts';
+import { investmentReportMasthead } from '../_shared/reports/issuerIdentity.pure.ts';
+import { UPLOADED_DOCUMENT_MAX_BYTES } from '../_shared/reports/investment/uploadedDocumentText.pure.ts';
+import {
+  buildReportDocumentContext,
+  keptDocumentApplies,
+  type ReportDocumentContextInput,
+} from '../_shared/reports/investment/reportDocumentContext.pure.ts';
+import {
+  keepReportDocumentContext,
+  readReportDocumentContext,
+} from '../_shared/reports/investment/reportDocumentContextStore.ts';
+import { loadReportWriterIdentity } from '../_shared/reports/writerIdentity.ts';
+import { fillFirmToken, firmClause } from '../_shared/reports/writerFirm.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2426,7 +2438,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // UNIFIED DOCUMENT CONTENT: Accept both scrapedContent (URL scrape) AND pdfContent (PDF upload)
     // This ensures consistent content injection regardless of the input source
     const scrapedContent = propertyDetails?.scrapedContent || null;
-    const pdfContent = propertyDetails?.pdfContent || null;
+    // Text only: the form sends the document's words or nothing
+    // (`uploadedDocumentText.pure.ts`), and anything else is not a document.
+    const pdfContent = typeof propertyDetails?.pdfContent === 'string' && propertyDetails.pdfContent.trim()
+      ? propertyDetails.pdfContent
+      : null;
     const documentContent = scrapedContent || pdfContent || null; // Unified content variable
     
     const sourceUrl = propertyDetails?.sourceUrl || null;
@@ -6446,8 +6462,12 @@ the listing and the building inspection.
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
 
-    const _brandPp = await getBrandConfig();
-    const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
+    // Who the writer works for (`writerFirm.pure.ts`): on the prime the name
+    // it has always been told; on a clone the business the document is issued
+    // under, never the house — and no business at all where that is the
+    // platform, whose disclaimer says it prepared none of this.
+    const _writerPp = await loadReportWriterIdentity();
+    const propertyPrompt = `You are an expert Australian property investment analyst${firmClause(_writerPp.firm, 'for')}.
 
 You write one section at a time. The section you are asked for, and its length,
 are set out at the end of this prompt; everything before that is the document's
@@ -6457,7 +6477,7 @@ contract and the evidence you may draw on.
 
 ${propertyTypeRule}
 
-${compassDocumentContract(_brandPp.companyName)}
+${compassDocumentContract(_writerPp.firm ?? '')}
 
 # ═══════════════════════════════════════════════════════════════════════
 # THE EVIDENCE PACK — everything this report is allowed to state
@@ -6642,7 +6662,14 @@ Instead, focus EXCLUSIVELY on area-level analysis:
       console.log('✅ Area-level exclusion instructions injected for scope:', reportScope);
     }
     
-    // If document content is available (from URL scrape OR PDF upload), prepend it to the prompt for context
+    // The document's words (a URL scrape OR a PDF upload), for every section of
+    // this generation. Only the first invocation is handed them: a continuation
+    // sends `{ reportId, propertyAddress, continueFrom }` and nothing else. So the
+    // first keeps the context it composes, and an invocation handed no document
+    // of its own reads the kept copy (`reportDocumentContext.pure.ts`) — every
+    // section is then written from the same evidence, and a continuation's
+    // prompt states the document exactly as the first invocation's did.
+    let documentContext: ReportDocumentContextInput | null = null;
     if (documentContent) {
       const contentSourceLabel = fromPdfUpload ? 'PDF Document' : (sourceUrl || 'Property Listing');
       console.log(`📄 Injecting ${fromPdfUpload ? 'PDF' : 'scraped'} property listing content into prompt...`);
@@ -6681,6 +6708,48 @@ Instead, focus EXCLUSIVELY on area-level analysis:
         ? `\n\n**EXTRACTED PROPERTY SPECIFICATIONS:**\n${extractedDetailsSummary.join('\n')}\n`
         : '';
       
+      // An uploaded document is bounded from its FRONT and to less than a
+      // listing page: a brochure ends on the builder's other estates and other
+      // homes, which a head-and-tail cut would keep (`uploadedDocumentText.pure.ts`).
+      // A listing page is cut as it always was.
+      const boundedDocumentText = fromPdfUpload && !scrapedContent
+        ? limitPromptContext(String(documentContent), UPLOADED_DOCUMENT_MAX_BYTES, 'PDF listing content', 'head')
+        : limitPromptContext(
+          String(documentContent),
+          DOCUMENT_CONTEXT_MAX_BYTES,
+          `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
+          'head-tail'
+        );
+      documentContext = {
+        source: fromPdfUpload ? 'pdf' : 'listing',
+        sourceLabel: contentSourceLabel,
+        text: boundedDocumentText,
+        extractedDetails: extractedDetailsText,
+      };
+      if (reportId && supabaseClient) {
+        const kept = await keepReportDocumentContext(supabaseClient, buildReportDocumentContext({
+          ...documentContext,
+          reportId,
+          address: propertyAddress,
+          keptAt: new Date().toISOString(),
+        }));
+        console.log(`📄 Document context ${kept ? 'kept' : 'NOT kept'} for the rest of this generation`);
+      }
+    } else if (reportId && supabaseClient) {
+      const kept = await readReportDocumentContext(supabaseClient, reportId);
+      if (kept && keptDocumentApplies(kept, { reportId, address: propertyAddress })) {
+        documentContext = kept;
+        console.log(`📄 Document context read from the first invocation (${kept.source}, ${kept.text.length} characters)`);
+      } else if (kept) {
+        console.warn('📄 A kept document context names another address — not used');
+      }
+    }
+
+    if (documentContext) {
+      // Everything below reads the context and nothing else, so a continuation
+      // composes exactly what the first invocation composed.
+      const docFromPdf = documentContext.source === 'pdf';
+
       // Use different instructions based on content source
       /**
        * ONE list, and it defers to the record on the attributes the record
@@ -6744,8 +6813,8 @@ the asset.`;
        * and it is the same rule `claimSupportRules` states for the prose —
        * one rule, in the two places the model reads.
        */
-      const sourceLabel = fromPdfUpload ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
-      const sourceNoun = fromPdfUpload ? 'document' : 'listing';
+      const sourceLabel = docFromPdf ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
+      const sourceNoun = docFromPdf ? 'document' : 'listing';
       const sourceSpecificInstructions = `**CRITICAL INSTRUCTIONS FOR THIS ${sourceLabel}:**
 1. The above content came from the property ${sourceNoun}, and is the primary source for its DESCRIPTION, features and selling points
 2. ${RECORD_GOVERNS_PHYSICAL_ATTRIBUTES}
@@ -6754,20 +6823,17 @@ the asset.`;
 5. If a price is mentioned (guide, asking, or range), use it for financial calculations
 6. Renovations, improvements and unique characteristics the ${sourceNoun} names are carried the same way, under the same attribution, and a reader is told the property has not been inspected for this report
 7. Consider the property description when assessing investment potential
-8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
+8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${docFromPdf ? `
 9. For new builds: Use the land + build package price for total property value` : ''}`;
       
-      const limitedDocumentContent = limitPromptContext(
-        String(documentContent),
-        DOCUMENT_CONTEXT_MAX_BYTES,
-        `${fromPdfUpload ? 'PDF' : 'Scraped'} listing content`,
-        'head-tail'
-      );
+      const contentSourceLabel = documentContext.sourceLabel;
+      const limitedDocumentContent = documentContext.text;
+      const extractedDetailsText = documentContext.extractedDetails;
       const documentContextSection = `
 ---
 **PROPERTY LISTING DATA (SOURCE: ${contentSourceLabel})**
 
-The following is the available content ${fromPdfUpload ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use it for the property's DESCRIPTION, features and the specific information the listing mentions — not for its physical attributes, which the specification table below governs. If this block was truncated, fill gaps from the record and fresh web research without inventing facts:
+The following is the available content ${docFromPdf ? 'extracted from the property listing PDF' : 'scraped from the property listing'}. Use it for the property's DESCRIPTION, features and the specific information the listing mentions — not for its physical attributes, which the specification table below governs. If this block was truncated, fill gaps from the record and fresh web research without inventing facts:
 
 ${limitedDocumentContent}
 ${extractedDetailsText}
@@ -6779,7 +6845,7 @@ ${sourceSpecificInstructions}
 
 `;
       prompt = documentContextSection + prompt;
-      console.log(`✓ ${fromPdfUpload ? 'PDF' : 'Scraped'} content injected with extracted details. New prompt length:`, prompt.length);
+      console.log(`✓ ${docFromPdf ? 'PDF' : 'Scraped'} content injected with extracted details. New prompt length:`, prompt.length);
     } else {
       console.log('ℹ️ No document content available - generating report from property address and web search only');
     }
@@ -7226,19 +7292,19 @@ ${limitedTemplateContext}
      */
     // ========== END RAG TEMPLATE CONTEXT INJECTION ==========
     
-    const _brandSys = await getBrandConfig();
-    const _brandName = _brandSys.companyName;
+    const _writerSys = await loadReportWriterIdentity();
+    const _atFirm = firmClause(_writerSys.firm, 'at');
     const areaSystemMessages: Record<string, string> = {
-      'suburb': `You are a trusted property investment advisor at ${_brandName} writing suburb-level analysis for clients who may not have a finance background. Lead with clear, plain-English insights and use supporting data selectively — never dump raw statistics without context. Explain what numbers mean in practical terms (e.g., "growing 40% faster than the metro average, which signals strong demand"). Use tables only for direct comparisons, not for listing single values. Every section should feel like advice from a knowledgeable friend, not an academic paper. Still be thorough and accurate — but prioritise readability and actionable takeaways.`,
-      'postcode': `You are a trusted property investment advisor at ${_brandName} writing postcode-zone analysis for clients who may not have a finance background. Compare suburbs within the zone using clear narrative language. Use comparison tables sparingly and only when they genuinely aid understanding. Lead each section with the key insight before supporting it with data. Explain implications in practical terms — what does this mean for an investor considering this area?`,
-      'statewide': `You are a trusted property investment advisor at ${_brandName} writing statewide macro analysis for clients who may not have a finance background. Provide a bird's-eye view of the state's property market in accessible, conversational language. Use data to support narrative points, not as the centrepiece. Focus on what matters to investors: where the opportunities are, what risks to watch, and how macro trends translate to real-world investment decisions.`,
+      'suburb': `You are a trusted property investment advisor${_atFirm} writing suburb-level analysis for clients who may not have a finance background. Lead with clear, plain-English insights and use supporting data selectively — never dump raw statistics without context. Explain what numbers mean in practical terms (e.g., "growing 40% faster than the metro average, which signals strong demand"). Use tables only for direct comparisons, not for listing single values. Every section should feel like advice from a knowledgeable friend, not an academic paper. Still be thorough and accurate — but prioritise readability and actionable takeaways.`,
+      'postcode': `You are a trusted property investment advisor${_atFirm} writing postcode-zone analysis for clients who may not have a finance background. Compare suburbs within the zone using clear narrative language. Use comparison tables sparingly and only when they genuinely aid understanding. Lead each section with the key insight before supporting it with data. Explain implications in practical terms — what does this mean for an investor considering this area?`,
+      'statewide': `You are a trusted property investment advisor${_atFirm} writing statewide macro analysis for clients who may not have a finance background. Provide a bird's-eye view of the state's property market in accessible, conversational language. Use data to support narrative points, not as the centrepiece. Focus on what matters to investors: where the opportunities are, what risks to watch, and how macro trends translate to real-world investment decisions.`,
     };
-    const systemMessageDefault = areaSystemMessages[reportScope] || `You are a trusted property investment advisor at ${_brandName} writing a premium client-facing report. Your reader is a potential property investor who may not have a finance or economics background.
+    const systemMessageDefault = areaSystemMessages[reportScope] || `You are a trusted property investment advisor${_atFirm} writing a premium client-facing report. Your reader is a potential property investor who may not have a finance or economics background.
 
 WRITING STYLE RULES:
 1. Lead every section with a clear, plain-English insight or takeaway BEFORE presenting any data
 2. Use a warm, professional, consultative tone — like a knowledgeable advisor speaking to a client
-3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or "NPC view", as a heading, a bold lead-in or a bare line
+3. State what a figure means in the sentence that introduces it. NEVER add a paragraph after a table or data point that explains it — no "What This Means", "Why this matters", "What to watch", "Key takeaway" or ${_writerSys.deployment.prime ? '"NPC view"' : '"Our view"'}, as a heading, a bold lead-in or a bare line
 4. Use tables ONLY for direct comparisons or financial breakdowns (max 5-6 rows). Never use a table when a well-written sentence would suffice
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
@@ -7292,8 +7358,7 @@ This report should feel like a polished advisory document that inspires confiden
         : null;
       const rawValue = pick ? (typeof pick.value === 'string' ? pick.value : (pick.value?.text ?? pick.value?.value ?? null)) : null;
       if (rawValue && typeof rawValue === 'string' && rawValue.trim()) {
-        systemMessage = rawValue
-          .replace(/\{\{brand_name\}\}/g, _brandName)
+        systemMessage = fillFirmToken(rawValue, _writerSys.firm)
           .replace(/\{\{scope\}\}/g, reportScope || '');
         systemMessageOverrideScope = pickSource;
         console.log(`✏️  system prompt override from ${pickSource}`);
@@ -7306,7 +7371,7 @@ This report should feel like a polished advisory document that inspires confiden
     console.log('=== MULTI-SECTION REPORT GENERATION ===');
     console.log('Report scope:', reportScope);
     console.log('Base prompt length:', prompt.length);
-    console.log('Document content included:', !!documentContent);
+    console.log('Document content included:', !!documentContext, documentContext && !documentContent ? '(kept from the first invocation)' : '');
     console.log('Template context included:', !!templateContext);
     console.log('Content source:', contentSource);
     console.log('Continuation mode:', isContinuation);
@@ -7330,16 +7395,14 @@ This report should feel like a polished advisory document that inspires confiden
         combinedContent = combinedContent.trim() + '\n\n---\n\n';
       }
     } else {
-      // Fresh generation: Add report header
-      const reportHeader = `# ${_brandName.toUpperCase()}
-
-YOUR DEDICATED PROPERTY PARTNER
-
-# Investment Report: ${formattedInput}
-
----
-
-`;
+      // Fresh generation: Add report header. On the prime this is the block it
+      // has always written; on a clone it names the issuer and leaves out
+      // NPC's tagline (`investmentReportMasthead`).
+      const reportHeader = investmentReportMasthead(
+        _writerSys.issuerName,
+        formattedInput,
+        _writerSys.deployment,
+      );
       combinedContent = reportHeader;
     }
 

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { waitFor, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -18,21 +18,29 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const code = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
-const state: { conversation: any; error: unknown } = { conversation: null, error: null };
+const state: { conversation: any; error: unknown; inboxError?: unknown; inviteesError?: unknown } = { conversation: null, error: null };
 const sent: Array<{ clientMessageId: string; body: string }> = [];
 const sendFailures = { remaining: 0 };
 const retried: string[] = [];
+const retryAnswer: { message?: unknown } = {};
 
 const scrolled: unknown[] = [];
+const earlierAsked: string[] = [];
+const earlierPages: Record<string, any> = {};
 vi.mock('@/lib/marketplaceBuilderStock', async () => ({
   arrivalScrollTarget: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).arrivalScrollTarget,
   conversationAccessLost: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).conversationAccessLost,
+  mergeConversationPages: (await vi.importActual<typeof import('@/lib/marketplaceBuilderStock')>('@/lib/marketplaceBuilderStock')).mergeConversationPages,
+  useEarlierConversationMessages: () => ({
+    isPending: false,
+    mutateAsync: vi.fn(async (cursor: string) => { earlierAsked.push(cursor); return earlierPages[cursor]; }),
+  }),
   scrollLogToEnd: (log: unknown) => { scrolled.push(log); },
   scrollMessageIntoView: (_log: unknown, id: string) => { scrolled.push(`message:${id}`); },
-  useBuilderConversation: () => ({
+  useParticipantConversation: () => ({
     data: state.conversation ?? undefined, error: state.error, isLoading: false, isFetching: false,
   }),
-  useSendBuilderMessage: () => ({
+  useSendConversationMessage: () => ({
     isPending: false,
     mutateAsync: vi.fn(async (input: { clientMessageId: string; body: string }) => {
       sent.push(input);
@@ -40,13 +48,18 @@ vi.mock('@/lib/marketplaceBuilderStock', async () => ({
       return {};
     }),
   }),
-  useRetryBuilderMessage: () => ({
+  useRetryConversationMessage: () => ({
     isPending: false,
-    mutateAsync: vi.fn(async (id: string) => { retried.push(id); return {}; }),
+    mutateAsync: vi.fn(async (id: string) => { retried.push(id); return retryAnswer.message ? { message: retryAnswer.message } : {}; }),
   }),
+  useConversationInvitees: () => ({ data: state.inviteesError ? undefined : [], isLoading: false, error: state.inviteesError ?? null, refetch: vi.fn() }),
+  useInviteConversationParticipant: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useLeaveConversation: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useMyBuilderConversations: () => ({ data: state.inboxError ? undefined : { conversations: [] }, isLoading: false, error: state.inboxError ?? null }),
 }));
 
-import { BuilderStockConversation } from '../BuilderStockConversation';
+import { MemoryRouter } from 'react-router-dom';
+import { BuilderConversationThread, BuilderStockConversations } from '../BuilderStockConversation';
 
 const MESSAGE = (overrides: Record<string, unknown>) => ({
   id: 'm', side: 'command_centre', sender_display_name: 'Olive Owner', body: 'Hello',
@@ -57,12 +70,17 @@ const MESSAGE = (overrides: Record<string, unknown>) => ({
 beforeEach(() => {
   state.conversation = null;
   state.error = null;
+  delete state.inboxError;
+  delete state.inviteesError;
   sent.length = 0;
   sendFailures.remaining = 0;
   retried.length = 0;
+  delete retryAnswer.message;
+  earlierAsked.length = 0;
+  for (const key of Object.keys(earlierPages)) delete earlierPages[key];
 });
 
-const renderCard = () => render(<BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />);
+const renderCard = () => render(<BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />);
 
 describe('the builder conversation card', () => {
   it('names the builder it is with', () => {
@@ -240,11 +258,30 @@ describe('the builder conversation card', () => {
   });
 });
 
+describe('a read that failed is never shown as an absence', () => {
+  it('the property card says its conversations could not be loaded, not that there are none', () => {
+    state.inboxError = Object.assign(new Error('unavailable'), { status: 503 });
+    render(<MemoryRouter><BuilderStockConversations stockItemId="item-1" builderName="Proof Homes" /></MemoryRouter>);
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you are not in a conversation/i)).toBeNull();
+  });
+
+  it('Add user says the colleagues could not be loaded, not that there is nobody', () => {
+    state.inviteesError = Object.assign(new Error('unavailable'), { status: 503 });
+    state.conversation = { conversation_id: 'conv-1', open: true, can_send: true, can_invite: true, can_leave: true,
+      participants: [], messages: [] };
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: /add user/i }));
+    expect(screen.getByText(/colleagues could not be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByText(/nobody else/i)).toBeNull();
+  });
+});
+
 describe('the conversation log follows its newest message', () => {
   it('opens at the end, and moves to the end again when a poll brings in a message', () => {
     scrolled.length = 0;
     state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [MESSAGE({ id: 'm1', body: 'First.' })] };
-    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const card = () => <BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />;
     const view = render(card());
     expect(scrolled).toContain(screen.getByRole('log'));
     const before = scrolled.length;
@@ -257,7 +294,7 @@ describe('the conversation log follows its newest message', () => {
     scrolled.length = 0;
     state.conversation = { conversation_id: 'c', open: true, can_send: true,
       messages: [MESSAGE({ id: 'm1', body: 'First.' }), MESSAGE({ id: 'm3', body: 'Newest.' })] };
-    const card = () => <BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />;
+    const card = () => <BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />;
     const view = render(card());
     state.conversation = { ...state.conversation, messages: [state.conversation.messages[0],
       MESSAGE({ id: 'm2', body: 'Arrived late.' }), state.conversation.messages[1]] };
@@ -266,12 +303,106 @@ describe('the conversation log follows its newest message', () => {
   });
 });
 
-describe('a draft belongs to the property it was written on', () => {
-  it('moving to another property clears the composer rather than carrying the text to another builder', () => {
+describe('a draft belongs to the conversation it was written in', () => {
+  it('moving to another conversation clears the composer rather than carrying the text to another builder', () => {
     state.conversation = { conversation_id: 'c', open: true, can_send: true, messages: [] };
-    const view = render(<BuilderStockConversation stockItemId="item-1" builderName="Proof Homes" />);
+    const view = render(<BuilderConversationThread conversationId="conv-1" builderName="Proof Homes" />);
     fireEvent.change(screen.getByRole('textbox', { name: /message/i }), { target: { value: 'For the first property only.' } });
-    view.rerender(<BuilderStockConversation stockItemId="item-2" builderName="Other Homes" />);
+    view.rerender(<BuilderConversationThread conversationId="conv-2" builderName="Other Homes" />);
     expect((screen.getByRole('textbox', { name: /message/i }) as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+describe('the whole history can be read', () => {
+  const conversation = (overrides: Record<string, unknown> = {}) => ({
+    conversation_id: 'conv-1', open: true, can_send: true, participants: [],
+    messages: [MESSAGE({ id: 'newest', body: 'Newest message', sent_at: '2026-09-25T12:00:00Z' })],
+    has_earlier: true, earlier_cursor: 'newest', ...overrides,
+  });
+
+  it('offers earlier messages while there are any, and adds each page above the window it already shows', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'older' };
+    earlierPages.older = { messages: [MESSAGE({ id: 'oldest', body: 'Oldest message', sent_at: '2026-09-10T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Oldest message')).toBeInTheDocument();
+    expect(earlierAsked).toEqual(['newest', 'older']);
+    const log = screen.getByRole('log');
+    expect(within(log).getAllByText(/message$/).map((n) => n.textContent)).toEqual(['Oldest message', 'Older message', 'Newest message']);
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
+  });
+
+  it('a message that slides out of the polled window after an earlier page was read stays in the history', async () => {
+    // A real window is 500 messages and moves by the few that arrived, so
+    // consecutive windows overlap; two-message windows stand in for that.
+    const w = (a: [string, string, string], b: [string, string, string], cursor: string) => conversation({
+      messages: [MESSAGE({ id: a[0], body: a[1], sent_at: a[2] }), MESSAGE({ id: b[0], body: b[1], sent_at: b[2] })],
+      earlier_cursor: cursor,
+    });
+    const NEWEST: [string, string, string] = ['newest', 'Newest message', '2026-09-25T12:00:00Z'];
+    const MID: [string, string, string] = ['mid', 'Mid message', '2026-09-25T13:00:00Z'];
+    const ARRIVED: [string, string, string] = ['arrived', 'Arrived message', '2026-09-26T12:00:00Z'];
+    const LATEST: [string, string, string] = ['latest', 'Latest message', '2026-09-27T12:00:00Z'];
+    state.conversation = w(NEWEST, MID, 'newest');
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    const view = render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    // New messages arrive and the window moves on twice: the message the page
+    // was read from, and then the one after it, leave the window.
+    state.conversation = w(MID, ARRIVED, 'mid');
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    state.conversation = w(ARRIVED, LATEST, 'arrived');
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    const log = screen.getByRole('log');
+    expect(within(log).getAllByText(/message$/).map((n) => n.textContent))
+      .toEqual(['Older message', 'Newest message', 'Mid message', 'Arrived message', 'Latest message']);
+  });
+
+  it('a failed message from an earlier page that is sent again shows what the server now says of it', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z',
+      delivery_state: 'failed', failure_reason: 'not_delivered', can_retry: true })], has_earlier: false, earlier_cursor: null };
+    retryAnswer.message = MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z',
+      delivery_state: 'queued', can_retry: false });
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /send again/i }));
+    expect(retried).toEqual(['older']);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /send again/i })).toBeNull());
+  });
+
+  it('a poll window that no longer touches what was kept pages again from the new window, so nothing between is unreachable', async () => {
+    state.conversation = conversation();
+    earlierPages.newest = { messages: [MESSAGE({ id: 'older', body: 'Older message', sent_at: '2026-09-20T12:00:00Z' })],
+      has_earlier: false, earlier_cursor: null };
+    const view = render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Older message')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
+    // A whole window's worth arrived while the tab slept: the new window
+    // shares nothing with the one kept, and there are messages between.
+    state.conversation = conversation({
+      messages: [MESSAGE({ id: 'far', body: 'Far later message', sent_at: '2026-09-30T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'far',
+    });
+    view.rerender(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    earlierPages.far = { messages: [MESSAGE({ id: 'between', body: 'Between message', sent_at: '2026-09-28T12:00:00Z' })],
+      has_earlier: true, earlier_cursor: 'between' };
+    fireEvent.click(await screen.findByRole('button', { name: /show earlier messages/i }));
+    expect(await screen.findByText('Between message')).toBeInTheDocument();
+    expect(earlierAsked).toEqual(['newest', 'far']);
+  });
+
+  it('says nothing about earlier messages when there are none', () => {
+    state.conversation = conversation({ has_earlier: false, earlier_cursor: null });
+    render(<MemoryRouter><BuilderConversationThread conversationId="conv-1" /></MemoryRouter>);
+    expect(screen.queryByRole('button', { name: /show earlier messages/i })).toBeNull();
   });
 });

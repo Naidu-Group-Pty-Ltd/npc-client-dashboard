@@ -15,7 +15,9 @@
  * page and the guard describe different corpora.
  */
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -135,6 +137,53 @@ describe('the manifest is a record of this corpus, not of a fixture', () => {
       .map((l) => l.replace(/#.*$/, '').trim())
       .filter(Boolean);
     expect(entries).toEqual([]);
+  });
+});
+
+describe('the re-check names what it found, not only how many', () => {
+  // The prime's "Apply a migration" run on 26 Sep 2026 said "8 file(s) now match
+  // and are not recorded yet" and named none of them, sending the next person
+  // to a ledger only that run could read. The re-check now prints the line the
+  // generator would write for each, matched against the ledger it just read.
+  it('prints the manifest line for a file the ledger holds and the manifest does not', () => {
+    const recorded = new Map(
+      readFileSync(MANIFEST, 'utf8')
+        .split('\n')
+        .map((l) => /^([0-9a-f]{64})\s+(\S.*)$/.exec(l.replace(/#.*$/, '').trim()))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => [m[2].trim(), m[1]] as const),
+    );
+    const digestsInManifest = new Set(recorded.values());
+    const unrecorded = readdirSync(MIGRATIONS)
+      .filter((f) => f.endsWith('.sql') && !recorded.has(f))
+      .sort()
+      .reverse()
+      .find((f) => {
+        const sql = readFileSync(join(MIGRATIONS, f), 'utf8');
+        return sql.length < 200_000 && !bodyDigests(sql).some((d: string) => digestsInManifest.has(d));
+      });
+    expect(unrecorded).toBeDefined();
+    const digest = bodyDigests(readFileSync(join(MIGRATIONS, unrecorded as string), 'utf8'))[0];
+
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'));
+    const ledger = join(dir, 'digests.txt');
+    try {
+      writeFileSync(ledger, [...digestsInManifest, digest].join('\n'));
+      const run = spawnSync(
+        process.execPath,
+        ['scripts/security/build-applied-body-digests.mjs', '--verify', '--digests', ledger],
+        { encoding: 'utf8' },
+      );
+      expect(run.status, run.stderr).toBe(0);
+      expect(run.stdout).toContain('1 file(s) now match and are not recorded yet');
+      // The line is exactly what the manifest parses, so it can be added as read.
+      const line = run.stdout.split('\n').find((l) => l.includes(unrecorded as string)) ?? '';
+      expect(line.trim()).toBe(`${digest}  ${unrecorded}`);
+      // …and verifying never writes the manifest.
+      expect(readFileSync(MANIFEST, 'utf8').includes(unrecorded as string)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

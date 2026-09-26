@@ -719,3 +719,26 @@ worker), during 60 Lawley Street's last section: the situation that stamped it
 failed at 05:31. This time the hook's reads retried through it, the finishing
 step ran at 08:00:45, no failure stamp was written, and the card reads
 `completed` at A+ 89 — §12's fix, observed under a real outage.
+
+## §14 A continuation carries no document either (26 Sep 2026)
+
+§13's fault had a twin. A report made from an uploaded brochure or a listing
+link carries the document's words into its prompt, and they arrive in
+`propertyDetails`, which only the first invocation is sent. So the first batch
+of sections was written from the brochure and every later section as though
+there had been no document: the owner's words, "brochure text reaches only the
+first batch of report sections".
+
+The first invocation now keeps the document context it composed, at
+`listing-images/report-sources/<reportId>/document.json`, and any invocation
+handed no document of its own reads it back (`reportDocumentContext.pure.ts`,
+`reportDocumentContextStore.ts`). Two rules:
+
+- **A kept copy stands in only for the same report at the same address**, and
+  only a record the module wrote is read.
+- **The prompt section is composed from the kept fields alone**, so a
+  continuation states the document exactly as the first invocation did. On a
+  first invocation the section is byte-identical to what it was.
+
+Keeping and reading are bounded (five seconds) and never fail a report. The full
+record is `WHITE_LABEL_DOCUMENTS.md` §10.

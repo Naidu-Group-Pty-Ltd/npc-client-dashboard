@@ -22,7 +22,9 @@ import { describe, expect, it } from 'vitest';
 import {
   argonautListings,
   captureRenditions,
+  floorPlanCandidatesFromPage,
   jsonObjectAt,
+  PAGE_FLOOR_PLAN_CANDIDATE_LIMIT,
   PAGE_PHOTOGRAPH_CANDIDATE_LIMIT,
   photographCandidatesFromPage,
   REA_CLASSIFY_RENDITION,
@@ -30,7 +32,9 @@ import {
   reaImageAsset,
   reaListingIdFromUrl,
   readPageCandidates,
+  readPageFloorPlanCandidates,
 } from '../../../../supabase/functions/_shared/listingPagePhotographs.pure';
+import { REPORT_FLOOR_PLAN_LIMIT } from '../../../../supabase/functions/_shared/reportPhotographs.pure';
 
 const PAGE = 'https://www.realestate.com.au/property-house-wa-spalding-152134896';
 const hash = (n: number | string) => String(n).padStart(64, String(n).slice(-1)).replace(/[^0-9a-f]/g, 'a');
@@ -42,8 +46,10 @@ interface ReaPageOptions {
   images?: string[];
   mainImage?: string;
   floorplans?: string[];
+  /** The file name the floor plans are published under (`image.jpg` unless said). */
+  floorplanFile?: string;
   /** A different listing in the same cache — a prefetched neighbour. */
-  otherListing?: { id: string; images: string[] };
+  otherListing?: { id: string; images: string[]; floorplans?: string[] };
   ogImage?: string;
   /** Markup around the data: thumbnails of other listings. */
   similarThumbs?: string[];
@@ -56,7 +62,10 @@ function reaPage(options: ReaPageOptions): string {
     media: {
       ...(options.mainImage ? { mainImage: { templatedUrl: templated(options.mainImage) } } : {}),
       images: (options.images ?? []).map((h) => ({ __typename: 'Image', templatedUrl: templated(h) })),
-      floorplans: (options.floorplans ?? []).map((h) => ({ __typename: 'Image', templatedUrl: templated(h) })),
+      floorplans: (options.floorplans ?? []).map((h) => ({
+        __typename: 'Image',
+        templatedUrl: templated(h, options.floorplanFile),
+      })),
     },
   };
   const cache: Record<string, { data: string }> = {
@@ -68,7 +77,10 @@ function reaPage(options: ReaPageOptions): string {
         details: {
           listing: {
             id: options.otherListing.id,
-            media: { images: options.otherListing.images.map((h) => ({ templatedUrl: templated(h) })) },
+            media: {
+              images: options.otherListing.images.map((h) => ({ templatedUrl: templated(h) })),
+              floorplans: (options.otherListing.floorplans ?? []).map((h) => ({ templatedUrl: templated(h) })),
+            },
           },
         },
       }),
@@ -250,4 +262,109 @@ describe('reading the embedded data', () => {
     expect(photographCandidatesFromPage({ pageUrl: PAGE.replace('152134896', '152134897'), rawHtml: html })).toEqual([]);
   });
 
+});
+
+/*
+ * The floor plans (the owner, 25 Sep 2026: "the design and floor plan if
+ * applicable"). A plan is taken on exactly the attribution a photograph is —
+ * the listing object that names the page's listing id — and only from the
+ * list the page itself calls floor plans. It travels in a list of its own,
+ * because a photo slot crops and a cropped plan has a room missing.
+ */
+describe('realestate.com.au: the listing\'s own floor plans, in a list of their own', () => {
+  it('takes the page\'s floor-plan list, in the agent\'s order, at the stored rendition', () => {
+    const plans = [hash(7), hash(8)];
+    const out = floorPlanCandidatesFromPage({ pageUrl: PAGE, rawHtml: reaPage({ images: [hash(1)], floorplans: plans }) });
+    expect(out).toEqual(plans.map((x) => ({ url: stored(x), origin: 'listing_floorplans' })));
+  });
+
+  it('never a photograph from the gallery, and never another listing\'s plan on the same page', () => {
+    const out = floorPlanCandidatesFromPage({
+      pageUrl: PAGE,
+      rawHtml: reaPage({
+        images: [hash(1), hash(2)],
+        floorplans: [hash(7)],
+        otherListing: { id: '149999999', images: [hash(8)], floorplans: [hash(9)] },
+      }),
+    });
+    expect(out.map((c) => c.url)).toEqual([stored(hash(7))]);
+  });
+
+  it('refuses the plans when the data describes a different listing from the URL, and takes nothing in their place', () => {
+    expect(floorPlanCandidatesFromPage({
+      pageUrl: PAGE,
+      rawHtml: reaPage({ listingId: '149999999', floorplans: [hash(7)] }),
+    })).toEqual([]);
+  });
+
+  it('names nothing from a page that attributes no plan to its listing, and never throws', () => {
+    expect(floorPlanCandidatesFromPage({ pageUrl: PAGE, rawHtml: reaPage({ images: [hash(1)] }) })).toEqual([]);
+    expect(floorPlanCandidatesFromPage({ pageUrl: 'https://www.acmerealty.com.au/listings/60-lawley-street', rawHtml: '<img src="/plan.jpg">' }))
+      .toEqual([]);
+    expect(floorPlanCandidatesFromPage({ pageUrl: 'https://www.realestate.com.au/property/60-lawley-st-spalding-wa-6530', rawHtml: reaPage({ floorplans: [hash(7)] }) }))
+      .toEqual([]);
+    expect(floorPlanCandidatesFromPage({ pageUrl: PAGE, rawHtml: '<script>window.ArgonautExchange={"broken' })).toEqual([]);
+    expect(floorPlanCandidatesFromPage({ pageUrl: 'not a url', rawHtml: reaPage({ floorplans: [hash(7)] }) })).toEqual([]);
+  });
+
+  it('names more plans than a report carries, because some will fail a check, and no more than its ceiling', () => {
+    expect(PAGE_FLOOR_PLAN_CANDIDATE_LIMIT).toBeGreaterThan(REPORT_FLOOR_PLAN_LIMIT);
+    const many = Array.from({ length: 9 }, (_, i) => hash(`${i + 20}`));
+    const out = floorPlanCandidatesFromPage({ pageUrl: PAGE, rawHtml: reaPage({ floorplans: [...new Set(many)] }) });
+    expect(out).toHaveLength(PAGE_FLOOR_PLAN_CANDIDATE_LIMIT);
+  });
+
+  it('an asset the page lists as a floor plan is never offered as a photograph, even from the gallery', () => {
+    // A coloured or rendered plan can read as a photograph to the server's
+    // eye, and a photograph can lead a cover. The page's own word decides.
+    const out = photographCandidatesFromPage({
+      pageUrl: PAGE,
+      rawHtml: reaPage({ images: [hash(1), hash(7), hash(2)], floorplans: [hash(7)] }),
+    });
+    expect(out.map((c) => c.url)).toEqual([stored(hash(1)), stored(hash(2))]);
+    // And it is still offered as the plan it is.
+    expect(floorPlanCandidatesFromPage({
+      pageUrl: PAGE,
+      rawHtml: reaPage({ images: [hash(1), hash(7), hash(2)], floorplans: [hash(7)] }),
+    }).map((c) => c.url)).toEqual([stored(hash(7))]);
+  });
+});
+
+describe('the stored floor-plan list is re-checked on the way in', () => {
+  it('realestate.com.au\'s own image host only, https only, the page\'s own floor-plan list only, one per plan, capped', () => {
+    const out = readPageFloorPlanCandidates([
+      { url: stored(hash(7)), origin: 'listing_floorplans' },
+      // The same plan at another rendition is the same plan.
+      { url: `https://i1.au.reastatic.net/800x600/${hash(7)}/image.jpg`, origin: 'listing_floorplans' },
+      { url: stored(hash(8)).replace('https:', 'http:'), origin: 'listing_floorplans' },
+      { url: 'https://cdn.acme.example/plan.jpg', origin: 'listing_floorplans' },
+      { url: stored(hash(9)), origin: 'listing_gallery' },
+      { url: 'javascript:alert(1)', origin: 'listing_floorplans' },
+      stored(hash(6)),
+      { url: stored(hash(5)), origin: 'listing_floorplans' },
+    ]);
+    expect(out).toEqual([
+      { url: stored(hash(7)), origin: 'listing_floorplans' },
+      { url: stored(hash(5)), origin: 'listing_floorplans' },
+    ]);
+    expect(readPageFloorPlanCandidates(null)).toEqual([]);
+    expect(readPageFloorPlanCandidates({ url: stored(hash(7)), origin: 'listing_floorplans' })).toEqual([]);
+    const many = Array.from({ length: 12 }, (_, i) => ({ url: stored(hash(`${i + 30}`)), origin: 'listing_floorplans' }));
+    expect(readPageFloorPlanCandidates(many)).toHaveLength(PAGE_FLOOR_PLAN_CANDIDATE_LIMIT);
+  });
+
+  it('keeps a plan published under the name `floorplan`: the photographs\' furniture rule is not a plan\'s', () => {
+    // The photographs' rule refuses a file called `floorplan` — that is how a
+    // plan is kept off a photo card — and a plan may be called exactly that.
+    const named = stored(hash(7), 'floorplan.jpg');
+    expect(readPageCandidates([{ url: named, origin: 'listing_gallery' }])).toEqual([]);
+    expect(readPageFloorPlanCandidates([{ url: named, origin: 'listing_floorplans' }]))
+      .toEqual([{ url: named, origin: 'listing_floorplans' }]);
+    const page = reaPage({ floorplans: [hash(7)], floorplanFile: 'floorplan.jpg' });
+    expect(floorPlanCandidatesFromPage({ pageUrl: PAGE, rawHtml: page })).toEqual([{ url: named, origin: 'listing_floorplans' }]);
+  });
+
+  it('a plan never enters the photographs\' list, whatever list it was stored in', () => {
+    expect(readPageCandidates([{ url: stored(hash(7)), origin: 'listing_floorplans' }])).toEqual([]);
+  });
 });

@@ -14,6 +14,7 @@ import {
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useAmlNavEntry } from '@/hooks/useAmlNavEntry';
 import { useNavigationVisibility } from '@/hooks/useNavigation';
+import { NavItemBadge } from '@/components/layout/NavItemBadge';
 import { AML_NAV_GROUP_TITLE } from '@/lib/navigation/amlEntry';
 import {
   NAVIGATION_GROUP_ORDER,
@@ -96,6 +97,7 @@ export function DashboardSidebar() {
           >
             <item.icon className="h-4 w-4 shrink-0" />
             {!isCollapsed && <span className="min-w-0 truncate">{item.title}</span>}
+            {!isCollapsed && item.badge ? <NavItemBadge kind={item.badge} /> : null}
           </NavLink>
         </SidebarMenuButton>
       </SidebarMenuItem>

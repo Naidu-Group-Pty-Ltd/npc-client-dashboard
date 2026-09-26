@@ -2,11 +2,15 @@
 
 Read this before touching `_shared/reportPhotographs.pure.ts`,
 `_shared/listingPagePhotographs.pure.ts`, the `photographs` option on
-`get-investment-reports`, the `capture_report` operation on `listing-images`,
-`src/lib/reports/urlExtractPhotographs.ts`,
-`src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`, or
-the `property.images` binding in the Investment Compass masters. §6 is the
-URL-extract path; §7 is the cover photograph on the other masters.
+`get-investment-reports`, the `capture_report` or `capture_brochure_photograph`
+operations on `listing-images`, `src/lib/reports/urlExtractPhotographs.ts`,
+`src/lib/reports/brochurePhotographs*.ts`, `BrochurePhotographsPicker`,
+`src/lib/reportTemplate/adapters/reportPhotographs.ts`, `withCoverPhotograph`,
+`floorPlanPage`, `src/lib/reports/investment/investmentPdfPictures.ts`, or the
+`property.images` / `property.floorPlans` bindings in the Investment Compass
+masters. §6 is the URL-extract path; §7 is the cover photograph on the other
+masters; §8 is the PDF brochure path; §9 is the floor plan; §10 is the standard
+presentation, which is what a report comes out in when no template is chosen.
 
 ## 1. What was asked, and what was actually wrong
 
@@ -124,7 +128,14 @@ At most six photographs are carried: the largest number any master binds.
   twice is two listings holding the same pictures, and rule 2 cannot tell that
   from a stock render, because the reuse reading carries counts, not addresses.
   This is the conservative side on purpose.
-- **The standard presentation's cover is unchanged.** It is a static page.
+- **The standard presentation's cover was unchanged** when this section was
+  written: it is a static page. §10 puts the lead photograph in the field below
+  its lockup, measured off the page, without changing the page itself.
+- **A URL-extract report's floor plans came later** (§9, "From a listing
+  page"). realestate.com.au publishes a listing's plans as a separate list in
+  the same page data, and the capture now reads that list beside the
+  gallery. A report made from a listing in the intake carries its plans from
+  the image library.
 - **A document already produced in a tab is not redrawn** when a photograph is
   harvested later, because the template path's cache fingerprint does not
   include the images.
@@ -158,7 +169,7 @@ this one route, and only for the listing's own pictures.
    photographs from it. On realestate.com.au that is the gallery in the page's
    embedded data, attributed by the listing id in the URL: the "similar
    properties" beside it carry other ids and are never taken, and floor plans
-   are a separate list. **Anywhere else, nothing.** A page's `og:image` was
+   are a separate list, named apart (§9). **Anywhere else, nothing.** A page's `og:image` was
    the fallback in the first version. It says what the page wants shown when
    it is shared, not which property a picture is of; on a portal or an agency
    site it is as often a banner, an office or a stock photograph as the house.
@@ -330,3 +341,409 @@ no picture of a similar house. The binding has no fallback.
 - **The Claude Design catalogue does not draw it.** The slot is composed in
   code from a ground the catalogue declares. `source.json` is untouched, so
   the Design file still shows these covers without a photograph.
+
+## 8. A report made from a PDF brochure
+
+The owner, 25 Sep 2026: a new-build report is usually made from the builder's
+PDF brochure, uploaded in the PDF section of the Reports page, and the
+brochure holds images of the property or its design that the report should
+carry. Nothing read them: the browser rendered the brochure's pages for the
+parser and the report was written without a photograph. The same rules as
+every other route hold here, and rule 4 is the one that decides most: only
+this address and property, and never a picture chosen to fill a slot.
+
+### The path
+
+1. **The browser reads the brochure beside the parse** (`readBrochurePhotographs`).
+   pdf.js walks each page's operator list, so the walk knows where every
+   picture is drawn and how large, whether it is drawn on the page, inside a
+   form (how a Canva or InDesign export arrives), or in a form field's
+   appearance (how a filled-in template carries its facade). pdf.js decodes
+   every encoding the format allows, so no encoding is guessed at.
+2. **Floors that need no pixels** refuse a logo or an icon (under 6% of its
+   page), a banner (a shape more extreme than 1:4), anything under the 1,000 px
+   print floor, and a raster that IS the page: a scan, whose "photograph" has
+   the brochure's type baked into it. A picture drawn more than once on a page,
+   or on three pages or more, is furniture and is never offered.
+3. **The server's own judgement of the pixels** (`listingImageVision.pure.ts`,
+   the same module on the same 64-pixel square) says which survivors are
+   photographs and which are floor plans. A graphic is never offered. A floor
+   plan is offered apart from the photographs and filed apart from them (§9).
+4. **The pages are read for the property, in the words the page prints.** A
+   page that names the property's lot, or its street number and street, is
+   where its pictures are; a page naming another lot is that lot's.
+5. **Only a page that names this property can offer a picture.** This is the
+   rule the owner's own brochure decided, and §8's measurement below is why.
+   The largest photograph on such a page is ticked as the cover; the adviser
+   can tick up to six and untick any.
+6. **The ticks are filed once the report exists** (`op:
+   'capture_brochure_photograph'`, one request a photograph, in order, never
+   awaited by the generation). **The page is held while they are in flight**
+   (`fileWhilePageHeld`): the pictures exist nowhere but that page, so closing
+   or reloading it asks first, and the report is announced and the form
+   cleared only once they have landed or a minute has passed. Before this the
+   filing was fire-and-forget behind an announcement that invited the adviser
+   to leave, and a close in those seconds lost the pictures for good (Codex's
+   review of #2775, P1). The server authenticates, asks for the
+   `reports` permission, meters (30 a minute for a person, 60 for an address),
+   files only for the report's author, never for a derived report and never
+   beside a listing capture. It writes `brochure.json` first (the brochure's
+   SHA-256, the address it names, who asked and when), holds the report's
+   address to that address, then keeps a photograph only on its own verdict:
+   at print size, judged a photograph, not a copy of one already kept. Each is
+   filed where a capture's are, named by its place.
+7. **Every document in the family reads them.** The broker reads
+   `brochure.json` where the folder holds no `capture.json`, and serves the
+   photographs only while the report's address, as it reads now, is the
+   brochure's. The Financial, Due Diligence, Briefing and Snapshot documents
+   are made only from a Compass (the condense route refuses any other parent,
+   the fork forks the composite), so all five read the same folder.
+
+### What the owner's brochure measured
+
+The example the owner sent (a VERV "NEX 20" house-and-land package, nine pages,
+Lot 1629 Hornsea Street, Palomino Estate, Armstrong Creek) found two faults
+the synthetic tests could not.
+
+- **The lot line was unreadable.** pdf.js hands a page's text over in runs,
+  and a run ends wherever the PDF changes font, which a designed brochure does
+  mid-word. That line is seven runs: `L` · `ot` · ` ` · `1` · `629` · ` ` ·
+  `Hornsea Street`. Joining every run with a space read it as `L ot 1 629`, so
+  no page could name its own lot. pdf.js already writes the spaces the page has,
+  so `joinPageText` joins runs with nothing, and separates them only where the
+  page does: a line ends, the next run sits on another line, or it starts clear
+  of where the last one finished.
+- **A builder's brochure is one page about the lot and eight about the
+  builder.** Seven pictures pass the floors: page 1's facade render (a
+  photograph) and floor plan, a couple walking through another estate on
+  page 5, and four homes the builder built elsewhere on page 6. The first cut
+  offered every photograph on a page naming no property, unticked, for the
+  adviser to judge. That put five pictures of other places in front of the
+  person choosing a client's cover, with nothing on screen to tell them apart,
+  so a page that names no property now offers nothing, and the picker says
+  why. Measured through the real page in Chromium after the change: one
+  photograph offered, the 1,280 × 720 facade render, ticked as the cover, and
+  filed byte-identical to the brochure's own.
+
+### The address rule for a lot
+
+`isSameProperty` refuses an address that is only a lot, which is right for a
+listing and wrong for a new build: `Lot 1629 Hornsea Street` is the only
+address the property has. `brochurePhotographsAreOfReportAddress` accepts it on
+one condition, that both sides name the same lot, and then everything either
+side states must agree: street number, unit, street and suburb. Any other
+address goes through `isSameProperty` unchanged.
+
+### What this does not do
+
+- **A design render on a page that names only the design.** A brochure that
+  shows the facade on a page titled "NEX 20" and names the lot elsewhere offers
+  nothing from that page. That is the conservative side of the rule above.
+- **A brochure whose text is drawn as outlines.** It has no words to read, so
+  no page names the property and nothing is offered.
+
+### Verified locally
+
+- `brochurePhotographs.spec.ts` (the walk, the floors, the lot rule, the page
+  reading, the offer, the filing and the source scans of `listing-images`, the
+  broker and the generator), `brochurePhotographsPdf.spec.ts` (the walk through
+  the real pdf.js over a brochure built for it, with a picture on the page,
+  inside a form, in a form field's appearance, and a full-page scan) and
+  `brochurePhotographsPicker.spec.tsx` pass.
+- The whole flow on the real Reports page in Chromium, every Supabase call
+  answered by the harness double: parse, picker, generate, then one filing
+  request a ticked photograph with its place, the brochure's digest and its
+  address. Run against synthetic brochures (one lot, several lots, no lot) and
+  against the owner's brochure.
+- The Deno type-check adds no error to `listing-images` or
+  `get-investment-reports`.
+
+### Not verified
+
+- **The parse's answer for the owner's brochure was simulated.** The journey's
+  double answered `Lot 1629 Hornsea Street`, `Armstrong Creek`, which is what
+  page 1 prints; `parse-property-pdf` was not called, because it spends a model
+  call. PENDING.
+- **A real filing has not run.** It needs `listing-images` and
+  `get-investment-reports` deployed, a report made from a brochure, and the
+  PDF read: the cover should be the brochure's facade. PENDING.
+
+## 9. A floor plan, on a sheet of its own
+
+The owner, 25 Sep 2026: "maybe we should consider inserting the design and
+floor plan if applicable … and in the brochure". A new build's brochure
+usually carries the plan the house will be built to; the owner's example
+carries one on page 1, beside the facade render (1,199 × 751, which the server
+judges a floor plan). A buyer reads a plan before almost anything else a report
+says about a house.
+
+### Why a sheet of its own, and never a photo slot
+
+Every photo slot in the catalogue fills its frame and crops what does not fit.
+That is right for a facade and wrong for a plan: a cropped plan is a plan with
+a room missing, and nothing on the page says so. So a plan is never bound to
+`property.images`; it has its own binding, `property.floorPlans`, and its own
+page, on which it is drawn whole (`contain`), centred, never rotated (a rotated
+plan has lost its north). Two rules follow from "whole":
+
+- **The sheet is conditional on the plan.** Most reports have none, and a
+  report without one loses the page rather than printing an empty sheet.
+- **A plan is not a photograph, in storage or in the broker.** It is filed
+  under `report-photographs/<report>/plans/` (`floorPlanFolder`), judged
+  `floorplan` by the server before it is kept, capped at
+  `REPORT_FLOOR_PLAN_LIMIT` (2), and served as `floorPlans` beside
+  `photographs`. A listing report's plans are the image library's
+  `visual_kind = 'floorplan'` rows, under the same reuse and print-floor rules
+  as its photographs.
+
+### The path
+
+1. **Offered in the picker, apart.** `buildBrochureOffer` keeps a picture the
+   server's vision reads as a plan in `plans`, under the same page rule as a
+   photograph: only a page naming this property. The picker shows them under
+   "Floor plan", drawn whole (`object-contain`), up to two ticked.
+2. **Filed with `kind: 'floorplan'`.** The same `capture_brochure_photograph`
+   operation, with a second target folder and limit; it refuses anything its
+   own judgement does not call a plan (422 with the reading), so a photograph
+   cannot be filed as a plan or a plan as a photograph.
+3. **Served and bound.** The broker lists the plans folder beside the
+   photographs, signs them, and the Investment adapter inlines them as
+   `property.floorPlans`.
+4. **Drawn.** Every Investment master (seed v22) carries two sheets, "Floor
+   plan" and "Floor plan, continued" (`floorPlanPage`), each conditional on its
+   own plan: the family's own section heading and the address, the plan in the
+   room between, and a three-line title block at the foot: not to scale, where
+   it came from, and to check it against the contract drawings.
+
+### From a listing page
+
+A report made through URL extract (§6) takes the listing's own plans the way it
+takes its photographs, and files them where a brochure's go, so steps 3 and 4
+above serve and draw them unchanged.
+
+1. **The extraction names them apart.** `floorPlanCandidatesFromPage` reads
+   `media.floorplans` from the realestate.com.au listing object that names the
+   page's own listing id: the same attribution as the gallery, and only the
+   list the page itself calls floor plans, never a guess from the gallery. They
+   are stored on the job as `photographs.floorPlans`, at the photographs'
+   rendition (`2000x2000-fit`, the original's frame: never cropped, padded or
+   enlarged). Up to four are named, for a report that carries two.
+2. **An asset the page lists as a plan is never offered as a photograph**,
+   even where the agent put it in the gallery as well. The server's reading
+   refuses most plans as photographs anyway, but a coloured or rendered plan
+   can read as a photograph, and a photograph can lead a cover.
+3. **The same capture keeps them.** `capture_report` runs the same attempts
+   under the same record and the same address check (rule 4), in two passes
+   that share one allowance, photographs first, because the cover is what a
+   reader sees first. A plan is kept only on the server's own `floorplan`
+   verdict, at the print floor, one copy each, at its place in the page's list,
+   in `plans/`. Its list is settled apart in the record (`plans`), because one
+   asset can sit in both lists: refused as a photograph for being a plan, and
+   still tried as a plan. The capture is finished when both lists are
+   (`captureFinish`). With no plans named, every answer is exactly what it was
+   before plans were read, which is every record already written.
+4. **The furniture rule is a photograph's, not a plan's.** It refuses a file
+   called `floorplan`, which is how a plan is kept off a photo card and exactly
+   what a plan may be called. So it is lifted for a listing's plan and for
+   nothing else, and in its place a stored plan must be on realestate.com.au's
+   own image host, the only host any plan is read from.
+5. **The browser asks where the extraction named either.** A listing whose page
+   names a plan and no photograph still has its plan kept.
+
+### Where the sheet goes
+
+After the cover, the contents and any photographic plates, and before the
+executive dashboard, in all fifty masters. The owner chose "own page after the
+overview"; the overview is not a page, though. The front matter flows straight
+into the report's body on the same sheet (seed v20), so a page placed after it
+would stand between the body's first page and its second. The first place a
+page can stand without splitting prose is before the verdict, where the
+pictures of the property are met together: the cover shows the home, the plan
+shows its layout, and the assessment follows. Moving it to the back of the
+document is a one-line change in `templates.ts` if the owner prefers.
+
+It has no running head, like the plates beside it. A running head names a part,
+and giving the sheet a part would renumber every later page's head in all fifty
+masters, which would break the promise below.
+
+### What the release is, measured rather than claimed
+
+Parsed out of the v21 and v22 seed files, 543 rows each:
+
+- **50 of 543 differ**, exactly the Investment masters. The other nine formats'
+  450 masters and the 43 voice templates are byte-identical.
+- Each gains **exactly two pages**; every existing page is byte-identical, in
+  its old order, under its old id. 44 gain 10 blocks and 6 gain 8.
+- Outside `schema`, only `page_count` (+2) and `required_bindings`
+  (`property.floorPlans.0` and `.1`) change.
+
+`20261223100000` refreshes the active masters by the v15 mechanism, unchanged.
+
+### Verified locally
+
+- `investmentCompassFloorPlan.spec.ts` renders all fifty masters through the
+  production renderer: without a plan each draws **byte for byte** what the
+  same master draws with the two sheets taken out of its schema; one plan
+  prints one sheet, two print two, each drawn `contain`; all five documents
+  keep the sheets, graded or not.
+- `templates:compass:qa` with both sheets drawn: 410 renders, no overflow, no
+  collision, no unresolved binding.
+- `templates:library:seed:check`: the v22 file is byte-identical to what the
+  definitions produce.
+- The owner's plan drawn on the sheet in ten families, wide and turned tall.
+- The listing-page plans: `listingPagePhotographs.spec.ts` (the page names
+  them apart, by the listing id, capped; a listed plan is never a photograph;
+  a stored list is re-checked, and a plan called `floorplan` survives) and
+  `urlExtractPhotographs.spec.ts` (a record written before plans reads as one
+  that asks for none; with no plans every finish is the photographs' own; the
+  capture finishes only when both lists do; the lists settle apart; the
+  source-level order of the two passes, their shared allowance and the plans
+  folder). Seven deliberate mutations of those rules each fail a test.
+
+### Not verified
+
+- **v22 is not applied.** The seed and the refresh go through the reviewed
+  "Apply a migration" workflow after merge. PENDING.
+- **A real filing of a plan has not run**, for the same reason as §8's. PENDING.
+- **A listing page's plan has not been fetched from realestate.com.au.** The
+  owner's rule is that no outside picture is used for testing, so the plan
+  list's shape is the one the photographs were built against, and what the
+  image host serves for a plan (its format and size) is unmeasured. A plan it
+  serves as GIF or WebP is refused `unreadable`, because the capture decodes
+  only JPEG and PNG; the refusal is counted in the record's `plans.refused`
+  and in the capture's log line, so production will say so. PENDING: the
+  first URL-extract report made from a listing with a plan.
+
+## 10. The standard presentation
+
+The standard presentation is what a report comes out in when no template is
+chosen: `investmentPdfDocument.ts`, drawn with pdf-lib over the brand cover and
+the content page of `public/templates/npc_template.pdf`. Before this it drew no
+photograph and no plan, whichever route found them; §7's covers and §9's
+sheets reached only a chosen template. It now draws both, from the same reader
+(`loadInvestmentReportWithPhotographs`, exported from the adapter), so a report
+does not gain a floor plan or lose its photograph by being left on the default.
+The pictures are read only when this presentation is the one being drawn, after
+the template route has declined, so a templated document costs no second read.
+
+### The cover
+
+The cover is a finished brand page, so everything was measured off it
+(`investmentPdfPictures.ts` header) rather than assumed:
+
+- the gold borders end at x 12.5 and resume at 581.5;
+- the divider under the tagline runs x 59.5–554.5, its lower edge 560.5pt
+  down, centred ten points right of the page (like the tagline);
+- the bottom-right ornament's first grey is 592pt down.
+
+The lead photograph takes the whole field below the lockup, from 590pt down to
+the trim between the borders, so the ornament lies under it rather than beside
+it. It fills the band and is clipped to it, and a gold hairline closes its top.
+The address is set between the divider and the band in ivory capitals, because
+a photograph on a cover should say which property it shows. Ivory, not gold:
+REPORT_RULES §2 forbids a saturated accent below 10pt.
+
+Two things only a render found:
+
+- **The template's box does not start at zero.** Its MediaBox is
+  [0 7.83 595.5 850.08], so a band placed against a 0–842 page sat 7pt low and
+  left the ornament's tip standing above the photograph. Every vertical
+  measurement is taken from the sheet's visible top edge and placed against
+  the page's own box.
+- **The ornament overlaps the right border.** From 592pt down the border's gold
+  starts at 586.5, not 581.5, so a photograph covering the ornament to 581.5
+  left a five-point sliver of it beside the band. The border's own gold (flat
+  across its width, graded down its height, both sampled) is drawn back over it.
+
+Without a photograph the cover is the page it always was.
+
+### Whose cover it is
+
+That cover is **NPC's artwork**: the monogram over NAIDU PROPERTY CONSULTING
+SERVICES · YOUR DEDICATED PROPERTY PARTNER. Nothing chose it per deployment, so
+until 25 Sep 2026 every clone's standard document opened on another business's
+name. The file also said `NPC Services` wrote it and `NPC Command Centre` made
+it. The closing page already resolved its issuer through
+`issuerIdentity.pure.ts`; the cover, the first page a reader sees, never asked.
+
+The rule (`standardCover.pure.ts`): **the artwork opens NPC's document on NPC's
+deployment, and nothing else.** Both conditions matter, because each alone has
+a case it gets wrong:
+
+- a clone seeded from the prime's settings holds NPC's name in its rows. It must
+  still not print NPC's artwork, so the prime is recognised by the backend it
+  talks to (`isPrimeDeployment`), never by a name a row can hold;
+- the prime renamed on its Branding or Report Settings page is issuing as
+  somebody else, and a cover that ignored that would not be white-labelled.
+
+Every other document opens on a cover drawn for its issuer
+(`investmentPdfCover.ts`):
+
+- **Name and mark.** The issuer's name in serif capitals, and its knockout mark
+  from the Branding page, because the cover is a dark ground.
+- **Title.** The document's title under the name.
+- **Photograph and address.** The divider, address and photograph band sit
+  exactly where the artwork cover has them, so the photograph lands in the same
+  place on either cover. Without a photograph, the document's one-line
+  standfirst takes the band's place.
+- **Colour.** The issuer's brand family (`brandFamily.pure.ts`): its brand
+  colour on the dark field, in the shade that clears the print floor, and the
+  same family on the closing page, so the first and last pages are a pair. An
+  issuer with no brand colour prints in Aurixa's platform gold on obsidian.
+
+The issuer is resolved once, from the resolver every surface uses: the report
+contact's company name, then the Branding page's name, then the platform. An
+unbranded clone therefore issues as Aurixa Systems, with the platform's emblem
+and the platform's own disclaimer. It never prints a stored disclaimer written
+by nobody, which the closing page did until this change.
+
+**Nothing of the artwork is carried into another issuer's file.** Such a
+document starts from an empty PDF and copies only the content page. Drawing
+over the artwork would still leave NPC's name and monogram in the file, where
+a text search or a screen reader finds them. The file's author, creator and
+producer name the issuer.
+
+The prime's own document was checked before and after the change: same size to
+the byte, same text and metadata, and all four pages pixel-identical. The only
+differing bytes are the timestamps.
+
+### The plan
+
+One sheet a plan, after the contents and before the report's first page,
+matching the templates. The sheet uses the body's own section heading (gold
+bar, navy title, gold rule), the address beneath it, the plan whole in the room
+left, and the same title block at the foot. It is embedded before the page is
+added, so a plan that will not embed costs no page. It is not listed in the
+contents, which numbers the report's sections.
+
+### Verified locally
+
+- `standardPresentationPictures.spec.ts` draws the real document through
+  `generateInvestmentPdfBlob` and reads it back with pdf.js: with no pictures it
+  is the same document; a photograph adds one image to the cover, and the
+  address, and nothing else changes; each plan adds one sheet in the right
+  place; a picture that will not embed costs nothing. Disabling either feature
+  fails three of its tests.
+- The owner's facade render and plan drawn through it, and every edge of the
+  band looked at at 600 dpi.
+
+- The white-label cover, drawn for a tenant with a mark and a photograph, a
+  tenant with neither, an unbranded clone (with and without a photograph) and
+  a long name on a Snapshot, and each looked at. `standardCover.spec.ts` holds
+  the decision, the name setting and the layout; the pictures spec reads the
+  file back and finds none of the artwork's faces or its 640 × 512 monogram in a
+  clone's document. Forcing the artwork everywhere fails ten tests.
+
+### Not verified
+
+- **Not yet drawn from a real report in the browser.** It needs a report whose
+  folder holds a photograph and a plan, which needs §8's filing live. PENDING.
+- **Not yet seen on a real clone.** The white-label cover reads the clone's own
+  `whitelabel_settings` and `global_report_settings`; no clone has drawn one
+  yet. PENDING.
+- **A tenant's colour has been drawn from fixtures only.** Since 26 Sep 2026
+  the cover, the body and the closing page take the issuer's brand family
+  rather than the house pair (`WHITE_LABEL_DOCUMENTS.md` §4). A teal and no
+  colour at all were drawn and looked at; every other colour is held to the
+  print floors by `brandFamily.spec.ts`, not by a render. No clone's own colour
+  has been drawn. PENDING, with the clone renders above.

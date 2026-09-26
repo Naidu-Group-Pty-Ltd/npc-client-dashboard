@@ -50,6 +50,7 @@ import {
   coverHero,
   definitions,
   disclaimerPage,
+  floorPlanPage,
   flow,
   furniture,
   ifItFits,
@@ -111,6 +112,12 @@ const INVESTMENT_COMPASS_FORMAT: ReportFormat = {
  * unresolved binding renders as the empty string, never as a visible `{{…}}`.
  */
 const FOOTER = '{{property.address}} · {{report.documentTitle}}';
+
+/**
+ * Floor-plan sheets a master carries, one a plan: `REPORT_FLOOR_PLAN_LIMIT` in
+ * `_shared/reportPhotographs.pure.ts`, which a spec holds this to.
+ */
+export const FLOOR_PLAN_SHEETS = 2;
 
 /**
  * The longest each bound field runs across the 1,182 stored reports.
@@ -464,6 +471,17 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
    */
   pages.push(...platesFor('property'));
   pages.push(...platesFor('thesis'));
+  /*
+   * The property's floor plans go here: after the cover and any frontispiece
+   * photograph, before the verdict. It is the first place a page can stand
+   * without splitting prose, because the front matter below flows straight
+   * into the report's body on the same page, so a page placed after it would
+   * stand between the body's first page and its second. Read in order, the
+   * cover shows the home, the plan shows its layout, and the assessment
+   * follows. The sheets are built last (below), so every existing block keeps
+   * its id, and spliced in here.
+   */
+  const floorPlanAt = pages.length;
 
   /*
    * ── The front matter flows into the report ───────────────────────────────
@@ -1264,6 +1282,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   if (!slots.coverHero && slots.plates.length === 0) {
     pages[0] = withCoverPhotograph(pages[0], 0, c.cover.ground);
   }
+
+  // The floor-plan sheets, built after everything else so they take the last
+  // ids, and placed where `floorPlanAt` was recorded (see there).
+  const floorPlans = Array.from({ length: FLOOR_PLAN_SHEETS }, (_, index) =>
+    floorPlanPage({ index, footerText: FOOTER }));
+  pages.splice(floorPlanAt, 0, ...floorPlans);
 
   return assembleMaster({ family, variant, manifest, c, pages, format: INVESTMENT_COMPASS_FORMAT });
 }

@@ -31,6 +31,7 @@ import {
   CAPTURE_MAX_ATTEMPTS,
   CAPTURE_RECORD_NAME,
   CAPTURE_RETRY_AFTER_MS,
+  captureFinish,
   captureFolder,
   captureIsFinal,
   captureObjectName,
@@ -46,9 +47,11 @@ import {
   parseCaptureRecord,
   photographsAreOfReportAddress,
   placesTakenBefore,
+  REPORT_FLOOR_PLAN_LIMIT,
   REPORT_PHOTOGRAPH_CAPTURE_PREFIX,
   REPORT_PHOTOGRAPH_LIMIT,
   type CapturedPhotograph,
+  type CaptureFinish,
   type CaptureRecord,
 } from '../../../../supabase/functions/_shared/reportPhotographs.pure';
 import {
@@ -396,13 +399,135 @@ describe('what an owner asked: the photographs are not fetched in the browser\'s
   });
 });
 
+/*
+ * The listing's floor plans ride the same capture (the owner, 25 Sep 2026):
+ * the same record, the same address check, the same attempts, in a list of
+ * their own. The rule these pin is that adding a list changed nothing about
+ * the one that was there: with no plans named, every answer is the
+ * photographs' own.
+ */
+describe('a listing\'s floor plans ride the same capture, in a list of their own', () => {
+  const plan = (place: number) => photo(place, { name: name(place, 1600, 1200, hex(0xf0 + place), hex(0x7a0 + place)) as string });
+  const planUrls = (n: number) =>
+    Array.from({ length: n }, (_, i) => `https://i2.au.reastatic.net/2000x2000-fit/${hex(0x90 + i).repeat(4)}/image.jpg`);
+  const list = (candidates: string[], settled: string[] = [], held: CapturedPhotograph[] = []) =>
+    ({ candidates, settled: new Set(settled), held });
+
+  it('reads a record written before plans were read as one that asks for none, and writes the plans down', () => {
+    const fresh = newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0, source: SOURCE });
+    expect(fresh.plans).toEqual({ settled: [], refused: {} });
+    const legacy = JSON.parse(JSON.stringify(fresh));
+    delete legacy.plans;
+    expect(parseCaptureRecord(legacy)?.plans).toEqual({ settled: [], refused: {} });
+    const withPlans = { ...fresh, plans: { settled: ['p', 7, 'p'], refused: { photo: 1, bad: 'x' } } };
+    expect(parseCaptureRecord(withPlans)?.plans).toEqual({ settled: ['p'], refused: { photo: 1 } });
+  });
+
+  it('with no plans named, every answer is exactly the photographs\' own', () => {
+    const urls = candidateUrls(8);
+    const cases: Array<[string[], string[], CapturedPhotograph[], number]> = [
+      [[], [], [], 0],
+      [urls, [], [0, 1, 2, 3, 4, 5].map((p) => photo(p)), 1],
+      [urls, [], [0, 2, 3, 4, 5, 6].map((p) => photo(p)), 1],
+      [urls.slice(0, 2), urls.slice(0, 2), [], 1],
+      [urls, urls.slice(1), [], 2],
+      [urls, urls.slice(1), [], CAPTURE_MAX_ATTEMPTS],
+    ];
+    for (const [candidates, settled, held, attempts] of cases) {
+      const before: CaptureFinish | null = candidates.length === 0
+        ? 'no_candidates'
+        : captureIsFinal(candidates, new Set(settled), held) ?? (attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+      expect(captureFinish({ photographs: list(candidates, settled, held) }, attempts)).toBe(before);
+      expect(captureFinish({ photographs: list(candidates, settled, held), plans: list([]) }, attempts)).toBe(before);
+    }
+  });
+
+  it('is finished only when both lists are, and says why', () => {
+    const urls = candidateUrls(3);
+    const plans = planUrls(3);
+    const photosDone = list(urls, urls, []);
+    // The photographs are settled and a plan is undecided: not finished, until the attempts are spent.
+    expect(captureFinish({ photographs: photosDone, plans: list(plans) }, 1)).toBeNull();
+    expect(captureFinish({ photographs: photosDone, plans: list(plans) }, CAPTURE_MAX_ATTEMPTS)).toBe('attempts');
+    // Plans alone, at their own limit: the first two places taken.
+    expect(captureFinish({ photographs: list([]), plans: list(plans, [], [plan(0), plan(1)]) }, 1)).toBe('limit');
+    expect(REPORT_FLOOR_PLAN_LIMIT).toBe(2);
+    // Either list running out makes the whole `exhausted`.
+    expect(captureFinish({ photographs: photosDone, plans: list(plans, [], [plan(0), plan(1)]) }, 1)).toBe('exhausted');
+    expect(captureFinish({ photographs: list([]), plans: list(plans, plans, []) }, 1)).toBe('exhausted');
+    expect(captureFinish({ photographs: list([]), plans: list([]) }, 1)).toBe('no_candidates');
+  });
+
+  it('settles each list apart: one asset in both lists is refused as a photograph and still tried as a plan', () => {
+    const shared = planUrls(1)[0];
+    const begun = beginCaptureAttempt(newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0, source: SOURCE }), T0);
+    const done = finishCaptureAttempt(begun, {
+      now: T0,
+      candidates: [shared],
+      settledNow: [shared],
+      refusalsNow: ['floorplan'],
+      held: [],
+      plans: { candidates: [shared], settledNow: [], refusalsNow: ['out_of_time'], held: [] },
+    });
+    expect(done.settled).toEqual([shared]);
+    expect(done.plans).toEqual({ settled: [], refused: { out_of_time: 1 } });
+    expect(done.refused).toEqual({ floorplan: 1 });
+    // The plan is still owed, so the capture is not finished.
+    expect(done.finished).toBeNull();
+  });
+
+  it('settles a plan whose pixels read as a photograph: that verdict does not change', () => {
+    expect(isLastingRefusal('photo')).toBe(true);
+  });
+
+  it('keeps the photographs and the plans across attempts, and finishes once both are decided', () => {
+    // Attempt 1: every photograph kept; the plans' host does not answer.
+    // Attempt 2: the ground floor and the upper floor are kept; the third plan is never needed.
+    const urls = candidateUrls(2);
+    const plans = planUrls(3);
+    let record: CaptureRecord = newCaptureRecord({ scrapeJobId: JOB, requestedBy: AUTHOR, now: T0, source: SOURCE });
+    const first = beginCaptureAttempt(record, T0);
+    record = finishCaptureAttempt(first, {
+      now: T0 + 5_000,
+      candidates: urls,
+      settledNow: urls,
+      refusalsNow: [],
+      held: [photo(0), photo(1)],
+      plans: { candidates: plans, settledNow: [], refusalsNow: ['http_503', 'http_503', 'http_503'], held: [] },
+    });
+    expect(captureStateOf(record, T0 + 5_000)).toBe('waiting');
+    expect(captureStateOf(record, T0 + 5_000 + CAPTURE_RETRY_AFTER_MS)).toBe('pending');
+    const second = beginCaptureAttempt(record, T0 + 5_000 + CAPTURE_RETRY_AFTER_MS);
+    record = finishCaptureAttempt(second, {
+      now: T0 + 10_000 + CAPTURE_RETRY_AFTER_MS,
+      candidates: urls,
+      settledNow: [],
+      refusalsNow: [],
+      held: [photo(0), photo(1)],
+      plans: { candidates: plans, settledNow: plans.slice(0, 2), refusalsNow: [], held: [plan(0), plan(1)] },
+    });
+    expect(record.finished?.reason).toBe('exhausted');
+    expect(record.plans.refused).toEqual({ http_503: 3 });
+    // A reader takes the plans in the page's order, lead first, up to the plans' limit.
+    expect(capturedPhotographsForReport([plan(1), plan(0)].map((p) => ({ name: p.name })), REPORT_FLOOR_PLAN_LIMIT)
+      .map((p) => p.place)).toEqual([0, 1]);
+  });
+});
+
 describe('the browser asks once, again only when the ask did not land, and never waits on it', () => {
   const request: PhotographCaptureRequest = { op: 'capture_report', reportId: REPORT, scrapeJobId: JOB };
   const noSleep = async () => undefined;
 
   it('counts what a finished extraction named, and nothing from a result that names none', () => {
     expect(namedPhotographCount({ photographs: { candidates: [{}, {}, {}] } })).toBe(3);
-    for (const none of [null, undefined, {}, { photographs: null }, { photographs: { candidates: 'x' } }]) {
+    // Its floor plans are kept by the same capture, so a page that names a
+    // plan and no photograph still has something to ask for.
+    expect(namedPhotographCount({ photographs: { candidates: [{}, {}], floorPlans: [{}] } })).toBe(3);
+    expect(namedPhotographCount({ photographs: { candidates: [], floorPlans: [{}] } })).toBe(1);
+    for (const none of [
+      null, undefined, {}, { photographs: null }, { photographs: { candidates: 'x' } },
+      { photographs: { candidates: [], floorPlans: 'x' } },
+    ]) {
       expect(namedPhotographCount(none)).toBe(0);
     }
   });
@@ -583,20 +708,29 @@ describe('listing-images keeps them for the report\'s author, and only what it h
 
   it('re-checks the job\'s candidates rather than trusting them, and fetches only through the SSRF guard', () => {
     expect(capture).toContain('readPageCandidates(result.photographs?.candidates)');
-    expect(attempt).toMatch(/fetchImageBytes\(\{ url: renditions\.store, origin: 'scraped' \}\)/);
-    expect(attempt).toMatch(/fetchImageBytes\(\{ url: renditions\.classify, origin: 'scraped' \}\)/);
+    expect(capture).toContain('readPageFloorPlanCandidates(result.photographs?.floorPlans)');
+    expect(attempt).toMatch(/fetchImageBytes\(\{ url: renditions\.store, origin: 'scraped' \}, \{ furniture \}\)/);
+    expect(attempt).toMatch(/fetchImageBytes\(\{ url: renditions\.classify, origin: 'scraped' \}, \{ furniture \}\)/);
+    // The furniture rule is lifted for a plan and for nothing else: a
+    // photograph is still refused for a URL that says it is page furniture.
+    expect(attempt).toContain("const furniture = args.kind === 'photo';");
+    expect(source).toContain("if (options.furniture !== false && looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };");
     expect(section).not.toMatch(/(^|[^\w.])fetch\(/m);
     expect(section).not.toContain('fetchWithTimeout(');
   });
 
   it('keeps a photograph only on the server\'s own verdict, at print size, once, at its own place', () => {
-    expect(attempt).toContain('for (const place of candidatesToTry(args.candidates, args.settled, args.held))');
-    expect(attempt).toContain("if (analysis.kind !== 'photo') { refuse(url, analysis.kind); continue; }");
+    expect(attempt).toContain('for (const place of candidatesToTry(args.candidates, args.settled, args.held, limit))');
+    // One pass per list, each held to its own verdict and its own limit: a
+    // photograph only where the pixels read as one, a plan only as a plan.
+    expect(attempt).toContain("if (analysis.kind !== args.kind) { refuse(url, analysis.kind); continue; }");
+    expect(attempt).toContain("const limit = args.kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;");
+    expect(capture).toMatch(/runCaptureAttempt\(supabase, \{ kind: 'photo', folder, candidates, settled, held, budget \}\)/);
     expect(attempt).toContain("if ('refusal' in judged) { refuse(url, judged.refusal); continue; }");
     expect(attempt).toMatch(/Math\.max\(size\.width, size\.height\) < MIN_PRINT_LONG_EDGE_PX/);
     expect(attempt).toContain("if (checksums.has(checksum)) { refuse(url, 'duplicate'); continue; }");
     expect(attempt).toMatch(/signatureDistance\(prior, analysis\.signature\)[\s\S]*SIGNATURE_MATCH_BITS/);
-    expect(attempt).toMatch(/if \(placesTakenBefore\(places, place\) >= REPORT_PHOTOGRAPH_LIMIT\) break;/);
+    expect(attempt).toMatch(/if \(placesTakenBefore\(places, place\) >= limit\) break;/);
     expect(attempt).toMatch(/if \(!hasBudget\(budget\)\) \{ refusals\.push\('out_of_time'\); continue; \}/);
     expect(attempt).toMatch(/captureObjectName\(\{\s*place,/);
   });
@@ -605,6 +739,31 @@ describe('listing-images keeps them for the report\'s author, and only what it h
     expect(attempt).toContain('.upload(`${args.folder}/${name}`');
     expect(section).not.toContain(".from('listing_images')");
     expect(capture).toContain('const folder = captureFolder(args.reportId);');
+  });
+
+  it('files the listing\'s plans in the report\'s plans folder, after the photographs, on the same allowance', () => {
+    expect(capture).toContain('const planFolder = floorPlanFolder(args.reportId);');
+    const photographs = capture.indexOf("await runCaptureAttempt(supabase, { kind: 'photo'");
+    const plans = capture.indexOf("kind: 'floorplan',");
+    expect(photographs).toBeGreaterThan(-1);
+    expect(plans).toBeGreaterThan(photographs);
+    expect(capture.slice(plans, plans + 200)).toContain('folder: planFolder,');
+    // One allowance for the attempt, handed to both passes.
+    const own = capture.slice(0, capture.indexOf("/* A PDF-made report's photographs"));
+    expect(own.length).toBeGreaterThan(1_000);
+    expect(own.match(/newAnalysisBudget\(/g)).toHaveLength(1);
+    expect(capture.slice(plans, plans + 300)).toContain('budget,');
+    // A plans folder that cannot be listed is not an empty one: a place could be filled twice.
+    expect(capture).toMatch(/if \(plans\.error\) return \{ status: 503, reason: 'storage_unreadable', held: held\.length \};/);
+  });
+
+  it('decides the whole capture over both lists, before an attempt and after one', () => {
+    const decided = capture.indexOf('const final: CaptureFinish | null = captureFinish({');
+    expect(decided).toBeGreaterThan(-1);
+    expect(decided).toBeLessThan(capture.indexOf('const begun = beginCaptureAttempt(record, now);'));
+    expect(capture.slice(decided, decided + 300)).toContain('plans: { candidates: planCandidates, settled: planSettled, held: heldPlans },');
+    const finished = capture.indexOf('const finished = finishCaptureAttempt(begun, {');
+    expect(capture.slice(finished, finished + 600)).toMatch(/plans: \{\s*candidates: planCandidates,/);
   });
 });
 
@@ -618,7 +777,9 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
 
   it('reads the family\'s folder for a derived document, and names that report as the capture\'s', () => {
     expect(fn).toContain('const ownerId = row ? familyParentId(row) ?? row.id : null;');
-    expect(fn).toContain('state: captureStateOf(record, Date.now()),');
+    // A folder with no capture record may hold a brochure's (a report made from
+    // a PDF), whose photographs were chosen once and leave nothing to finish.
+    expect(fn).toContain("state: record ? captureStateOf(record, Date.now()) : 'complete',");
     expect(fn).toContain('reportId: ownerId.trim().toLowerCase(),');
     expect(fn).toContain('capturedPhotographsForReport(listed.data ?? [])');
   });
@@ -626,12 +787,19 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
   it('serves nothing without a readable record, and nothing of another address', () => {
     const reader = fn.slice(fn.indexOf('async function readCaptureRecord('));
     expect(reader).toMatch(/if \(stored\.error \|\| !stored\.data\) \{[\s\S]*?return null;/);
-    const noRecord = fn.indexOf('if (!record) return { photographs: [] };');
+    // Without a capture record the folder is read for a brochure's record
+    // instead, and without either nothing is served. Each is held to the
+    // report's address before a single photograph is chosen.
+    const read = fn.indexOf('const record = await readCaptureRecord(');
     const address = fn.indexOf('if (!photographsAreOfReportAddress(row?.property_address, record.source)) {');
+    const noBrochure = fn.indexOf('if (!brochure) return { photographs: [] };');
+    const brochureAddress = fn.indexOf('if (!brochurePhotographsAreOfReportAddress(row?.property_address, brochure.source)) {');
     const chosen = fn.indexOf('capturedPhotographsForReport(listed.data ?? [])');
-    expect(noRecord).toBeGreaterThan(-1);
-    expect(address).toBeGreaterThan(noRecord);
-    expect(chosen).toBeGreaterThan(address);
+    for (const at of [read, address, noBrochure, brochureAddress, chosen]) expect(at).toBeGreaterThan(-1);
+    expect(address).toBeGreaterThan(read);
+    expect(noBrochure).toBeGreaterThan(address);
+    expect(brochureAddress).toBeGreaterThan(noBrochure);
+    expect(chosen).toBeGreaterThan(brochureAddress);
   });
 
   it('holds a listing report to its listing\'s address before it reads a photograph', () => {
@@ -644,14 +812,20 @@ describe('the broker reads a URL-extract report\'s photographs, and where their 
     expect(cached).toBeLessThan(projected);
     expect(projected).toBeLessThan(checked);
     expect(checked).toBeLessThan(images);
-    // A listing the cache no longer holds cannot vouch for an address.
-    expect(listing).toMatch(/if \(listing\.error \|\| !listing\.data\) \{[\s\S]*?return \[\];/);
+    // A listing the cache no longer holds cannot vouch for an address: no
+    // photographs and no plans (`none` is both, empty).
+    expect(listing).toContain('const none: PhotographReading = { photographs: [], floorPlans: [] };');
+    expect(listing).toMatch(/if \(listing\.error \|\| !listing\.data\) \{[\s\S]*?return none;/);
     expect(broker).toContain('readListingPhotographs(supabase, listingId, row?.property_address, correlationId)');
   });
 
   it('signs from the private bucket for minutes, and every failure is an empty list', () => {
     expect(fn).toContain(".from('listing-images')");
-    expect(fn).toMatch(/createSignedUrls\([\s\S]*PHOTOGRAPH_URL_TTL_SECONDS\)/);
+    // One signer for every picture the broker serves, photographs and plans.
+    const signer = broker.slice(broker.indexOf('async function signStoredPictures('), broker.indexOf('async function readReportPhotographs('));
+    expect(signer).toMatch(/\.from\('listing-images'\)\s*\.createSignedUrls\([\s\S]*PHOTOGRAPH_URL_TTL_SECONDS\)/);
+    expect(signer).toContain('if (signed.error) return null;');
+    expect(fn).toContain('await signStoredPictures(supabase, chosen.map(');
     expect(fn).toMatch(/catch \(error\) \{[\s\S]*return \{ photographs: \[\] \};/);
   });
 
@@ -675,7 +849,18 @@ describe('the extraction names them and stores them on its job, and nothing abou
   });
 
   it('stores the names on the succeeded job, where the report\'s request reads them', () => {
-    expect(scrape).toContain('photographs: { candidates: result.photographCandidates ?? [] }');
+    expect(scrape).toMatch(
+      /photographs: \{\s*candidates: result\.photographCandidates \?\? \[\],\s*floorPlans: result\.floorPlanCandidates \?\? \[\],\s*\}/,
+    );
+  });
+
+  it('names the floor plans in a try of their own, so a plan no rule reads costs neither the photographs nor the job', () => {
+    const at = scrape.indexOf('floorPlanCandidates = floorPlanCandidatesFromPage(');
+    expect(at).toBeGreaterThan(-1);
+    expect(scrape.slice(Math.max(0, at - 200), at)).toMatch(/try \{\s*$/);
+    expect(scrape.slice(at, at + 300)).toMatch(/\} catch \(e\) \{/);
+    // Photographs first, in their own try: the plans cannot take them down.
+    expect(scrape.indexOf('photographCandidates = photographCandidatesFromPage(')).toBeLessThan(at);
   });
 
   it('hands the page reader the markup alone: a page\'s og:image names no property', () => {

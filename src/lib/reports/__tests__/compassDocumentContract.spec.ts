@@ -102,7 +102,11 @@ describe('the legacy 38-page template is gone from the live prompt', () => {
 
   it('injects the contract from the shared module rather than restating it', () => {
     expect(source()).toContain("import { compassDocumentContract } from '../_shared/reports/investment/compassDocumentContract.pure.ts'");
-    expect(propertyPrompt()).toContain('${compassDocumentContract(_brandPp.companyName)}');
+    // The firm is the writer identity's (`writerFirm.pure.ts`): on the prime the
+    // name Report Settings always gave it, on a clone the clone's own business,
+    // and none at all where a clone has named nobody — which the contract
+    // itself reads as "your adviser" (pinned below).
+    expect(propertyPrompt()).toContain("${compassDocumentContract(_writerPp.firm ?? '')}");
   });
 });
 

@@ -574,17 +574,57 @@ const REPO = resolve(__dirname, '../..');
  * `20261222100000` re-copies the ACTIVE masters from it, by the v15
  * mechanism, unchanged. Run the same one-query check before editing this
  * file: if `20261222090000` is already recorded, the next change needs a v22.
+ *
+ * ## v22 — a new build's floor plan, on a sheet of its own
+ *
+ * Checked before editing on 25 Sep 2026, through the ledger (all 1,053
+ * recorded versions read). v21 IS recorded: Lovable stamped the seed
+ * `20261221100000` and its refresh `20261221110000`. So this change is a
+ * **v22**, and v21's file is not touched.
+ *
+ * The owner asked for a new build's design and floor plan in its report
+ * (25 Sep 2026). A new build's brochure usually carries the plan the house
+ * will be built to, and the author can now choose it from the brochure they
+ * upload (`PROPERTY_PHOTOGRAPHS.md` §8). Every Investment master gains two
+ * sheets (`floorPlanPage`), "Floor plan" and "Floor plan, continued":
+ *   - after the cover, the contents and any photographic plates, and before
+ *     the executive dashboard — the pictures of the property are met
+ *     together, and the property overview is prose that flows on into the
+ *     body, so it has no page end to put a sheet after;
+ *   - each conditional on its own plan, so a report with none loses the page;
+ *   - the plan drawn `contain`, whole, never cropped, under the family's own
+ *     section heading and above a three-line title block.
+ *
+ * ## What the release is, measured rather than claimed
+ *
+ * Parsed out of the v21 and v22 files and compared row by row, 543 in each:
+ *
+ *   * **50 of 543 differ**, and they are exactly the 50 Investment Compass
+ *     masters. The other nine formats' 450 masters and the 43 voice
+ *     templates are byte-identical.
+ *   * Each of the 50 **gains exactly two pages**, and every existing page is
+ *     byte-identical, in its old order, under its old id: the sheets are built
+ *     after the rest of the master and spliced into place, so they take new
+ *     ids rather than shifting old ones. 44 gain 10 blocks and 6 gain 8 (their
+ *     family's heading draws no standfirst).
+ *   * Outside `schema`, only two columns change, on all 50: `page_count` rises
+ *     by 2, and `required_bindings` gains `property.floorPlans.0` and `.1`.
+ *     `preview_schema`, `config` and `design_meta` are unchanged.
+ *
+ * `20261223100000` re-copies the ACTIVE masters from it, by the v15
+ * mechanism, unchanged. Run the same one-query check before editing this
+ * file: if `20261223090000` is already recorded, the next change needs a v23.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261222090000_seed_template_library_v21_cover_photograph';
+const RELEASE_ID = '20261223090000_seed_template_library_v22_floor_plan';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261222090000_seed_template_library_v21_cover_photograph.sql',
+  'supabase/migrations/20261223090000_seed_template_library_v22_floor_plan.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

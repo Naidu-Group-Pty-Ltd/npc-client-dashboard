@@ -78,6 +78,16 @@ export interface NavItemDef {
   mobile?: boolean;
   /** Only surfaced through the command palette, not the sidebars. */
   paletteOnly?: boolean;
+  /**
+   * A count drawn beside the entry: unread notifications of one kind. Only
+   * the reader's own notifications are counted — the bell's feed is theirs.
+   */
+  badge?: 'builder_activations';
+  /**
+   * A server-read feature flag the entry also needs (presentation only; the
+   * server refuses the page's calls while the flag is off). Fails closed.
+   */
+  featureFlag?: 'builder_stock_marketplace';
 }
 
 export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
@@ -171,6 +181,8 @@ export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Settings', url: '/settings', icon: Settings, moduleKey: 'settings', group: 'Administration' },
   { title: 'User Management', url: '/admin/users', icon: Users, moduleKey: 'user_management', group: 'Administration' },
   { title: 'Finance Portal', url: '/admin/finance-portal', icon: ShieldCheck, moduleKey: 'finance_portal_admin', group: 'Portals' },
+  // One activation, one private conversation (docs/builder-portal/52).
+  { title: 'Builder Portal', url: '/admin/builder-portal', icon: Building2, moduleKey: 'listings', group: 'Portals', keywords: ['builder', 'activated', 'acknowledged', 'builder messages'], activePatterns: ['/admin/builder-portal'], badge: 'builder_activations', featureFlag: 'builder_stock_marketplace' },
   { title: 'Solicitor Portal', url: '/admin/solicitor-portal', icon: Scale, moduleKey: 'solicitor_portal_admin', group: 'Portals', keywords: ['solicitor', 'conveyancer', 'legal', 'matter'] },
   { title: 'Client Portal', url: '/portal-config', icon: Globe, moduleKey: 'portal_config', group: 'Portals', keywords: ['portal config', 'portal configuration'] },
   { title: 'Token Audit Log', url: '/admin/token-audit', icon: Coins, moduleKey: '__superadmin_only__', group: 'Administration' },

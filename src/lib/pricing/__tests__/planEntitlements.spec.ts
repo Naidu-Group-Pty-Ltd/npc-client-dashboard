@@ -8,7 +8,14 @@ import {
   planEnablesSubModule,
   planIncludesModule,
 } from "../planEntitlements";
-import { annualCents, exGstCents, gstComponentCents } from "../gst";
+import {
+  ANNUAL_DISCOUNT,
+  COMMITMENT_DISCOUNT_BPS,
+  annualCents,
+  commitmentDiscountCents,
+  exGstCents,
+  gstComponentCents,
+} from "../gst";
 
 describe("gating fails OPEN, never closed", () => {
   // This is the single most important property here. Denying on an unknown
@@ -148,13 +155,28 @@ describe("GST is contained in the price, not added to it", () => {
     }
   });
 
-  it("discounts twelve months by 10% for annual", () => {
-    // The 10% is the offer the product already ran and already charges; the
-    // 2026 workbook does not set an annual price at all and leaves the
-    // discount open under D03, so this pins what we do rather than claiming
-    // the sheet authorised it.
-    expect(annualCents(84900)).toBe(916920);
-    expect(annualCents(254900)).toBe(2752920);
+  it("discounts twelve months by 15% for annual, as Mission Control mints them", () => {
+    // Clause 5.1 of the Subscription Agreement. The 2026 workbook left the
+    // annual discount open under D03, and on 25 September 2026 the owner
+    // settled it at the agreement's 15%, replacing the 10% the product ran
+    // before. These are the annual prices Mission Control's catalogue sync
+    // mints, with AML/CTF and without it.
+    expect(COMMITMENT_DISCOUNT_BPS).toBe(1500);
+    expect(ANNUAL_DISCOUNT).toBe(0.15);
+    expect(annualCents(99900)).toBe(1018980);
+    expect(annualCents(139900)).toBe(1426980);
+    expect(annualCents(269900)).toBe(2752980);
+    expect(annualCents(84900)).toBe(865980);
+    expect(annualCents(124900)).toBe(1273980);
+    expect(annualCents(254900)).toBe(2599980);
+  });
+
+  it("takes the discount off each month, to the cent, before adding up twelve", () => {
+    // 15% of $123.45 is $18.5175, charged as $18.52 a month. Discounting the
+    // year in one step would land three cents away from Mission Control.
+    expect(commitmentDiscountCents(12345)).toBe(1852);
+    expect(annualCents(12345)).toBe((12345 - 1852) * 12);
+    expect(annualCents(12345)).not.toBe(Math.round(12345 * 12 * (1 - ANNUAL_DISCOUNT)));
   });
 });
 

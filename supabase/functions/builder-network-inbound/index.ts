@@ -26,7 +26,7 @@ import { buildStamp } from '../_shared/builderNetworkStamp.pure.ts';
 import { builderNetworkEnabled, connectionByNetworkId } from '../_shared/builderNetwork.ts';
 import { agencyDedupeKeyFor, agencyPayloadContractViolation, sameAgencyEnvelope } from '../_shared/builderStock/agencyMessages.pure.ts';
 
-const MESSAGE_EVENT_TYPES = new Set(['agency.message.posted', 'agency.message.receipt']);
+const MESSAGE_EVENT_TYPES = new Set(['agency.message.posted', 'agency.message.receipt', 'agency.message.participant']);
 
 const MAX_BODY_BYTES = 256 * 1024;
 

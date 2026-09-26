@@ -68,8 +68,10 @@ import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weas
 import { extractOpenAIUsage, logApiUsage } from '../_shared/logApiUsage.ts';
 import {
   buildReportBrandSnapshot,
+  issuerDisclaimerSetting,
   REPORT_SNAPSHOT_VERSION,
 } from '../_shared/reportDesign/snapshot.pure.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { buildReportQaDocument } from '../_shared/reports/reportQa/normalise.pure.ts';
@@ -372,7 +374,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       );
     }
 
+    // A clone never prints the house's name, contact details or wording,
+    // whatever its settings rows say; the prime reads them as stored
+    // (`issuerIdentity.pure.ts`).
+    const reportDeployment = { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' };
     const { snapshot, skippedAssets } = buildReportBrandSnapshot({
+      deployment: reportDeployment,
       whitelabel: whitelabel
         ? {
             id: String(whitelabel.id ?? ''),
@@ -470,7 +477,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const rendered = renderReportQaFromBrand({
       document,
       snapshot,
-      disclaimer: settings.disclaimer as never,
+      disclaimer: issuerDisclaimerSetting(settings.disclaimer, snapshot, reportDeployment) as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: reportQaReference(id),

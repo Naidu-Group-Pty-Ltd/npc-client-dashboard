@@ -38,6 +38,11 @@ interface PortalNotificationEmail {
   type?: string;
   category?: string;
   actionUrl?: string;
+  /**
+   * Sent to the provider as its Idempotency-Key, so a caller that must retry
+   * after an unrecorded send is delivered once. Absent, nothing changes.
+   */
+  idempotencyKey?: string;
 }
 
 export async function sendPortalNotificationEmail(params: PortalNotificationEmail): Promise<{ success: boolean; error?: string }> {
@@ -55,6 +60,7 @@ export async function sendPortalNotificationEmail(params: PortalNotificationEmai
     type = 'info',
     category = 'general',
     actionUrl,
+    idempotencyKey,
   } = params;
 
   const identity = await getEmailIdentity();
@@ -149,6 +155,7 @@ export async function sendPortalNotificationEmail(params: PortalNotificationEmai
       headers: {
         'Authorization': `Bearer ${resendApiKey}`,
         'Content-Type': 'application/json',
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       },
       body: JSON.stringify({
         ...resendAddressing(identity),

@@ -253,6 +253,30 @@ jobs:
       - name: Unit tests (every report format)
         run: npx vitest run src/lib/reports src/lib/geocode src/lib/openLocation
 
+      # The template-design release's guarantees that live outside every
+      # folder named above, so they passed locally and were asked nothing on a
+      # runner. Found in the audit before it shipped (26 Sep 2026):
+      #
+      # - the design catalogue the render routes resolve is the one the
+      #   masters publish (`templateDesignCatalogue.spec.ts`);
+      # - no master's cover carries the house's tagline, and the prime's
+      #   covers print what they always printed (`coverTaglineIsTheIssuers`);
+      # - a clone's intake pack never names the house, and the prime's is the
+      #   approved file exactly (`src/lib/ciAssessment/intakePack`);
+      # - with nothing chosen, the 10-year print keeps the house's sheet
+      #   (`tenYearCashFlowPrintStyle.test.ts`);
+      # - the chooser says what a template does for each report type
+      #   (`reportTemplateSelection.test.tsx`).
+      - name: Unit tests (template designs, the cover tagline, the intake pack)
+        run: >-
+          npx vitest run
+          src/lib/templateLibrary/__tests__/templateDesignCatalogue.spec.ts
+          src/lib/templateLibrary/__tests__/coverTaglineIsTheIssuers.spec.ts
+          src/lib/ciAssessment/intakePack
+          src/components/commercial/assessment/__tests__/intakePackDownloads.test.tsx
+          src/utils/commercial/__tests__/tenYearCashFlowPrintStyle.test.ts
+          src/components/reports/__tests__/reportTemplateSelection.test.tsx
+
       # The measurer owns the pixels the critique rubric judges, and two of its
       # three page-level judgements were wrong at once — a trim band derived
       # from the portrait constants on a landscape sheet, and a full-bleed test

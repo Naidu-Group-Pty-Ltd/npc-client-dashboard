@@ -74,6 +74,7 @@ import {
   ComparisonPayloadError,
 } from '../_shared/reports/propertyComparison/normalise.pure.ts';
 import { renderComparisonFromBrand } from '../_shared/reports/propertyComparison/render.pure.ts';
+import { resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   comparisonFileName,
@@ -354,12 +355,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // Cover art comes from the tenant's own `cover` asset and nowhere else.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: request.design,
+      reportType: 'comparison',
+      actor: { userId: auth.userId, authMethod: auth.authMethod },
+      route: 'render-property-comparison-pdf',
+    });
+
     const { html, gaps } = renderComparisonFromBrand({
       comparison,
       snapshot,
       disclaimer: issuerDisclaimerSetting(settings.disclaimer, snapshot, reportDeployment) as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
+      design,
     });
 
     assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
@@ -443,6 +456,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       missingSections: [...comparison.provenance.missing],
       scoreScale: comparison.scale?.outOf ?? null,
       durationMs,
+      design: designEcho,
     };
     return json(response);
   } catch (e) {

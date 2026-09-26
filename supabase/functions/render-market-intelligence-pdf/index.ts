@@ -67,6 +67,7 @@ import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { buildMarketIntelligenceReport } from '../_shared/reports/marketIntelligence/normalise.pure.ts';
 import { renderMarketIntelligenceFromBrand } from '../_shared/reports/marketIntelligence/render.pure.ts';
+import { chosenDesignReference, resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   marketIntelligenceFileName,
@@ -312,6 +313,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // the format a tenant cover for the first time rather than replacing ours.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    //
+    // The scheduled send renders on its owner's behalf with no browser to read
+    // their choice, so the route reads it: the emailed copy must be the one the
+    // owner's own download would have been (`chosenDesignReference`).
+    const designReference = request.design
+      ?? (auth.userId === 'service_role'
+        ? await chosenDesignReference(supabase, {
+          userId: actorId, reportType: 'market_intelligence', route: 'render-market-intelligence-pdf',
+        })
+        : null);
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: designReference,
+      reportType: 'market_intelligence',
+      actor: { userId: actorId, authMethod: actorAuthMethod },
+      route: 'render-market-intelligence-pdf',
+    });
+
     const rendered = renderMarketIntelligenceFromBrand({
       report,
       snapshot,
@@ -319,6 +341,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: marketIntelligenceReference(id),
+      design,
     });
 
     // A spine that violates its own archetype is a defect, not a preference. The
@@ -450,6 +473,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       persisted,
       storagePath: persisted ? path : null,
       durationMs,
+      design: designEcho,
     };
     return json(response);
   } catch (e) {

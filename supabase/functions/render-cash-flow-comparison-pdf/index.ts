@@ -67,6 +67,7 @@ import {
   CashFlowComparisonPayloadError,
 } from '../_shared/reports/cashFlowComparison/normalise.pure.ts';
 import { renderComparisonFromBrand } from '../_shared/reports/cashFlowComparison/render.pure.ts';
+import { resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   comparisonFileName,
@@ -342,6 +343,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const coverArt = inlineAsset(logoConfig.cover ?? null);
     const reference = comparisonReference(request.primaryReportId);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: request.design,
+      reportType: 'cash_flow_comparison',
+      actor: { userId: auth.userId, authMethod: auth.authMethod },
+      route: 'render-cash-flow-comparison-pdf',
+    });
+
     const { html, gaps } = renderComparisonFromBrand({
       comparison,
       snapshot,
@@ -349,6 +361,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference,
+      design,
     });
 
     // The guard runs on HTML this function built, deliberately: half of it came
@@ -437,6 +450,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       hasAnalysis: Boolean(comparison.analysis),
       missingSections,
       durationMs,
+      design: designEcho,
     };
     return json(response);
   } catch (e) {

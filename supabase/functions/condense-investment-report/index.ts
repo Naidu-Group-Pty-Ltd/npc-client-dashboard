@@ -7,7 +7,7 @@ import { condensedVoiceRules } from '../_shared/reports/adviserVoice.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-import { getBrandConfig } from '../_shared/brand-config.ts';
+import { loadReportWriterIdentity } from '../_shared/reports/writerIdentity.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
@@ -520,7 +520,10 @@ Deno.serve(async (req) => {
     const tierConfig = TIER_CONFIG[targetTier];
 
     // Build the condensation prompt using the structure guide
-    const _brandCondense = await getBrandConfig();
+    // Who the writer works for (`writerFirm.pure.ts`): unchanged on the prime;
+    // on a clone its own business, never the house, or none at all — a null
+    // takes the firm's clauses out of the template rather than naming anybody.
+    const _writerCondense = await loadReportWriterIdentity();
     const { resolvePrompt: _resolveCondensePrompt } = await import('../_shared/engine-prompts.ts');
     /*
      * The template can be replaced from the database
@@ -538,7 +541,7 @@ Deno.serve(async (req) => {
      */
     const systemPrompt = [
       (await _resolveCondensePrompt('condense.system_template', {
-        brand_name: _brandCondense.companyName,
+        brand_name: _writerCondense.firm,
         tier_name: tierConfig.name,
         target_pages: tierConfig.targetPages,
         structure_guide: tierConfig.structureGuide,

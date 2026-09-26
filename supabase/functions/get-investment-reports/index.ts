@@ -8,13 +8,20 @@ import { reconcileStoredFinancials } from '../_shared/reports/investment/financi
 import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import { resolveReportGeneratedAt } from '../_shared/reports/investment/reportGeneratedAt.pure.ts';
 import {
+  BROCHURE_RECORD_NAME,
+  brochurePhotographsAreOfReportAddress,
   CAPTURE_RECORD_NAME,
   captureFolder,
+  capturedFloorPlansForReport,
   capturedPhotographsForReport,
   captureStateOf,
+  floorPlanFolder,
+  floorPlansForReport,
+  parseBrochureRecord,
   parseCaptureRecord,
   photographsAreOfReportAddress,
   photographsForReport,
+  type BrochureRecord,
   type CaptureRecord,
   type CaptureState,
   REPORT_PHOTOGRAPH_COLUMNS,
@@ -217,10 +224,39 @@ const PHOTOGRAPH_URL_TTL_SECONDS = 10 * 60;
 
 type SignedPhotograph = { url: string; width: number | null; height: number | null };
 
-/** A report's photographs, and — for a captured set — where its capture stands. */
+/**
+ * A report's photographs and floor plans, and — for a captured set — where its
+ * capture stands. The plans travel apart because they are drawn apart: whole,
+ * on a page of their own, never in a photo slot that crops.
+ */
 interface PhotographReading {
   photographs: SignedPhotograph[];
+  floorPlans?: SignedPhotograph[];
   photographCapture?: { state: CaptureState; reportId: string };
+}
+
+/**
+ * Signs a set of stored pictures in one request, in the order given; a picture
+ * that could not be signed is dropped and nothing else is. Null where the
+ * signing itself failed.
+ */
+async function signStoredPictures(
+  supabase: SupabaseClient,
+  pictures: ReadonlyArray<{ path: string; width: number | null; height: number | null }>,
+): Promise<SignedPhotograph[] | null> {
+  if (!pictures.length) return [];
+  const signed = await supabase.storage
+    .from('listing-images')
+    .createSignedUrls(pictures.map((p) => p.path), PHOTOGRAPH_URL_TTL_SECONDS);
+  if (signed.error) return null;
+  const urlByPath = new Map<string, string>();
+  for (const entry of signed.data ?? []) {
+    if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
+  }
+  return pictures.flatMap((p) => {
+    const url = urlByPath.get(p.path);
+    return url ? [{ url, width: p.width, height: p.height }] : [];
+  });
 }
 
 /**
@@ -252,7 +288,7 @@ async function readReportPhotographs(
 ): Promise<PhotographReading> {
   const listingId = typeof row?.property_listing_id === 'string' ? row.property_listing_id.trim() : '';
   if (!listingId) return await readCapturedPhotographs(supabase, row, correlationId);
-  return { photographs: await readListingPhotographs(supabase, listingId, row?.property_address, correlationId) };
+  return await readListingPhotographs(supabase, listingId, row?.property_address, correlationId);
 }
 
 /**
@@ -268,7 +304,8 @@ async function readListingPhotographs(
   listingId: string,
   reportAddress: unknown,
   correlationId: string,
-): Promise<SignedPhotograph[]> {
+): Promise<PhotographReading> {
+  const none: PhotographReading = { photographs: [], floorPlans: [] };
   try {
     const listing = await supabase
       .from('listings_cache')
@@ -277,12 +314,12 @@ async function readListingPhotographs(
       .maybeSingle();
     if (listing.error || !listing.data) {
       if (listing.error) console.warn('[get-investment-reports] listing address unavailable', { correlationId, code: listing.error.code });
-      return [];
+      return none;
     }
     const projected = projectAirtableRecord({ id: listingId, fields: (listing.data as { fields?: Record<string, unknown> }).fields ?? {} });
     if (!photographsAreOfReportAddress(reportAddress, { address: projected.address, suburb: projected.suburb })) {
       console.info('[get-investment-reports] listing photographs are of another address', { correlationId });
-      return [];
+      return none;
     }
     const images = await supabase
       .from('listing_images')
@@ -292,43 +329,36 @@ async function readListingPhotographs(
       .order('position', { ascending: true });
     if (images.error || !images.data?.length) {
       if (images.error) console.warn('[get-investment-reports] photographs unavailable', { correlationId, code: images.error.code });
-      return [];
+      return none;
     }
     const reuse = await supabase.rpc('listing_image_reuse', { p_listing_ids: [listingId] });
     if (reuse.error) {
       console.warn('[get-investment-reports] photograph reuse unavailable', { correlationId, code: reuse.error.code });
-      return [];
+      return none;
     }
-    const chosen = photographsForReport(
-      images.data as unknown as StoredListingPhotograph[],
-      sharedListingCounts((reuse.data ?? []) as ListingImageReuseRow[]),
-    );
-    if (!chosen.length) return [];
-    const signed = await supabase.storage
-      .from('listing-images')
-      .createSignedUrls(chosen.map((p) => p.storagePath), PHOTOGRAPH_URL_TTL_SECONDS);
-    if (signed.error) {
+    const rows = images.data as unknown as StoredListingPhotograph[];
+    const shared = sharedListingCounts((reuse.data ?? []) as ListingImageReuseRow[]);
+    const stored = (p: { storagePath: string; width: number | null; height: number | null }) =>
+      ({ path: p.storagePath, width: p.width, height: p.height });
+    const photographs = await signStoredPictures(supabase, photographsForReport(rows, shared).map(stored));
+    const floorPlans = await signStoredPictures(supabase, floorPlansForReport(rows, shared).map(stored));
+    if (!photographs || !floorPlans) {
       console.warn('[get-investment-reports] photographs could not be signed', { correlationId });
-      return [];
     }
-    const urlByPath = new Map<string, string>();
-    for (const entry of signed.data ?? []) {
-      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
-    }
-    return chosen.flatMap((p) => {
-      const url = urlByPath.get(p.storagePath);
-      return url ? [{ url, width: p.width, height: p.height }] : [];
-    });
+    return { photographs: photographs ?? [], floorPlans: floorPlans ?? [] };
   } catch (error) {
     console.warn('[get-investment-reports] photographs failed', { correlationId, technicalError: error });
-    return [];
+    return none;
   }
 }
 
 /**
  * A URL-extract report's photographs: captured from its listing page by
  * `listing-images` (`op: 'capture_report'`) and filed under the report that
- * was made from it.
+ * was made from it. A report made from a PDF keeps its photographs in the
+ * same folder under the same names — its author chose them from the brochure
+ * (`op: 'capture_brochure_photograph'`) — with `brochure.json` where a capture
+ * keeps `capture.json`.
  *
  * A fork or a condensed child reads its parent's folder, so the four derived
  * documents carry the photographs their Compass does without a copy of their
@@ -360,35 +390,45 @@ async function readCapturedPhotographs(
     // the report's address. Photographs with no readable record, or of an
     // address the report no longer has, are not this report's.
     const record = await readCaptureRecord(supabase, folder, listed.data ?? [], correlationId);
-    if (!record) return { photographs: [] };
-    if (!photographsAreOfReportAddress(row?.property_address, record.source)) {
-      console.info('[get-investment-reports] captured photographs are of another address', { correlationId });
-      return { photographs: [] };
+    if (record) {
+      if (!photographsAreOfReportAddress(row?.property_address, record.source)) {
+        console.info('[get-investment-reports] captured photographs are of another address', { correlationId });
+        return { photographs: [] };
+      }
+    } else {
+      // A report made from a PDF: its author chose these from its brochure
+      // (`brochure.json`), and the lot-aware form of the rule holds a new
+      // build's `Lot 12 Smith Street` to its report.
+      const brochure = await readBrochureRecord(supabase, folder, listed.data ?? [], correlationId);
+      if (!brochure) return { photographs: [] };
+      if (!brochurePhotographsAreOfReportAddress(row?.property_address, brochure.source)) {
+        console.info('[get-investment-reports] brochure photographs are of another address', { correlationId });
+        return { photographs: [] };
+      }
     }
-    const photographCapture = {
-      state: captureStateOf(record, Date.now()),
+    const photographCapture: { state: CaptureState; reportId: string } = {
+      // A brochure's were chosen once, by the author: nothing is left to finish.
+      state: record ? captureStateOf(record, Date.now()) : 'complete',
       reportId: ownerId.trim().toLowerCase(),
     };
+    // The plans are held by the same record as the photographs beside them, so
+    // the address check above vouches for both. A subfolder that cannot be
+    // listed costs the plans and nothing else.
+    const planFolder = floorPlanFolder(ownerId) as string;
+    const planListing = await supabase.storage.from('listing-images').list(planFolder, { limit: 100 });
+    if (planListing.error) console.warn('[get-investment-reports] captured floor plans unavailable', { correlationId });
     const chosen = capturedPhotographsForReport(listed.data ?? []);
-    if (!chosen.length) return { photographs: [], photographCapture };
-    const signed = await supabase.storage
-      .from('listing-images')
-      .createSignedUrls(chosen.map((p) => `${folder}/${p.name}`), PHOTOGRAPH_URL_TTL_SECONDS);
-    if (signed.error) {
+    const plans = planListing.error ? [] : capturedFloorPlansForReport(planListing.data ?? []);
+    const photographs = await signStoredPictures(supabase, chosen.map((p) => ({
+      path: `${folder}/${p.name}`, width: p.width, height: p.height,
+    })));
+    const floorPlans = await signStoredPictures(supabase, plans.map((p) => ({
+      path: `${planFolder}/${p.name}`, width: p.width, height: p.height,
+    })));
+    if (!photographs || !floorPlans) {
       console.warn('[get-investment-reports] captured photographs could not be signed', { correlationId });
-      return { photographs: [], photographCapture };
     }
-    const urlByPath = new Map<string, string>();
-    for (const entry of signed.data ?? []) {
-      if (entry.signedUrl && entry.path) urlByPath.set(entry.path, entry.signedUrl);
-    }
-    return {
-      photographs: chosen.flatMap((p) => {
-        const url = urlByPath.get(`${folder}/${p.name}`);
-        return url ? [{ url, width: p.width, height: p.height }] : [];
-      }),
-      photographCapture,
-    };
+    return { photographs: photographs ?? [], floorPlans: floorPlans ?? [], photographCapture };
   } catch (error) {
     console.warn('[get-investment-reports] captured photographs failed', { correlationId, technicalError: error });
     return { photographs: [] };
@@ -410,6 +450,26 @@ async function readCaptureRecord(
   }
   try {
     return parseCaptureRecord(JSON.parse(await stored.data.text()));
+  } catch {
+    return null;
+  }
+}
+
+/** A report's brochure record; null where there is none, or it cannot be read. */
+async function readBrochureRecord(
+  supabase: SupabaseClient,
+  folder: string,
+  objects: ReadonlyArray<{ name?: unknown }>,
+  correlationId: string,
+): Promise<BrochureRecord | null> {
+  if (!objects.some((object) => object?.name === BROCHURE_RECORD_NAME)) return null;
+  const stored = await supabase.storage.from('listing-images').download(`${folder}/${BROCHURE_RECORD_NAME}`);
+  if (stored.error || !stored.data) {
+    console.warn('[get-investment-reports] brochure record unavailable', { correlationId });
+    return null;
+  }
+  try {
+    return parseBrochureRecord(JSON.parse(await stored.data.text()));
   } catch {
     return null;
   }
@@ -598,7 +658,7 @@ Deno.serve(async (req) => {
       return json({
         success: true,
         report: responseData[0],
-        ...(reading ? { photographs: reading.photographs } : {}),
+        ...(reading ? { photographs: reading.photographs, floorPlans: reading.floorPlans ?? [] } : {}),
         ...(reading?.photographCapture ? { photographCapture: reading.photographCapture } : {}),
         correlationId,
       }, 200, corsHeaders, correlationId);

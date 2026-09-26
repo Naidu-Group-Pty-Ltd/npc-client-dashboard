@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAmlNavEntry } from '@/hooks/useAmlNavEntry';
 import { useNavigationVisibility } from '@/hooks/useNavigation';
+import { NavItemBadge } from '@/components/layout/NavItemBadge';
 import { AML_NAV_GROUP_TITLE } from '@/lib/navigation/amlEntry';
 import {
   NAVIGATION_GROUP_ORDER,
@@ -84,6 +85,7 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
         >
           <item.icon className="h-4 w-4 shrink-0" />
           <span className="min-w-0 truncate">{item.title}</span>
+          {item.badge ? <NavItemBadge kind={item.badge} /> : null}
         </NavLink>
       </li>
     );

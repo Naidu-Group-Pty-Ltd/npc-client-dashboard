@@ -63,8 +63,8 @@
  * Pure: no fetch, no storage, no clock. The edge function reads the rows and
  * signs what this returns.
  */
-import { bandOf, selectListingGallery } from './listingImageSelection.pure.ts';
-import { isSameProperty } from './addressMatch.pure.ts';
+import { bandOf, selectListingGallery, SHARED_LISTING_LIMIT } from './listingImageSelection.pure.ts';
+import { isSameProperty, parseAddress, STREET_TYPES } from './addressMatch.pure.ts';
 
 /** The most photographs any master binds (`six_with_bleed`: a cover and five plates). */
 export const REPORT_PHOTOGRAPH_LIMIT = 6;
@@ -172,6 +172,90 @@ export function photographsForReport(
       const { width, height } = image.row;
       return !(knownPositive(width) && knownPositive(height) && Math.max(width, height) < MIN_PRINT_LONG_EDGE_PX);
     })
+    .slice(0, Math.max(0, limit))
+    .map((image) => ({
+      storagePath: image.row.storage_path as string,
+      width: image.row.width,
+      height: image.row.height,
+    }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Floor plans                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A report's floor plans: found beside its photographs, kept apart from them.
+ *
+ * The owner asked for the plan (25 Sep 2026): a new build's brochure carries
+ * it beside the design's facade, a listing's gallery often ends with one, and a
+ * client buying off the plan is buying the plan. It is kept apart for one
+ * reason: every photo slot fills its frame and crops what does not fit, and a
+ * cropped plan is a wrong plan, with a room missing and nothing to say so. So a
+ * plan never enters `property.images` and never leads a cover. It is stored in
+ * its own subfolder, bound as `property.floorPlans`, and drawn on a page of its
+ * own, fitted whole.
+ *
+ * Every rule that holds a photograph holds a plan, with one word changed:
+ * positive evidence from the server's own reading of the pixels that it IS a
+ * plan, never a guess from a URL; nothing another listing also holds; the
+ * print floor; and the report's own address (rule 4).
+ */
+
+/** The most plans a report carries: a ground floor and one above it. */
+export const REPORT_FLOOR_PLAN_LIMIT = 2;
+
+/** The subfolder of a report's capture folder its plans are filed in. */
+export const FLOOR_PLAN_SUBFOLDER = 'plans';
+
+/** The folder for one report's floor plans, or null for anything that is not a report id. */
+export function floorPlanFolder(reportId: unknown): string | null {
+  const folder = captureFolder(reportId);
+  return folder ? `${folder}/${FLOOR_PLAN_SUBFOLDER}` : null;
+}
+
+/**
+ * The floor plans a listing's stored images give a report, in the listing's
+ * order.
+ *
+ * Only what the server's reading called a plan, only what no other listing
+ * also holds (a stock plan is a plan of a design, not of this property), at a
+ * size that prints, one of each picture. `reuse` null is a reading that could
+ * not be taken, and then there are none, as for photographs.
+ */
+export function floorPlansForReport(
+  rows: readonly StoredListingPhotograph[] | null | undefined,
+  reuse: ReadonlyMap<string, number> | null,
+  limit = REPORT_FLOOR_PLAN_LIMIT,
+): ReportPhotograph[] {
+  if (!reuse || !rows?.length) return [];
+  const byPosition = [...rows].sort((a, b) =>
+    (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER));
+  const candidates = byPosition
+    .filter((row) => row.status === 'stored' && Boolean(row.storage_path) && row.visual_kind === 'floorplan')
+    .map((row) => ({
+      url: row.source_url ?? row.storage_path ?? row.image_identity,
+      position: row.position,
+      checksum: row.checksum,
+      bytes: row.bytes,
+      width: row.width,
+      height: row.height,
+      kind: 'floorplan' as const,
+      signature: row.visual_signature,
+      sharedListings: reuse.get(`${row.listing_id}:${row.image_identity}`) ?? null,
+      row,
+    }));
+  if (!candidates.length) return [];
+  // The gallery's de-duplication, never its ranking: a plan is banded `plan`,
+  // below every photograph, which is the right order for a card and says
+  // nothing about which of two plans comes first.
+  return selectListingGallery(candidates).images
+    .filter((image) => !(typeof image.sharedListings === 'number' && image.sharedListings > SHARED_LISTING_LIMIT))
+    .filter((image) => {
+      const { width, height } = image.row;
+      return !(knownPositive(width) && knownPositive(height) && Math.max(width, height) < MIN_PRINT_LONG_EDGE_PX);
+    })
+    .sort((a, b) => (a.row.position ?? Number.MAX_SAFE_INTEGER) - (b.row.position ?? Number.MAX_SAFE_INTEGER))
     .slice(0, Math.max(0, limit))
     .map((image) => ({
       storagePath: image.row.storage_path as string,
@@ -385,6 +469,17 @@ export function capturedPhotographsForReport(
     .slice(0, Math.max(0, limit));
 }
 
+/**
+ * The captured floor plans a report carries, in place order: the objects of
+ * its `plans/` subfolder, named and floored exactly as its photographs are.
+ */
+export function capturedFloorPlansForReport(
+  objects: ReadonlyArray<{ name?: unknown }> | null | undefined,
+  limit = REPORT_FLOOR_PLAN_LIMIT,
+): CapturedPhotograph[] {
+  return capturedPhotographsForReport(objects, limit);
+}
+
 /* -------------------------------------------------------------------------- */
 /* The capture's own record                                                    */
 /* -------------------------------------------------------------------------- */
@@ -410,6 +505,15 @@ export function capturedPhotographsForReport(
  * listing's gallery are decided, or every candidate is settled, or
  * `CAPTURE_MAX_ATTEMPTS` attempts have been made. After that, whatever was kept
  * is what the report carries, and nothing asks again.
+ *
+ * A listing page may also name its floor plans. They are captured by the same
+ * attempts, under the same record and the same address check, and kept in
+ * their own list: filed in `plans/`, placed by their order in the page's
+ * floor-plan list, settled apart (`plans`), and final on the same terms with
+ * `REPORT_FLOOR_PLAN_LIMIT` for the limit. The capture is finished when both
+ * lists are. The two are never pooled, because one asset can sit in both
+ * lists on a page — refused as a photograph for being a plan, and kept as a
+ * plan.
  */
 
 /** The record's object name, inside the report's folder. Not a photograph name. */
@@ -444,7 +548,18 @@ export interface CaptureRecord {
   settled: string[];
   /** Every refusal, counted by reason, across every attempt. */
   refused: Record<string, number>;
+  /**
+   * The same bookkeeping for the listing's floor plans. Empty on a record
+   * written before plans were read, which then asks for none.
+   */
+  plans: CaptureListRecord;
   finished: { at: string; reason: CaptureFinish } | null;
+}
+
+/** One candidate list's bookkeeping: what is decided for good, and every refusal, counted. */
+export interface CaptureListRecord {
+  settled: string[];
+  refused: Record<string, number>;
 }
 
 /**
@@ -488,8 +603,25 @@ export function newCaptureRecord(args: {
     leaseUntil: null,
     settled: [],
     refused: {},
+    plans: { settled: [], refused: {} },
     finished: null,
   };
+}
+
+function settledList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((url): url is string => typeof url === 'string' && url.length > 0))]
+    : [];
+}
+
+function refusalCounts(value: unknown): Record<string, number> {
+  const refused: Record<string, number> = {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [why, count] of Object.entries(value as Record<string, unknown>)) {
+      if (Number.isInteger(count) && (count as number) > 0) refused[why] = count as number;
+    }
+  }
+  return refused;
 }
 
 /** A stored record, or null for anything that is not one — which is then treated as never written. */
@@ -512,15 +644,11 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
   const attempts = Number(v.attempts);
   if (!Number.isInteger(attempts) || attempts < 0) return null;
 
-  const settled = Array.isArray(v.settled)
-    ? [...new Set(v.settled.filter((url): url is string => typeof url === 'string' && url.length > 0))]
-    : [];
-  const refused: Record<string, number> = {};
-  if (v.refused && typeof v.refused === 'object' && !Array.isArray(v.refused)) {
-    for (const [why, count] of Object.entries(v.refused as Record<string, unknown>)) {
-      if (Number.isInteger(count) && (count as number) > 0) refused[why] = count as number;
-    }
-  }
+  const settled = settledList(v.settled);
+  const refused = refusalCounts(v.refused);
+  const plans = v.plans && typeof v.plans === 'object' && !Array.isArray(v.plans)
+    ? v.plans as Record<string, unknown>
+    : null;
   let finished: CaptureRecord['finished'] = null;
   if (v.finished && typeof v.finished === 'object') {
     const f = v.finished as Record<string, unknown>;
@@ -538,6 +666,7 @@ export function parseCaptureRecord(value: unknown): CaptureRecord | null {
     leaseUntil: stamp(v.leaseUntil),
     settled,
     refused,
+    plans: { settled: settledList(plans?.settled), refused: refusalCounts(plans?.refused) },
     finished,
   };
 }
@@ -575,6 +704,8 @@ const LASTING_REFUSALS = new Set([
   'duplicate',
   'floorplan',
   'graphic',
+  // A plan's verdict: the pixels read as a photograph, so it is not a plan.
+  'photo',
   'undecodable',
   'unnameable',
 ]);
@@ -653,6 +784,45 @@ export function captureIsFinal(
   return candidates.every((_, index) => decided(index)) ? 'exhausted' : null;
 }
 
+/** One candidate list as a capture weighs it: what was named, what is settled, what is held. */
+export interface CaptureList {
+  candidates: readonly string[];
+  settled: ReadonlySet<string>;
+  held: readonly CapturedPhotograph[];
+}
+
+const NO_LIST: CaptureList = { candidates: [], settled: new Set(), held: [] };
+
+/**
+ * Whether a capture is finished, and why, over both of its lists.
+ *
+ * Each list is final on its own terms (`captureIsFinal`, with the plans'
+ * limit for the plans), and a list nothing was named for is final already.
+ * `no_candidates` when neither list named anything; `exhausted` where either
+ * list ended by running out; `limit` where each ended at its limit; and
+ * `attempts` once the attempts are spent with work still left. With no plans
+ * named this is exactly the photographs' own answer, which is every record
+ * written before plans were read.
+ */
+export function captureFinish(
+  lists: { photographs: CaptureList; plans?: CaptureList },
+  attempts: number,
+): CaptureFinish | null {
+  const photographs = lists.photographs;
+  const plans = lists.plans ?? NO_LIST;
+  const photographsFinal = photographs.candidates.length === 0
+    ? 'empty'
+    : captureIsFinal(photographs.candidates, photographs.settled, photographs.held);
+  const plansFinal = plans.candidates.length === 0
+    ? 'empty'
+    : captureIsFinal(plans.candidates, plans.settled, plans.held, REPORT_FLOOR_PLAN_LIMIT);
+  if (photographsFinal === 'empty' && plansFinal === 'empty') return 'no_candidates';
+  if (photographsFinal !== null && plansFinal !== null) {
+    return photographsFinal === 'exhausted' || plansFinal === 'exhausted' ? 'exhausted' : 'limit';
+  }
+  return attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null;
+}
+
 /** The record once an attempt is over: what it settled, what it refused, and whether that was the last. */
 export function finishCaptureAttempt(
   record: CaptureRecord,
@@ -662,20 +832,257 @@ export function finishCaptureAttempt(
     settledNow: readonly string[];
     refusalsNow: readonly string[];
     held: readonly CapturedPhotograph[];
+    /** The floor plans' half of the same attempt; absent where the page named none. */
+    plans?: {
+      candidates: readonly string[];
+      settledNow: readonly string[];
+      refusalsNow: readonly string[];
+      held: readonly CapturedPhotograph[];
+    };
   },
 ): CaptureRecord {
   const settled = [...new Set([...record.settled, ...args.settledNow])];
   const refused = { ...record.refused };
   for (const why of args.refusalsNow) refused[why] = (refused[why] ?? 0) + 1;
-  const final: CaptureFinish | null = args.candidates.length === 0
-    ? 'no_candidates'
-    : captureIsFinal(args.candidates, new Set(settled), args.held)
-      ?? (record.attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+  const planSettled = [...new Set([...record.plans.settled, ...(args.plans?.settledNow ?? [])])];
+  const planRefused = { ...record.plans.refused };
+  for (const why of args.plans?.refusalsNow ?? []) planRefused[why] = (planRefused[why] ?? 0) + 1;
+  const final = captureFinish({
+    photographs: { candidates: args.candidates, settled: new Set(settled), held: args.held },
+    plans: args.plans
+      ? { candidates: args.plans.candidates, settled: new Set(planSettled), held: args.plans.held }
+      : NO_LIST,
+  }, record.attempts);
   return {
     ...record,
     settled,
     refused,
+    plans: { settled: planSettled, refused: planRefused },
     leaseUntil: null,
     finished: final ? { at: instant(args.now), reason: final } : null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Photographs chosen from a brochure, for a report made from a PDF            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A report made from an uploaded PDF has no listing and no listing page. For a
+ * new build that PDF is nearly always the builder's brochure, and a brochure
+ * carries the property's own pictures: the facade render of the design on this
+ * lot, and often its interiors.
+ *
+ * The brochure never reaches the server — the browser renders its pages for
+ * the parser and sends only page images — so the browser reads the pictures
+ * out of it as well (`src/lib/reports/brochurePhotographs.ts`, through pdf.js),
+ * the adviser confirms which ones the report may carry, and each is sent to
+ * `listing-images` (`op: 'capture_brochure_photograph'`). The server holds it
+ * to what it holds a listing page's photograph to: the print floor, one copy of
+ * each picture, and its own verdict on the pixels that it is a photograph. It
+ * is filed under the report with the same object name, so every reader of
+ * captured photographs reads these too.
+ *
+ * `brochure.json` sits beside them where a capture keeps `capture.json`: which
+ * brochure (its SHA-256), the address the brochure states, and who filed them.
+ * It is written before the first photograph, for the same reason the capture's
+ * record is: a reader serves only what a record vouches is of the report's
+ * address (rule 4).
+ *
+ * The server cannot read the brochure, so the address it states is the one
+ * the adviser's browser read from it, which is the same parse that named the
+ * report. What the server does hold is that this address is the REPORT's, when
+ * the photographs are filed and on every read after, so a report re-pointed at
+ * another property does not keep them.
+ */
+
+/** The brochure's record, inside the report's folder. Not a photograph name. */
+export const BROCHURE_RECORD_NAME = 'brochure.json';
+
+/** The most bytes one brochure photograph may be, as sent and as stored. */
+export const BROCHURE_PHOTOGRAPH_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * A lot designation as a new build's address writes it: `Lot 12`,
+ * `LOT 1234A`, `Lot No. 7`, `Proposed Lot 12`. The word must stand alone, so
+ * `Allotment 12`, `Plot 5` and `Lots Road` name no lot.
+ */
+const LOT = /\b(?:proposed\s+)?lot\s*(?:no\.?\s*|number\s*|#\s*)?0*(\d{1,6}[a-z]?)\b/i;
+
+const normaliseLot = (value: string): string => value.toLowerCase();
+
+/** The lot an address names, without leading zeros and lowercased; null where it names none. */
+export function lotDesignation(text: unknown): string | null {
+  if (typeof text !== 'string') return null;
+  const match = LOT.exec(text);
+  return match ? normaliseLot(match[1]) : null;
+}
+
+/** Every lot a text names, once each, in the order it first names them. */
+export function lotsNamedIn(text: unknown): string[] {
+  if (typeof text !== 'string' || !text) return [];
+  const out: string[] = [];
+  for (const match of text.matchAll(new RegExp(LOT.source, 'gi'))) {
+    const lot = normaliseLot(match[1]);
+    if (!out.includes(lot)) out.push(lot);
+  }
+  return out;
+}
+
+/**
+ * The address with its lot designation taken out, so the street line under
+ * it can be read the way `parseAddress` reads any other: `Lot 12, 34 Smith
+ * Street` is `34 Smith Street`, `Lot 12 (No. 34) Smith Street` is `34) Smith
+ * Street` (the bracket is punctuation to `parseAddress`), and `Lot 12 Smith
+ * Street` is `Smith Street`, which has no street number to read.
+ */
+export function streetLineWithoutLot(text: string): string {
+  const match = LOT.exec(text);
+  if (!match) return text.trim();
+  return `${text.slice(0, match.index)} ${text.slice(match.index + match[0].length)}`
+    .replace(/^[\s,/:;\-–—]+/, '')
+    .replace(/^\(?\s*(?:no\.?|number|#)\s*(?=\d)/i, '')
+    .trim();
+}
+
+/**
+ * The words of an address as `addressMatch.pure.ts` reads them: lowercased,
+ * punctuation gone except `/` and `-` (which belong to `1/72` and `36-38`),
+ * and every street type collapsed to one spelling — so `34 Smith St.` and
+ * `34 SMITH STREET` are the same three words.
+ */
+export function addressTokens(text: unknown): string[] {
+  if (typeof text !== 'string') return [];
+  return text
+    .toLowerCase()
+    .replace(/&amp;/g, '&')
+    .replace(/[.,]/g, ' ')
+    .replace(/[^a-z0-9/\- ]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => STREET_TYPES[token] ?? token);
+}
+
+/** Whether every word of `suburb` longer than two letters is a word of `text`. */
+function suburbNamedIn(text: string, suburb: string): boolean {
+  const words = new Set(addressTokens(text));
+  const needed = addressTokens(suburb).filter((token) => token.length > 2);
+  return needed.length > 0 && needed.every((token) => words.has(token));
+}
+
+/**
+ * Whether photographs a brochure states are of `source` may appear in a report
+ * written for `reportAddress`.
+ *
+ * Rule 4, for the addresses a new build actually has. `isSameProperty` needs a
+ * street number on both sides and reads a lot as a UNIT, because on the
+ * marketplace a lot is not a street number — so a house-and-land package,
+ * whose brochure and report both say `Lot 12 Smith Street`, could never
+ * match. Where both sides carry a street number, that rule decides, unchanged.
+ * Otherwise both must name the SAME LOT, and everything either states must
+ * agree:
+ *   - a street number, where both have one;
+ *   - a unit, where either names one;
+ *   - the street, after its type is collapsed;
+ *   - the suburb, which must be in the report as whole words.
+ * A lot alone (`Lot 12`, `Lot 12, Box Hill`) never matches — a lot number is
+ * unique only within its plan, and a suburb holds many plans — and neither
+ * does an address the parser could not read, such as a placeholder named
+ * after the file.
+ */
+export function brochurePhotographsAreOfReportAddress(
+  reportAddress: unknown,
+  source: { address?: unknown; suburb?: unknown } | null | undefined,
+): boolean {
+  const report = typeof reportAddress === 'string' ? reportAddress.trim() : '';
+  const address = typeof source?.address === 'string' ? source.address.trim() : '';
+  const suburb = typeof source?.suburb === 'string' ? source.suburb.trim() : '';
+  if (!report || !address || !suburb) return false;
+  if (photographsAreOfReportAddress(report, { address, suburb })) return true;
+
+  const lot = lotDesignation(address);
+  if (!lot || lotDesignation(report) !== lot) return false;
+  const left = parseAddress(streetLineWithoutLot(address));
+  const right = parseAddress(streetLineWithoutLot(report));
+  if (!left.street || !right.street) return false;
+  if (left.number && right.number && left.number !== right.number) return false;
+  if ((left.unit || right.unit) && left.unit !== right.unit) return false;
+  // The report's street segment usually has the suburb glued onto its end, so
+  // containment either way is the test, exactly as `isSameProperty` makes it.
+  const streetsAgree =
+    left.street === right.street ||
+    right.street.startsWith(`${left.street} `) ||
+    left.street.startsWith(`${right.street} `);
+  return streetsAgree && suburbNamedIn(report, suburb);
+}
+
+/** The address a brochure states, from the parts its parse extracted; null without a street line and a suburb. */
+export function brochurePhotographSource(parts: { address?: unknown; suburb?: unknown } | null | undefined): PhotographSource | null {
+  const address = typeof parts?.address === 'string' ? parts.address.trim() : '';
+  const suburb = typeof parts?.suburb === 'string' ? parts.suburb.trim() : '';
+  return address && suburb ? { address, suburb } : null;
+}
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Whether a value is a SHA-256 digest, as the browser states the brochure's. */
+export function isDocumentDigest(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX.test(value.trim().toLowerCase());
+}
+
+export interface BrochureRecord {
+  version: 1;
+  /** The SHA-256 of the brochure file the photographs were read from. */
+  documentSha256: string;
+  /**
+   * The address the brochure states, which was the report's own when the
+   * first photograph was filed. Every reader holds the report's address
+   * against it again (rule 4), because a report can be edited after.
+   */
+  source: PhotographSource;
+  /** The report's author, who chose the photographs. */
+  requestedBy: string;
+  requestedAt: string;
+}
+
+/** A new record, for a report no brochure photograph has been filed for yet. */
+export function newBrochureRecord(args: {
+  documentSha256: string;
+  source: PhotographSource;
+  requestedBy: string;
+  now: number;
+}): BrochureRecord {
+  return {
+    version: 1,
+    documentSha256: args.documentSha256.trim().toLowerCase(),
+    source: { address: args.source.address.trim(), suburb: args.source.suburb.trim() },
+    requestedBy: args.requestedBy,
+    requestedAt: new Date(args.now).toISOString(),
+  };
+}
+
+/** A stored record, or null for anything that is not one — which is then treated as never written. */
+export function parseBrochureRecord(value: unknown): BrochureRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.version !== 1) return null;
+  if (!isDocumentDigest(v.documentSha256)) return null;
+  if (typeof v.requestedBy !== 'string' || !v.requestedBy.trim()) return null;
+  const requestedAt = typeof v.requestedAt === 'string' && Number.isFinite(Date.parse(v.requestedAt))
+    ? v.requestedAt
+    : null;
+  if (!requestedAt) return null;
+  // As with a capture: a record that cannot say whose address its photographs
+  // are of is not one any reader may act on.
+  const source = v.source && typeof v.source === 'object' && !Array.isArray(v.source)
+    ? brochurePhotographSource(v.source as Record<string, unknown>)
+    : null;
+  if (!source) return null;
+  return {
+    version: 1,
+    documentSha256: v.documentSha256.trim().toLowerCase(),
+    source,
+    requestedBy: v.requestedBy,
+    requestedAt,
   };
 }

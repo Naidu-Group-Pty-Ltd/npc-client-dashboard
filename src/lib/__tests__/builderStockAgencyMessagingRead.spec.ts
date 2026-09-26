@@ -15,7 +15,8 @@ import {
   agencyMessageRefusal,
   projectConversationMessages,
 } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
-import { readBuilderConversation } from '../../../supabase/functions/_shared/builderStock/agencyMessages';
+import { readParticipantConversation } from '../../../supabase/functions/_shared/builderStock/privateConversations';
+import { conversationClosedReason } from '../../../supabase/functions/_shared/builderStock/privateConversations.pure';
 import { agencyDedupeKeyFor, agencyMessageRouteHeld, agencyPayloadContractViolation, sameAgencyEnvelope } from '../../../supabase/functions/_shared/builderStock/agencyMessages.pure';
 import {
   BUILDER_CONVERSATION_CLOSED_POLL_MS, BUILDER_CONVERSATION_POLL_MS, builderConversationPollInterval,
@@ -33,6 +34,7 @@ function standIn(tables: Record<string, Row[]>) {
     log.push(entry);
     let orders: Array<[string, boolean]> = [];
     let cap = Infinity;
+    let offset = 0;
     const builder: any = {
       select() { return builder; },
       eq(col: string, v: unknown) { entry.filters.push(['eq', col, v]); return builder; },
@@ -41,6 +43,7 @@ function standIn(tables: Record<string, Row[]>) {
       in(col: string, v: unknown[]) { entry.filters.push(['in', col, v]); return builder; },
       order(col: string, o?: { ascending?: boolean; nullsFirst?: boolean }) { orders = [...orders, [col, o?.ascending !== false]]; return builder; },
       limit(n: number) { cap = n; return builder; },
+      range(a: number, b: number) { offset = a; cap = b - a + 1; return builder; },
       maybeSingle() { return builder.then((r: any) => ({ data: r.data[0] ?? null, error: null })); },
       then(resolve: (v: unknown) => unknown) {
         let rows = (tables[table] ?? []).filter((row) => entry.filters.every(([op, col, v]) =>
@@ -50,7 +53,7 @@ function standIn(tables: Record<string, Row[]>) {
         for (const [col, asc] of [...orders].reverse()) {
           rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (asc ? 1 : -1));
         }
-        return Promise.resolve({ data: rows.slice(0, cap), error: null }).then(resolve);
+        return Promise.resolve({ data: rows.slice(offset, offset + cap), error: null }).then(resolve);
       },
     };
     return builder;
@@ -69,15 +72,22 @@ function fixture() {
     conversation,
     tables: {
       builder_network_conversations: [
-        { id: conversation, connection_id: 'conn-a', stock_item_id: ITEM, builder_organisation_id: ORG },
-        { id: 'conv-old', connection_id: 'conn-revoked', stock_item_id: ITEM, builder_organisation_id: ORG },
+        { id: conversation, connection_id: 'conn-a', stock_item_id: ITEM, builder_organisation_id: ORG, selection_ref: 's1' },
+        { id: 'conv-old', connection_id: 'conn-revoked', stock_item_id: ITEM, builder_organisation_id: ORG, selection_ref: null },
       ],
+      // Since Step 6 a conversation is read by its participants (docs/builder-portal/52).
+      builder_network_conversation_participants: [
+        { conversation_id: conversation, participant_ref: 'ref-me', side: 'command_centre', local_user_id: ME, display_name: 'Olive Owner', state: 'joined' },
+      ],
+      builder_network_stock_items: [{ id: ITEM, organisation_id: ORG, lifecycle_status: 'active', address_line: '1 Check Street', lot_number: '101' }],
+      builder_network_stock_organisations: [{ id: ORG, legal_name: 'Check Homes Pty Ltd', trading_name: null }],
       builder_network_connections: [
         { id: 'conn-a', network_connection_id: NET, builder_organisation_id: ORG, state: 'active', scopes: ['stock:publish'], accepted_at: '2026-09-01' },
         { id: 'conn-revoked', network_connection_id: 'net-old', builder_organisation_id: ORG, state: 'revoked', scopes: ['stock:publish'], accepted_at: '2026-10-01' },
       ],
       builder_stock_selections: [
-        { id: 's1', stock_item_id: ITEM, organisation_id: ORG, status: 'selected', client_id: 'private-client', internal_notes: 'private' },
+        { id: 's1', stock_item_id: ITEM, organisation_id: ORG, status: 'builder_acknowledged', acknowledged_at: '2026-09-25T09:00:00Z',
+          client_id: 'private-client', internal_notes: 'private' },
       ],
       builder_network_messages: [
         { id: 'm2', conversation_id: conversation, side: 'builder', sender_display_name: 'Avery Builder', body: 'Reply',
@@ -93,12 +103,10 @@ function fixture() {
   };
 }
 
-describe('reading a property\'s conversation', () => {
+describe('reading an activation\'s conversation (a participant)', () => {
   it('reads the conversation on the builder\'s active connection, in the order it was written', async () => {
     const { tables } = fixture();
-    const read = await readBuilderConversation(standIn(tables).client, {
-      stockItemId: ITEM, organisationId: ORG, viewerUserId: ME,
-    });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
     expect(read.open).toBe(true);
@@ -115,9 +123,7 @@ describe('reading a property\'s conversation', () => {
       delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
       created_at: new Date(Date.UTC(2026, 8, 25, 0, 0, i)).toISOString(),
     }));
-    const read = await readBuilderConversation(standIn(tables).client, {
-      stockItemId: ITEM, organisationId: ORG, viewerUserId: ME,
-    });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages).toHaveLength(500);
     expect(read.messages[0].body).toBe('Message 1');
@@ -137,7 +143,7 @@ describe('reading a property\'s conversation', () => {
       sent_at: '2026-09-25T00:30:00.000Z', created_at: '2026-09-25T02:00:00.000Z',
       delivery_state: null, delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
     });
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages[0].body).toBe('Written earlier, arrived late');
     expect(read.messages.filter((m) => m.id === 'late')).toHaveLength(1);
@@ -154,34 +160,33 @@ describe('reading a property\'s conversation', () => {
     tables.builder_network_messages = Array.from({ length: 500 }, (_, i) => row(`old${String(i).padStart(3, '0')}`, at(100 + i), at(100 + i)));
     tables.builder_network_messages.push(row('late', at(0), at(700)));
     for (let i = 0; i < 60; i += 1) tables.builder_network_messages.push(row(`after${String(i).padStart(2, '0')}`, at(800 + i), at(800 + i)));
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages).toHaveLength(500);
     expect(read.messages[0].id).toBe('late');
     expect(read.messages[read.messages.length - 1].id).toBe('after59');
   });
 
-  it('a property with no live activation is closed, and one with no connection has no conversation', async () => {
+  it('a withdrawn activation\'s conversation is closed, and a conversation that does not exist is not found', async () => {
     const { tables } = fixture();
     tables.builder_stock_selections[0].status = 'withdrawn';
-    const closed = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
-    expect(closed).toMatchObject({ ok: true, open: false, closed_reason: 'not_activated' });
-    tables.builder_network_connections = [];
+    const closed = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
+    expect(closed).toMatchObject({ ok: true, open: false, closed_reason: 'withdrawn' });
     tables.builder_network_conversations = [];
-    const none = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
-    expect(none).toEqual({ ok: true, open: false, closed_reason: 'not_connected', conversation_id: null, messages: [] });
+    const none = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
+    expect(none).toEqual({ ok: false, reason: 'not_found' });
   });
 
   it('18. polling refresh gets new messages: the next read carries what was written since the last', async () => {
     const { tables, conversation } = fixture();
-    const first = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const first = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!first.ok) throw new Error('read failed');
     expect(first.messages.map((m) => m.id)).not.toContain('m-new');
     tables.builder_network_messages.push({
       id: 'm-new', conversation_id: conversation, side: 'builder', sender_display_name: 'Avery Builder', body: 'Just arrived',
       sent_at: '2026-09-25T13:00:00Z', delivery_state: null, delivered_at: null, failure_reason: null, sender_user_id: null, client_message_id: null,
     });
-    const next = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const next = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!next.ok) throw new Error('read failed');
     expect(next.messages.at(-1)?.body).toBe('Just arrived');
     expect(readCode('src/lib/marketplaceBuilderStock.ts'))
@@ -204,7 +209,7 @@ describe('reading a property\'s conversation', () => {
   it('a connection that has lost stock:publish keeps its history readable, and is closed to writing', async () => {
     const { tables } = fixture();
     tables.builder_network_connections[0].scopes = [];
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
     expect(read.open).toBe(false);
@@ -217,60 +222,50 @@ describe('reading a property\'s conversation', () => {
     const { tables } = fixture();
     tables.builder_network_connections[0].scopes = [];
     tables.builder_stock_selections[0].status = 'withdrawn';
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
-    expect(read.closed_reason).toBe('not_activated');
+    expect(read.closed_reason).toBe('withdrawn');
   });
 
   it('a disputed connection keeps its history readable, and is closed to writing', async () => {
     const { tables } = fixture();
     tables.builder_network_connections[0].identity_mismatch_since = '2026-09-25T00:00:00Z';
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages).toHaveLength(3);
     expect(read.open).toBe(false);
-    expect(read.closed_reason).toBe('connection_paused');
+    expect(read.closed_reason).toBe('connection_halted');
   });
 
   it('a revoked connection keeps its history readable, and nothing can be sent or retried', async () => {
     const { tables } = fixture();
     tables.builder_network_connections[0].state = 'revoked';
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
     expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
     expect(read).toMatchObject({ open: false, closed_reason: 'not_connected' });
     expect(read.messages.some((m) => m.can_retry)).toBe(false);
   });
 
-  it('after reconnecting, the old thread\'s history still reads, beside the new one, and only the open thread can retry', async () => {
+  it('a conversation belongs to the connection its activation was acknowledged over: another conversation\'s messages never join it', async () => {
     const { tables } = fixture();
-    tables.builder_network_connections[0].state = 'revoked';
-    tables.builder_network_connections.push({ id: 'conn-new', network_connection_id: 'net-new', builder_organisation_id: ORG,
-      state: 'active', scopes: ['stock:publish'], accepted_at: '2026-11-01' });
-    tables.builder_network_conversations.push({ id: 'conv-new', connection_id: 'conn-new', stock_item_id: ITEM, builder_organisation_id: ORG });
-    tables.builder_network_messages.push({ id: 'm4', conversation_id: 'conv-new', side: 'command_centre', sender_display_name: 'Olive Owner',
-      body: 'After reconnecting', sent_at: '2026-11-02T10:00:00Z', delivery_state: 'failed', delivered_at: null,
+    tables.builder_network_messages.push({ id: 'm4', conversation_id: 'conv-old', side: 'command_centre', sender_display_name: 'Olive Owner',
+      body: 'On the old connection', sent_at: '2026-11-02T10:00:00Z', delivery_state: 'failed', delivered_at: null,
       failure_reason: 'not_delivered', sender_user_id: ME, client_message_id: 'client-4' });
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     if (!read.ok) throw new Error('read failed');
-    expect(read.conversation_id).toBe('conv-new');
-    expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up', 'After reconnecting']);
-    expect(read.messages.find((m) => m.body === 'Question')?.can_retry).toBe(false);
-    expect(read.messages.find((m) => m.body === 'After reconnecting')?.can_retry).toBe(true);
-    expect(JSON.stringify(read)).not.toContain('Not this one');
+    expect(read.messages.map((m) => m.body)).toEqual(['Question', 'Reply', 'Follow-up']);
   });
 
-  it('20. a cross-organisation read returns nothing', async () => {
+  it('20. someone who is not in the conversation reads nothing of it', async () => {
     const { tables } = fixture();
-    const read = await readBuilderConversation(standIn(tables).client, {
-      stockItemId: ITEM, organisationId: 'another-builder-org', viewerUserId: ME,
-    });
-    expect(read.ok ? read.messages : []).toEqual([]);
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: 'user-colleague' });
+    expect(read).toEqual({ ok: false, reason: 'not_a_participant' });
   });
 
   it('never carries a user id, the client key, or anything about the client', async () => {
     const { tables } = fixture();
-    const read = await readBuilderConversation(standIn(tables).client, { stockItemId: ITEM, organisationId: ORG, viewerUserId: ME });
+    const read = await readParticipantConversation(standIn(tables).client, { conversationId: 'conv-a', viewerUserId: ME });
     const text = JSON.stringify(read);
     for (const secret of [ME, 'user-colleague', 'client-1', 'private-client', 'private']) {
       expect(text).not.toContain(secret);
@@ -391,11 +386,11 @@ describe('a reader who may not write', () => {
     const market = readCode('supabase/functions/builder-stock-marketplace/index.ts');
     const start = market.indexOf("operation === 'get_builder_conversation'");
     const op = market.slice(start, market.indexOf('operation ===', start + 20));
-    expect(op).toMatch(/const open = read\.open && item\.lifecycle_status === 'active'/);
-    expect(op).toMatch(/const canSend = open && listingsEdit\.ok && networkOn/);
-    expect(op).toMatch(/open,\s*\n\s*closed_reason/);
+    // Since Step 6 the reader decides openness, including a delisted property
+    // (conversationClosedReason), and the page is offered nothing more.
+    expect(op).toMatch(/const canSend = read\.open && listingsEdit\.ok && networkOn/);
+    expect(op).toMatch(/open: read\.open,\s*\n\s*closed_reason: read\.closed_reason/);
     expect(op).toMatch(/can_send:\s*canSend/);
-    expect(op).toMatch(/closed_reason:\s*item\.lifecycle_status === 'active' \? read\.closed_reason : 'delisted'/);
     expect(op).toMatch(/can_retry:\s*message\.can_retry\s*&&\s*canSend/);
   });
 });
@@ -411,10 +406,16 @@ describe('a property the builder stopped listing', () => {
     expect(loader).toMatch(/lifecycle_status === 'active'/);
     expect(loader).toMatch(/from\('builder_stock_selections'\)/);
     expect(opOf('get_stock_item')).toMatch(/await loadReadableItem\(/);
-    expect(opOf('get_builder_conversation')).toMatch(/await loadReadableItem\(/);
+    // The conversation is read by its participants whatever the listing, and
+    // says it is delisted.
+    expect(conversationClosedReason({
+      connection: { state: 'active', scopes: ['stock:publish'] }, selectionRef: 's1',
+      selection: { status: 'builder_acknowledged', acknowledged_at: '2026-09-25' }, item: { lifecycle_status: 'archived' },
+    })).toBe('delisted');
   });
-  it('writes nothing new to it: sending and activating still need active stock', () => {
-    expect(opOf('send_builder_message')).toMatch(/await loadItem\(/);
+  it('writes nothing new to it: sending is refused by the database, and activating still needs active stock', () => {
+    const sql = readCode('supabase/migrations/20261224090000_one_activation_one_private_conversation.sql');
+    expect(sql).toMatch(/i\.lifecycle_status = 'active'[\s\S]{0,120}RETURN 'delisted'/);
     expect(opOf('select_for_client')).toMatch(/await loadItem\(/);
   });
 });
@@ -615,7 +616,7 @@ describe('a refused conversation read is not retried before it is shown', () => 
 
   it('the conversation poll uses it', () => {
     const src = readFileSync(join(__dirname, '..', 'marketplaceBuilderStock.ts'), 'utf8');
-    const start = src.indexOf('export function useBuilderConversation(');
+    const start = src.indexOf('export function useParticipantConversation(');
     const body = src.slice(start, src.indexOf('\nexport ', start + 10));
     expect(body).toMatch(/retry:\s*retryUnlessAccessLost/);
   });

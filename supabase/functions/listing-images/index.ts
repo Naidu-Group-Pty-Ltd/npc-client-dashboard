@@ -67,31 +67,44 @@ import {
 import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 import {
   beginCaptureAttempt,
+  BROCHURE_PHOTOGRAPH_MAX_BYTES,
+  BROCHURE_RECORD_NAME,
+  brochurePhotographsAreOfReportAddress,
+  brochurePhotographSource,
   candidatesToTry,
-  CAPTURE_MAX_ATTEMPTS,
   CAPTURE_RECORD_NAME,
+  captureFinish,
   captureFolder,
-  captureIsFinal,
+  floorPlanFolder,
   captureObjectName,
   captureStateOf,
   extractionPhotographSource,
   finishCaptureAttempt,
   heldCapturedPhotographs,
+  isDocumentDigest,
   isLastingRefusal,
   isRecordId,
   MIN_PRINT_LONG_EDGE_PX,
+  newBrochureRecord,
   newCaptureRecord,
+  parseBrochureRecord,
   parseCaptureObjectName,
   parseCaptureRecord,
   photographsAreOfReportAddress,
   placesTakenBefore,
+  REPORT_FLOOR_PLAN_LIMIT,
   REPORT_PHOTOGRAPH_LIMIT,
+  type BrochureRecord,
   type CapturedPhotograph,
   type CaptureFinish,
   type CaptureRecord,
   type CaptureState,
 } from '../_shared/reportPhotographs.pure.ts';
-import { captureRenditions, readPageCandidates } from '../_shared/listingPagePhotographs.pure.ts';
+import {
+  captureRenditions,
+  readPageCandidates,
+  readPageFloorPlanCandidates,
+} from '../_shared/listingPagePhotographs.pure.ts';
 
 /**
  * The client type these helpers actually receive.
@@ -132,12 +145,19 @@ type ListingImagesClient = SupabaseClient;
  *                  page, and the enrichment sweep is what goes and finds them.
  *   op: 'capture_report' (the report's author, to start; anyone who may read
  *                  the report, to resume) — keep the photographs a URL
- *                  extraction named on its listing page, for the report made from
- *                  it, and only while the report's address is the listing's.
+ *                  extraction named on its listing page, and its floor plans
+ *                  (filed in `plans/`), for the report made from it, and only
+ *                  while the report's address is the listing's.
  *                  Answered at once and finished in the background; resumed
  *                  by the next document drawn while work is left over. Filed
  *                  under the report, never in `listing_images`; see
  *                  `captureReportPhotographs`.
+ *   op: 'capture_brochure_photograph' (the report's author) — keep one
+ *                  photograph the author chose from the brochure a PDF-made
+ *                  report was made from, held to the capture's checks and
+ *                  filed beside it the same way; with `kind: 'floorplan'`,
+ *                  one of its floor plans, filed in `plans/`; see
+ *                  `fileBrochurePhotograph`.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -403,8 +423,17 @@ async function storagePathFor(
  */
 async function fetchImageBytes(
   candidate: ImageCandidate,
+  options: {
+    /**
+     * Refuse what the URL says is page furniture. On for everything but a
+     * listing page's own floor plan: the furniture rule refuses a file called
+     * `floorplan` — which is how it keeps plans off photo cards, and exactly
+     * what a plan may be called.
+     */
+    furniture?: boolean;
+  } = {},
 ): Promise<{ bytes: Uint8Array; contentType: string } | { error: string }> {
-  if (looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
+  if (options.furniture !== false && looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
 
   let safeUrl: URL;
   try {
@@ -1494,7 +1523,13 @@ interface CaptureAnswer {
   /** Photographs the report holds, as far as this request knows. */
   held?: number;
   reason?: string;
-  attempt?: { number: number; kept: number; refused: Record<string, number> };
+  attempt?: {
+    number: number;
+    kept: number;
+    refused: Record<string, number>;
+    /** The same attempt's floor plans. */
+    plans: { kept: number; refused: Record<string, number> };
+  };
 }
 
 function countRefusals(refusals: readonly string[]): Record<string, number> {
@@ -1552,28 +1587,35 @@ async function judgeForCapture(
 }
 
 /**
- * One attempt at a report's photographs: the candidates not yet settled, in
- * the listing's order, until the first `REPORT_PHOTOGRAPH_LIMIT` places are
- * taken or the allowance is spent.
+ * One pass of an attempt over one of a report's lists — its photographs, or
+ * its floor plans: the candidates not yet settled, in the listing's order,
+ * until the first `limit` places are taken or the allowance is spent.
  *
- * A photograph is kept only when every check passes: it downloads through the
+ * A picture is kept only when every check passes: it downloads through the
  * SSRF guard as a bounded image, its header states at least the print floor on
- * its long edge, the server's own judgement of its pixels says it is a
- * photograph, and it is not a second copy of one already kept, by this attempt
- * or an earlier one. An image the allowance cannot look at is not kept — no
- * evidence is not a verdict — and the next attempt looks again.
+ * its long edge, the server's own judgement of its pixels says it is what the
+ * list is for — a photograph, or for the plans a plan — and it is not a second
+ * copy of one already kept, by this attempt or an earlier one. An image the
+ * allowance cannot look at is not kept — no evidence is not a verdict — and
+ * the next attempt looks again. The two passes share one allowance,
+ * photographs first, because the cover is what a reader sees first.
  */
 async function runCaptureAttempt(
   supabase: ListingImagesClient,
   args: {
+    kind: 'photo' | 'floorplan';
     folder: string;
     candidates: readonly string[];
     settled: ReadonlySet<string>;
     held: readonly CapturedPhotograph[];
-    budgetMs: number;
+    budget: AnalysisBudget;
   },
 ): Promise<CaptureAttempt> {
-  const budget = newAnalysisBudget(args.budgetMs);
+  const { budget } = args;
+  const limit = args.kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;
+  // A plan comes from the page's own floor-plan list, so the photographs'
+  // furniture rule, which refuses a file called `floorplan`, is not asked.
+  const furniture = args.kind === 'photo';
   const places = new Set(args.held.map((photo) => photo.place));
   const checksums = new Set(args.held.map((photo) => photo.checksum));
   const signatures = args.held.map((photo) => photo.signature);
@@ -1585,16 +1627,16 @@ async function runCaptureAttempt(
     if (isLastingRefusal(why)) settled.push(url);
   };
 
-  for (const place of candidatesToTry(args.candidates, args.settled, args.held)) {
-    // A photograph this attempt kept may already have decided the places ahead.
-    if (placesTakenBefore(places, place) >= REPORT_PHOTOGRAPH_LIMIT) break;
+  for (const place of candidatesToTry(args.candidates, args.settled, args.held, limit)) {
+    // A picture this attempt kept may already have decided the places ahead.
+    if (placesTakenBefore(places, place) >= limit) break;
     const url = args.candidates[place];
     // Past the allowance nothing more can be judged, so nothing more is
     // fetched; what is left is the next attempt's.
     if (!hasBudget(budget)) { refusals.push('out_of_time'); continue; }
     const renditions = captureRenditions(url);
 
-    const fetched = await fetchImageBytes({ url: renditions.store, origin: 'scraped' });
+    const fetched = await fetchImageBytes({ url: renditions.store, origin: 'scraped' }, { furniture });
     if ('error' in fetched) { refuse(url, fetched.error.split(':')[0]); continue; }
 
     const size = readDecodableDimensions(fetched.bytes);
@@ -1608,14 +1650,16 @@ async function runCaptureAttempt(
     // 64 px square, and a decode is paid for in pixels.
     let look = fetched.bytes;
     if (renditions.classify) {
-      const small = await fetchImageBytes({ url: renditions.classify, origin: 'scraped' });
+      const small = await fetchImageBytes({ url: renditions.classify, origin: 'scraped' }, { furniture });
       if ('error' in small) { refuse(url, small.error.split(':')[0]); continue; }
       look = small.bytes;
     }
     const judged = await judgeForCapture(budget, look);
     if ('refusal' in judged) { refuse(url, judged.refusal); continue; }
     const { analysis } = judged;
-    if (analysis.kind !== 'photo') { refuse(url, analysis.kind); continue; }
+    // The server's own verdict decides which list a picture may join: a
+    // photograph only where the pixels read as one, a plan only as a plan.
+    if (analysis.kind !== args.kind) { refuse(url, analysis.kind); continue; }
     const repeat = signatures.some((prior) => {
       const distance = signatureDistance(prior, analysis.signature);
       return distance !== null && distance <= SIGNATURE_MATCH_BITS;
@@ -1668,13 +1712,19 @@ async function runCaptureAttempt(
  * extraction read is the report's own; a resume stops if the report has been
  * re-pointed since. The address is written into the record, and every reader
  * holds the report against it again.
+ *
+ * The listing's floor plans, where its page named any, ride the same capture:
+ * the same record, the same address check, the same attempts, filed in
+ * `plans/` and settled in the record's own `plans` list. The capture is
+ * finished when both lists are (`captureFinish`).
  */
 async function captureReportPhotographs(
   supabase: ListingImagesClient,
   args: { reportId: string; scrapeJobId: string | null; userId: string; wait: boolean },
 ): Promise<CaptureAnswer> {
   const folder = captureFolder(args.reportId);
-  if (!folder) return { status: 400, reason: 'invalid_report_id' };
+  const planFolder = floorPlanFolder(args.reportId);
+  if (!folder || !planFolder) return { status: 400, reason: 'invalid_report_id' };
   if (args.scrapeJobId !== null && !isRecordId(args.scrapeJobId)) return { status: 400, reason: 'invalid_extraction_id' };
 
   const { data: report, error: reportError } = await supabase
@@ -1711,6 +1761,11 @@ async function captureReportPhotographs(
         : { status: 404, reason: 'nothing_requested' };
     }
     if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };
+    // A report's photographs come from one source. One whose author chose
+    // them from its brochure is not topped up from a listing page.
+    if ((listed.data ?? []).some((object) => object?.name === BROCHURE_RECORD_NAME)) {
+      return { status: 409, reason: 'brochure_photographs', held: held.length };
+    }
   } else {
     if (args.scrapeJobId && args.scrapeJobId.trim().toLowerCase() !== record.scrapeJobId) {
       return { status: 409, reason: 'different_extraction', held: held.length };
@@ -1750,16 +1805,27 @@ async function captureReportPhotographs(
     record = newCaptureRecord({ scrapeJobId, requestedBy, now, source });
   }
 
-  const result = (job.result ?? {}) as { photographs?: { candidates?: unknown } };
+  const result = (job.result ?? {}) as { photographs?: { candidates?: unknown; floorPlans?: unknown } };
   const candidates = readPageCandidates(result.photographs?.candidates).map((candidate) => candidate.url);
+  const planCandidates = readPageFloorPlanCandidates(result.photographs?.floorPlans).map((candidate) => candidate.url);
   const settled = new Set(record.settled);
+  const planSettled = new Set(record.plans.settled);
+  // The plans already kept, where the page named any. A folder that cannot be
+  // listed is not an empty one: a place could be filled twice.
+  let heldPlans: CapturedPhotograph[] = [];
+  if (planCandidates.length) {
+    const plans = await supabase.storage.from(BUCKET).list(planFolder, { limit: 100 });
+    if (plans.error) return { status: 503, reason: 'storage_unreadable', held: held.length };
+    heldPlans = heldCapturedPhotographs(plans.data ?? []);
+  }
 
-  // Final before any attempt: nothing was named, every place is decided, or
-  // the attempts are spent (an attempt whose worker ended before it could say so).
-  const final: CaptureFinish | null = candidates.length === 0
-    ? 'no_candidates'
-    : captureIsFinal(candidates, settled, held)
-      ?? (record.attempts >= CAPTURE_MAX_ATTEMPTS ? 'attempts' : null);
+  // Final before any attempt: nothing was named, every place of both lists is
+  // decided, or the attempts are spent (an attempt whose worker ended before
+  // it could say so).
+  const final: CaptureFinish | null = captureFinish({
+    photographs: { candidates, settled, held },
+    plans: { candidates: planCandidates, settled: planSettled, held: heldPlans },
+  }, record.attempts);
   if (final) {
     await writeCaptureRecord(supabase, folder, {
       ...record,
@@ -1777,28 +1843,46 @@ async function captureReportPhotographs(
   }
 
   const attempt = (async () => {
-    const outcome = await runCaptureAttempt(supabase, {
-      folder,
-      candidates,
-      settled,
-      held,
-      budgetMs: args.wait ? CAPTURE_BUDGET_WAITED_MS : CAPTURE_BUDGET_DETACHED_MS,
-    });
+    // One allowance for the attempt, photographs first: the cover is what a
+    // reader sees first, and plans the allowance cannot reach wait for the
+    // next attempt like any other unfinished work.
+    const budget = newAnalysisBudget(args.wait ? CAPTURE_BUDGET_WAITED_MS : CAPTURE_BUDGET_DETACHED_MS);
+    const outcome = await runCaptureAttempt(supabase, { kind: 'photo', folder, candidates, settled, held, budget });
+    const planOutcome: CaptureAttempt = planCandidates.length
+      ? await runCaptureAttempt(supabase, {
+        kind: 'floorplan',
+        folder: planFolder,
+        candidates: planCandidates,
+        settled: planSettled,
+        held: heldPlans,
+        budget,
+      })
+      : { kept: [], settled: [], refusals: [] };
     const finished = finishCaptureAttempt(begun, {
       now: Date.now(),
       candidates,
       settledNow: outcome.settled,
       refusalsNow: outcome.refusals,
       held: [...held, ...outcome.kept],
+      plans: {
+        candidates: planCandidates,
+        settledNow: planOutcome.settled,
+        refusalsNow: planOutcome.refusals,
+        held: [...heldPlans, ...planOutcome.kept],
+      },
     });
     await writeCaptureRecord(supabase, folder, finished);
     // One line an attempt: most run with nobody reading their answer.
     console.log(
       `[listing-images] capture_report: report=${args.reportId} attempt=${begun.attempts} ` +
         `candidates=${candidates.length} kept=${outcome.kept.length} held=${held.length + outcome.kept.length} ` +
-        `refused=${JSON.stringify(countRefusals(outcome.refusals))} finished=${finished.finished?.reason ?? 'no'}`,
+        `refused=${JSON.stringify(countRefusals(outcome.refusals))} ` +
+        `plans=${planCandidates.length} plans_kept=${planOutcome.kept.length} ` +
+        `plans_held=${heldPlans.length + planOutcome.kept.length} ` +
+        `plans_refused=${JSON.stringify(countRefusals(planOutcome.refusals))} ` +
+        `finished=${finished.finished?.reason ?? 'no'}`,
     );
-    return { outcome, finished };
+    return { outcome, planOutcome, finished };
   })();
 
   if (!args.wait) {
@@ -1808,17 +1892,236 @@ async function captureReportPhotographs(
     return { status: 202, state: 'accepted', held: held.length };
   }
   try {
-    const { outcome, finished } = await attempt;
+    const { outcome, planOutcome, finished } = await attempt;
     return {
       status: 200,
       state: captureStateOf(finished, Date.now()),
       held: held.length + outcome.kept.length,
-      attempt: { number: begun.attempts, kept: outcome.kept.length, refused: countRefusals(outcome.refusals) },
+      attempt: {
+        number: begun.attempts,
+        kept: outcome.kept.length,
+        refused: countRefusals(outcome.refusals),
+        plans: { kept: planOutcome.kept.length, refused: countRefusals(planOutcome.refusals) },
+      },
     };
   } catch (error) {
     console.error('[listing-images] capture_report attempt failed', redactError(error));
     return { status: 503, reason: 'attempt_failed', held: held.length };
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* A PDF-made report's photographs, chosen from its brochure                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * A report made from an uploaded PDF has no listing page to capture from. Its
+ * brochure is read in the author's browser (`src/lib/reports/brochurePhotographs.ts`),
+ * the author ticks the photographs the report may carry, and each is sent here,
+ * one to a request. Nothing about it is taken on trust: it is held to what a
+ * listing page's photograph is held to (`runCaptureAttempt`) — a header stating
+ * the print floor, one copy of each picture, and this server's own verdict on
+ * the pixels that it is a photograph — and filed under the report with the same
+ * object name, so the report broker reads it exactly as it reads a capture.
+ *
+ * `brochure.json` is written before the first photograph and holds the report
+ * against the address the brochure states (rule 4, in its lot-aware form); a
+ * report re-pointed at another property stops accepting them, and every reader
+ * stops serving them.
+ */
+
+/** Time to look at the one photograph a request carries. */
+const BROCHURE_BUDGET_MS = 10_000;
+const BROCHURE_SCOPE = 'report_brochure_photograph';
+
+interface BrochureAnswer {
+  status: number;
+  reason?: string;
+  /** Photographs (or, for a plan, plans) the report holds, as far as this request knows. */
+  held?: number;
+  /** The stored name, where this photograph was kept. */
+  name?: string;
+}
+
+/** The base64 a request carries, as bytes; null for anything that is not base64 or is too large. */
+function decodeImagePayload(value: unknown): Uint8Array | null {
+  if (typeof value !== 'string' || !value) return null;
+  // Four characters carry three bytes; anything longer cannot be within the cap.
+  if (value.length > Math.ceil(BROCHURE_PHOTOGRAPH_MAX_BYTES / 3) * 4 + 4) return null;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+  try {
+    const text = atob(value);
+    const bytes = new Uint8Array(text.length);
+    for (let index = 0; index < text.length; index += 1) bytes[index] = text.charCodeAt(index);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a brochure picture is filed as. A plan is kept apart from the
+ * photographs, in the capture folder's `plans/`, because every photo slot
+ * crops to fill its frame and a plan must be drawn whole
+ * (`reportPhotographs.pure.ts`, "Floor plans").
+ */
+type BrochureKind = 'photo' | 'floorplan';
+
+function brochureKindOf(value: unknown): BrochureKind | null {
+  if (value === undefined || value === null || value === 'photo') return 'photo';
+  return value === 'floorplan' ? 'floorplan' : null;
+}
+
+/**
+ * Files one photograph (or floor plan) the report's author chose from its
+ * brochure, or says why not.
+ *
+ * Only the author, of a report that is not derived (a fork or a condensed child
+ * reads its parent's photographs), and never beside a listing page's capture:
+ * a report's photographs come from one source. A plan is held to every rule a
+ * photograph is, with one word changed: the server's own reading of the pixels
+ * must call it a plan.
+ */
+async function fileBrochurePhotograph(
+  supabase: ListingImagesClient,
+  args: {
+    reportId: string;
+    userId: string;
+    documentSha256: unknown;
+    source: unknown;
+    place: unknown;
+    image: unknown;
+    kind?: unknown;
+  },
+): Promise<BrochureAnswer> {
+  const folder = captureFolder(args.reportId);
+  if (!folder) return { status: 400, reason: 'invalid_report_id' };
+  const kind = brochureKindOf(args.kind);
+  if (!kind) return { status: 400, reason: 'invalid_kind' };
+  // Where this picture is filed, and how many of its kind a report carries.
+  const target = kind === 'floorplan' ? floorPlanFolder(args.reportId) : folder;
+  const limit = kind === 'floorplan' ? REPORT_FLOOR_PLAN_LIMIT : REPORT_PHOTOGRAPH_LIMIT;
+  if (!target) return { status: 400, reason: 'invalid_report_id' };
+  if (!isDocumentDigest(args.documentSha256)) return { status: 400, reason: 'invalid_document' };
+  const documentSha256 = args.documentSha256.trim().toLowerCase();
+  const place = Number(args.place);
+  if (!Number.isInteger(place) || place < 0 || place >= limit) {
+    return { status: 400, reason: 'invalid_place' };
+  }
+  const bytes = decodeImagePayload(args.image);
+  if (!bytes || bytes.length < MIN_IMAGE_BYTES || bytes.length > BROCHURE_PHOTOGRAPH_MAX_BYTES) {
+    return { status: 400, reason: 'invalid_image' };
+  }
+
+  const { data: report, error: reportError } = await supabase
+    .from('investment_reports')
+    .select('id, generated_by, parent_report_id, derived_from_report_id, property_address')
+    .eq('id', args.reportId)
+    .maybeSingle();
+  if (reportError) return { status: 503, reason: 'report_unreadable' };
+  if (!report) return { status: 404, reason: 'report_not_found' };
+  if (report.parent_report_id || report.derived_from_report_id) return { status: 409, reason: 'derived_report' };
+  if (report.generated_by !== args.userId) return { status: 403, reason: 'not_the_author' };
+
+  const listed = await supabase.storage.from(BUCKET).list(folder, { limit: 100 });
+  if (listed.error) return { status: 503, reason: 'storage_unreadable' };
+  const objects = listed.data ?? [];
+  let held = heldCapturedPhotographs(objects);
+  if (kind === 'floorplan') {
+    // A plan is counted, de-duplicated and placed among the plans alone.
+    const plans = await supabase.storage.from(BUCKET).list(target, { limit: 100 });
+    if (plans.error) return { status: 503, reason: 'storage_unreadable' };
+    held = heldCapturedPhotographs(plans.data ?? []);
+  }
+  if (objects.some((object) => object?.name === CAPTURE_RECORD_NAME)) {
+    return { status: 409, reason: 'listing_capture', held: held.length };
+  }
+
+  if (objects.some((object) => object?.name === BROCHURE_RECORD_NAME)) {
+    const stored = await supabase.storage.from(BUCKET).download(`${folder}/${BROCHURE_RECORD_NAME}`);
+    // A record that is there and cannot be read is not a record that is absent.
+    if (stored.error || !stored.data) return { status: 503, reason: 'record_unreadable', held: held.length };
+    let record: BrochureRecord | null;
+    try {
+      record = parseBrochureRecord(JSON.parse(await stored.data.text()));
+    } catch {
+      record = null;
+    }
+    if (!record) return { status: 409, reason: 'record_unreadable', held: held.length };
+    if (record.requestedBy !== report.generated_by) return { status: 409, reason: 'record_mismatch', held: held.length };
+    if (record.documentSha256 !== documentSha256) return { status: 409, reason: 'different_document', held: held.length };
+    // Rule 4 again: the report may have been re-pointed since the first photograph.
+    if (!brochurePhotographsAreOfReportAddress(report.property_address, record.source)) {
+      return { status: 409, reason: 'address_changed', held: held.length };
+    }
+  } else {
+    // Rule 4: the photographs are of the address the brochure states, and they
+    // are kept for this report only if that is the report's own address.
+    const source = brochurePhotographSource(
+      args.source && typeof args.source === 'object' ? args.source as Record<string, unknown> : null,
+    );
+    if (!source) return { status: 400, reason: 'address_unknown' };
+    if (!brochurePhotographsAreOfReportAddress(report.property_address, source)) {
+      return { status: 409, reason: 'address_mismatch' };
+    }
+    // No record, no photographs: nothing is written until this is.
+    const record = newBrochureRecord({ documentSha256, source, requestedBy: report.generated_by, now: Date.now() });
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(`${folder}/${BROCHURE_RECORD_NAME}`, new TextEncoder().encode(JSON.stringify(record)), {
+        contentType: 'application/json',
+        upsert: true,
+      });
+    if (error) {
+      console.warn(`[listing-images] brochure record not written for ${folder}: ${error.message}`);
+      return { status: 503, reason: 'record_unwritable' };
+    }
+  }
+
+  const size = readDecodableDimensions(bytes);
+  if (!size) return { status: 422, reason: 'unreadable', held: held.length };
+  if (Math.max(size.width, size.height) < MIN_PRINT_LONG_EDGE_PX) {
+    return { status: 422, reason: 'below_print_floor', held: held.length };
+  }
+  const checksum = (await sha256Hex(bytes)).slice(0, 16);
+  const atPlace = held.find((photo) => photo.place === place);
+  // The same photograph at the same place is a retry that already landed.
+  if (atPlace?.checksum === checksum) return { status: 200, held: held.length, name: atPlace.name };
+  if (atPlace) return { status: 409, reason: 'place_taken', held: held.length };
+  if (held.length >= limit) return { status: 409, reason: 'limit', held: held.length };
+  if (held.some((photo) => photo.checksum === checksum)) return { status: 409, reason: 'duplicate', held: held.length };
+
+  const judged = await judgeForCapture(newAnalysisBudget(BROCHURE_BUDGET_MS), bytes);
+  if ('refusal' in judged) {
+    // Out of time or pixels says nothing about the photograph; undecodable does.
+    const lasting = judged.refusal === 'undecodable';
+    return { status: lasting ? 422 : 503, reason: judged.refusal, held: held.length };
+  }
+  const { analysis } = judged;
+  // The server's own verdict, never the browser's: a plan is kept only where
+  // the pixels read as a plan, a photograph only where they read as one.
+  if (analysis.kind !== kind) return { status: 422, reason: analysis.kind, held: held.length };
+  const repeat = held.some((photo) => {
+    const distance = signatureDistance(photo.signature, analysis.signature);
+    return distance !== null && distance <= SIGNATURE_MATCH_BITS;
+  });
+  if (repeat) return { status: 409, reason: 'duplicate', held: held.length };
+
+  const contentType = `image/${size.format}`;
+  const name = captureObjectName({
+    place,
+    width: size.width,
+    height: size.height,
+    checksum,
+    signature: analysis.signature,
+    contentType,
+  });
+  if (!name || !parseCaptureObjectName(name)) return { status: 422, reason: 'unnameable', held: held.length };
+  const upload = await supabase.storage
+    .from(BUCKET)
+    .upload(`${target}/${name}`, bytes, { contentType, upsert: true });
+  if (upload.error) return { status: 503, reason: 'upload_failed', held: held.length };
+  return { status: 200, held: held.length + 1, name };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2102,6 +2405,55 @@ Deno.serve(async (req) => {
         wait: body.wait === true,
       });
       return j({ success: status < 400, op, ...captured }, status);
+    }
+
+    /* -- A PDF-made report's photographs, chosen from its brochure -------- */
+    if (op === 'capture_brochure_photograph') {
+      const auth = await verifyAuth(supabase, req.headers, body as { session_token?: string });
+      if (auth.error || !auth.userId) {
+        return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
+      }
+      // The report permission, as for a capture: this files photographs under
+      // a report, which is what the report broker later signs them from.
+      const reportsPermission = await requireModulePermission(
+        supabase,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        'reports',
+        'can_view',
+      );
+      if (!reportsPermission.ok) {
+        return createForbiddenResponse(reportsPermission.error || 'Reports access required', corsHeaders);
+      }
+      // One picture a request, and a report carries six photographs and two
+      // plans: room for a retry of each, and for an author filing two reports
+      // in a minute.
+      const brochureActorQuota = await enforceActorQuota(supabase, auth.userId, BROCHURE_SCOPE, {
+        limit: 30,
+        windowMs: 60_000,
+      });
+      const brochureIpQuota = await enforceIpQuota(supabase, getClientIp(req), BROCHURE_SCOPE, {
+        limit: 60,
+        windowMs: 60_000,
+      });
+      if (!brochureActorQuota.ok || !brochureIpQuota.ok) return j({ success: false, error: 'rate_limited' }, 429);
+
+      const reportId = typeof body.reportId === 'string' ? body.reportId : '';
+      const { status, ...filed } = await fileBrochurePhotograph(supabase, {
+        reportId,
+        userId: auth.userId,
+        documentSha256: body.documentSha256,
+        source: body.source,
+        place: body.place,
+        image: body.image,
+        kind: body.kind,
+      });
+      // One line a photograph; nobody reads the answer but the browser that sent it.
+      console.log(
+        `[listing-images] capture_brochure_photograph: report=${captureFolder(reportId) ? reportId : 'invalid'} ` +
+          `kind=${body.kind === 'floorplan' ? 'floorplan' : 'photo'} ` +
+          `status=${status} ${filed.reason ? `refused=${filed.reason}` : 'kept'} held=${filed.held ?? 0}`,
+      );
+      return j({ success: status < 400, op, ...filed }, status);
     }
 
     /* -- User-facing resolve --------------------------------------------- */

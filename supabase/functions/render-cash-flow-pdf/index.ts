@@ -41,8 +41,10 @@ import { countPdfPagesAsync, renderPdf, weasyPrintConfig, WeasyPrintServiceError
 import { functionStatusFor } from '../_shared/renderFailure.pure.ts';
 import {
   buildReportBrandSnapshot,
+  issuerDisclaimerSetting,
   REPORT_SNAPSHOT_VERSION,
 } from '../_shared/reportDesign/snapshot.pure.ts';
+import { deploymentKind } from '../_shared/emailIdentity.pure.ts';
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { buildProjection, CashFlowPayloadError } from '../_shared/reports/cashFlow/normalise.pure.ts';
@@ -220,7 +222,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       console.warn(`[render-cash-flow-pdf] asset ${note.key} not inlined (${note.reason}): ${note.detail}`);
     }
 
+    // A clone never prints the house's name, contact details or wording,
+    // whatever its settings rows say; the prime reads them as stored
+    // (`issuerIdentity.pure.ts`).
+    const reportDeployment = { prime: deploymentKind(Deno.env.get('SUPABASE_URL')) === 'prime' };
     const { snapshot, skippedAssets } = buildReportBrandSnapshot({
+      deployment: reportDeployment,
       whitelabel: whitelabel
         ? {
             id: String(whitelabel.id ?? ''),
@@ -272,7 +279,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const { html, gaps } = renderCashFlowFromBrand({
       projection,
       snapshot,
-      disclaimer: settings.disclaimer as never,
+      disclaimer: issuerDisclaimerSetting(settings.disclaimer, snapshot, reportDeployment) as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: request.reportId.slice(0, 8).toUpperCase(),

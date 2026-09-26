@@ -102,10 +102,15 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
  * the rest before it is drawn — waiting a bounded time, and reading again only
  * if the attempt ran — so it carries what the capture keeps rather than what
  * the first attempt managed. Nothing about it can fail the read.
+ *
+ * Exported for the standard presentation (`deliverInvestmentPdf.ts`), which
+ * draws the same report's pictures and must read them by the same rule: one
+ * reader, so a report cannot carry a photograph in one presentation that the
+ * other refuses.
  */
-async function loadInvestmentReportWithPhotographs(
+export async function loadInvestmentReportWithPhotographs(
   reportId: string,
-): Promise<{ report: any; photographs: SignedPhotograph[] } | null> {
+): Promise<{ report: any; photographs: SignedPhotograph[]; floorPlans: SignedPhotograph[] } | null> {
   const first = await readReportAndPhotographs(reportId);
   if (!first) return null;
   const resume = photographResumeRequest(first.capture);
@@ -118,7 +123,12 @@ async function loadInvestmentReportWithPhotographs(
 
 async function readReportAndPhotographs(
   reportId: string,
-): Promise<{ report: any; photographs: SignedPhotograph[]; capture: PhotographCaptureReading | null } | null> {
+): Promise<{
+  report: any;
+  photographs: SignedPhotograph[];
+  floorPlans: SignedPhotograph[];
+  capture: PhotographCaptureReading | null;
+} | null> {
   const { data: resp, error } = await invokeSecureFunction('get-investment-reports', {
     table: 'investment_reports',
     reportId,
@@ -129,7 +139,9 @@ async function readReportAndPhotographs(
   const report = (resp as any)?.report ?? null;
   if (!report) return null;
   const photographs = Array.isArray((resp as any)?.photographs) ? (resp as any).photographs as SignedPhotograph[] : [];
-  return { report, photographs, capture: readPhotographCapture(resp) };
+  // Served apart because they are drawn apart: whole, on a page of their own.
+  const floorPlans = Array.isArray((resp as any)?.floorPlans) ? (resp as any).floorPlans as SignedPhotograph[] : [];
+  return { report, photographs, floorPlans, capture: readPhotographCapture(resp) };
 }
 
 /**
@@ -333,8 +345,15 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     // bind — a cover hero on three, full-page plates on five — and every slot
     // is conditional, so a report with none draws exactly what it drew before.
     // Set after the projection so nothing above can overwrite it.
-    const images = await inlineReportPhotographs(withPhotographs.photographs);
+    const [images, floorPlans] = await Promise.all([
+      inlineReportPhotographs(withPhotographs.photographs),
+      // The floor plans, where the brochure or the listing held one: bound
+      // apart as `property.floorPlans`, because every photo slot crops to fill
+      // its frame and a plan is drawn whole, on a page of its own.
+      inlineReportPhotographs(withPhotographs.floorPlans),
+    ]);
     if (images.length) data.property = { ...(data.property ?? {}), images };
+    if (floorPlans.length) data.property = { ...(data.property ?? {}), floorPlans };
 
     return {
       data,

@@ -48,7 +48,10 @@ import {
 } from '../_shared/builderStock/projection.pure.ts';
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
 import { readPropertyDetail } from '../_shared/builderStock/propertyDetail.ts';
-import { readBuilderConversation } from '../_shared/builderStock/agencyMessages.ts';
+import {
+  countUnreadAcknowledgementNotices, listActivatedProperties, listMyConversations, listPropertyConversations,
+  markAcknowledgementNoticesRead, readParticipantConversation,
+} from '../_shared/builderStock/privateConversations.ts';
 import { agencyMessageRefusal, projectConversationMessages } from '../_shared/builderStock/agencyMessages.pure.ts';
 import {
   promotedOrganisations, splicePinsIntoPage, type RankedRow,
@@ -82,6 +85,9 @@ async function builderStockEnabled(db: any): Promise<boolean> {
   return value === true || value === 'true'
     || (typeof value === 'object' && value !== null && (value as any).enabled === true);
 }
+
+/** How many invitation candidates one read asks for. */
+const INVITEE_PAGE = 500;
 
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
@@ -629,28 +635,88 @@ Deno.serve(async (req) => {
       return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(text) ? text : null;
     };
 
+    // =====================================================================
+    // Builder conversations — one private conversation per activation
+    // (docs/builder-portal/52). Membership decides every read and write; the
+    // SQL is the authority and each operation names only a conversation (and,
+    // to invite, a colleague). The actor is always the session's user.
+    // =====================================================================
+    const notAParticipant = () => json({
+      success: false, code: 'not_a_participant', error: 'You are not in this conversation.',
+    }, 403);
+
+    if (operation === 'list_builder_portal_activations') {
+      // Taken BEFORE the read: marking read later reaches only what this list could show.
+      const asOf = new Date().toISOString();
+      const read = await listActivatedProperties(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'activations_could_not_be_read' }, 503);
+      return json({ success: true, activations: read.activations, as_of: asOf });
+    }
+
+    // The Builder Portal badge: the reader's own unread acknowledgements,
+    // counted here because the bell holds only its newest fifty.
+    if (operation === 'count_activation_acknowledgements') {
+      const read = await countUnreadAcknowledgementNotices(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'acknowledgements_could_not_be_counted' }, 503);
+      return json({ success: true, count: read.count });
+    }
+
+    if (operation === 'mark_activation_acknowledgements_read') {
+      const asOf = typeof body.as_of === 'string' ? body.as_of : '';
+      if (!Number.isFinite(Date.parse(asOf))) return json({ success: false, error: 'as_of_required' }, 400);
+      const done = await markAcknowledgementNoticesRead(supabase, { viewerUserId: userId, asOf });
+      if (!done.ok) return json({ success: false, error: 'acknowledgements_could_not_be_marked' }, 503);
+      return json({ success: true });
+    }
+
+    if (operation === 'list_my_builder_conversations') {
+      const stockItemId = uuidOf(body.stock_item_id);
+      const read = stockItemId
+        ? await listPropertyConversations(supabase, { stockItemId, viewerUserId: userId })
+        : await listMyConversations(supabase, { viewerUserId: userId });
+      if (!read.ok) return json({ success: false, error: 'conversations_could_not_be_read' }, 503);
+      return json({ success: true, conversations: read.conversations });
+    }
+
     if (operation === 'get_builder_conversation') {
-      const item = await loadReadableItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
-      const read = await readBuilderConversation(supabase, {
-        stockItemId: item.id, organisationId: item.organisation_id, viewerUserId: userId,
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // A history cursor, where one is asked for: the page before that message.
+      const read = await readParticipantConversation(supabase, {
+        conversationId, viewerUserId: userId, beforeMessageId: uuidOf(body.before_message_id),
       });
-      if (!read.ok) return json({ success: false, error: 'conversation_could_not_be_read' }, 503);
+      if (!read.ok) {
+        if (read.reason === 'not_found') return json({ error: 'Conversation not found' }, 404);
+        if (read.reason === 'not_a_participant') return notAParticipant();
+        return json({ success: false, error: 'conversation_could_not_be_read' }, 503);
+      }
       const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
       const networkOn = await builderNetworkEnabled(supabase);
-      // Every gate the send and retry functions enforce, so no button is
-      // offered that the server would refuse.
-      // A property the builder no longer lists keeps its history and takes
-      // nothing new.
-      const open = read.open && item.lifecycle_status === 'active';
-      const canSend = open && listingsEdit.ok && networkOn;
+      // Every gate the send, retry and invite functions enforce, so no button
+      // is offered that the server would refuse.
+      const canSend = read.open && listingsEdit.ok && networkOn;
+      const mine = read.participants.filter((p) => p.side === 'command_centre');
+      // Live is the database's rule for leaving: the conversation is open.
+      // Only then must someone on this side stay.
+      const live = read.open;
       return json({
         success: true,
         conversation_id: read.conversation_id,
-        open,
-        closed_reason: item.lifecycle_status === 'active' ? read.closed_reason : 'delisted',
+        stock_item_id: read.stock_item_id,
+        address: read.address,
+        lot_number: read.lot_number,
+        builder_name: read.builder_name,
+        open: read.open,
+        closed_reason: read.closed_reason,
         can_send: canSend,
+        can_invite: read.open && listingsEdit.ok && networkOn,
+        // A live conversation keeps someone on this side; a closed one can be
+        // left freely. The server decides again when asked.
+        can_leave: !live || mine.length > 1,
+        participants: read.participants,
         messages: read.messages.map((message) => ({ ...message, can_retry: message.can_retry && canSend })),
+        has_earlier: read.has_earlier,
+        earlier_cursor: read.earlier_cursor,
       });
     }
 
@@ -659,14 +725,14 @@ Deno.serve(async (req) => {
       if (!listingsEdit.ok) {
         return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
       }
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
       const clientMessageId = uuidOf(body.client_message_id);
       if (!clientMessageId) {
         return json({ success: false, error: 'A message needs its own id.', code: 'invalid_message' }, 400);
       }
       const { data, error } = await supabase.rpc('builder_network_post_message', {
-        _stock_item_id: item.id,
+        _conversation_id: conversationId,
         _sender_user_id: userId,
         _client_message_id: clientMessageId,
         _body: String(body.body ?? '').slice(0, 8000),
@@ -690,6 +756,60 @@ Deno.serve(async (req) => {
       if (error) return conversationRefusal(error);
       const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
       return json({ success: true, message: row ? projectConversationMessages([row], userId)[0] : null });
+    }
+
+    if (operation === 'list_builder_conversation_invitees') {
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // Every eligible colleague, read a page at a time: a response ceiling
+      // must never make somebody uninvitable.
+      const invitees: Array<{ user_id: string; display_name: string }> = [];
+      for (let from = 0; ; from += INVITEE_PAGE) {
+        const { data, error } = await supabase.rpc('builder_network_invite_candidates', {
+          _conversation_id: conversationId,
+          _actor_user_id: userId,
+        }).range(from, from + INVITEE_PAGE - 1);
+        if (error) return conversationRefusal(error);
+        const page = (data ?? []) as Array<{ user_id: string; display_name: string }>;
+        invitees.push(...page.map((row) => ({ user_id: String(row.user_id), display_name: String(row.display_name) })));
+        if (page.length < INVITEE_PAGE) break;
+      }
+      return json({ success: true, invitees });
+    }
+
+    if (operation === 'invite_builder_conversation_participant') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const conversationId = uuidOf(body.conversation_id);
+      const inviteeId = uuidOf(body.invitee_user_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      if (!inviteeId) {
+        return json({ success: false, code: 'invitee_not_eligible', error: 'That person cannot be added to this conversation.' }, 422);
+      }
+      // The invitee is a lookup key: whether they may join is decided by the
+      // database from this workspace's own rows.
+      const { data, error } = await supabase.rpc('builder_network_invite_participant', {
+        _conversation_id: conversationId,
+        _actor_user_id: userId,
+        _invitee_user_id: inviteeId,
+      });
+      if (error) return conversationRefusal(error);
+      return json({ success: true, result: String(data) });
+    }
+
+    if (operation === 'leave_builder_conversation') {
+      const conversationId = uuidOf(body.conversation_id);
+      if (!conversationId) return json({ error: 'Conversation not found' }, 404);
+      // Leaving names only the person leaving: there is no operation that
+      // removes somebody else.
+      const { data, error } = await supabase.rpc('builder_network_leave_conversation', {
+        _conversation_id: conversationId,
+        _actor_user_id: userId,
+      });
+      if (error) return conversationRefusal(error);
+      return json({ success: true, result: String(data) });
     }
 
     // =====================================================================

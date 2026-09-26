@@ -65,6 +65,11 @@ async function redrawAsJpeg(blob: Blob, maxLongEdge: number): Promise<string | n
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext('2d');
     if (!context) return null;
+    // A JPEG has no transparency, and a canvas starts transparent BLACK: a PNG
+    // or WebP with a transparent ground would come out on black, which is how a
+    // line-drawn floor plan disappears into a dark page. Paper first.
+    context.fillStyle = 'white';
+    context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', REDRAW_QUALITY);
     return dataUrl.startsWith('data:image/jpeg') ? dataUrl : null;
@@ -74,12 +79,18 @@ async function redrawAsJpeg(blob: Blob, maxLongEdge: number): Promise<string | n
 }
 
 const DEFAULT_DEPS: PhotographDeps = {
-  fetch: (...args) => fetch(...args),
+  // Called through the global, never as a method of this object: a browser
+  // refuses `fetch` invoked with any other `this`.
+  fetch: (input, init) => fetch(input, init),
   toDataUrl: blobToDataUrl,
   redraw: redrawAsJpeg,
 };
 
-async function inlineOne(photo: SignedPhotograph, deps: PhotographDeps): Promise<string | null> {
+async function inlineOne(
+  photo: SignedPhotograph,
+  deps: PhotographDeps,
+  passthrough: ReadonlySet<string> = PASSTHROUGH_TYPES,
+): Promise<string | null> {
   try {
     if (!photo?.url || !/^https:\/\//i.test(photo.url)) return null;
     const signal = typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
@@ -90,7 +101,7 @@ async function inlineOne(photo: SignedPhotograph, deps: PhotographDeps): Promise
     const blob = await response.blob();
     const type = (blob.type || response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (!type.startsWith('image/')) return null;
-    if (PASSTHROUGH_TYPES.has(type) && blob.size > 0 && blob.size <= MAX_PASSTHROUGH_BYTES) {
+    if (passthrough.has(type) && blob.size > 0 && blob.size <= MAX_PASSTHROUGH_BYTES) {
       const uri = await deps.toDataUrl(blob);
       return uri.startsWith('data:image/') ? uri : null;
     }
@@ -113,4 +124,54 @@ export async function inlineReportPhotographs(
   if (!photographs?.length) return [];
   const results = await Promise.all(photographs.map((photo) => inlineOne(photo, deps)));
   return results.filter((uri): uri is string => typeof uri === 'string' && uri.length > 0);
+}
+
+/** A picture as pdf-lib embeds one: PNG or JPEG bytes, and nothing else. */
+export interface PdfLibPicture {
+  bytes: Uint8Array;
+  format: 'png' | 'jpeg';
+}
+
+/**
+ * The two formats pdf-lib can embed. A WebP that the template renderer would
+ * carry byte for byte is redrawn as a JPEG instead, by the same rule and at the
+ * same size as a photograph too large to pass through.
+ */
+const PDF_LIB_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png']);
+
+/**
+ * A `data:` URI's bytes, where they are a picture pdf-lib can embed; null for
+ * anything else. Exported for the standard cover, which embeds a brand mark
+ * the same way it embeds a photograph.
+ */
+export function pictureFromDataUri(uri: string | null): PdfLibPicture | null {
+  const match = /^data:image\/(png|jpeg);base64,(.+)$/.exec(uri ?? '');
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes.length ? { bytes, format: match[1] as 'png' | 'jpeg' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The same pictures for the standard presentation, which pdf-lib draws.
+ *
+ * Fetched and sized exactly as `inlineReportPhotographs` fetches and sizes them
+ * for a template, so the two presentations of one report carry the same
+ * pictures at the same resolution; only the container differs. Every failure
+ * drops that picture and nothing else, and the order is the server's.
+ */
+export async function pdfLibPictures(
+  photographs: readonly SignedPhotograph[] | null | undefined,
+  deps: PhotographDeps = DEFAULT_DEPS,
+): Promise<PdfLibPicture[]> {
+  if (!photographs?.length) return [];
+  const uris = await Promise.all(photographs.map((photo) => inlineOne(photo, deps, PDF_LIB_TYPES)));
+  return uris
+    .map(pictureFromDataUri)
+    .filter((picture): picture is PdfLibPicture => picture !== null);
 }

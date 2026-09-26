@@ -84,6 +84,7 @@ describe('navigation registry coherence', () => {
     const portals = ADMIN_NAVIGATION_ITEMS.filter((item) => item.group === 'Portals');
     expect(portals.map((item) => item.title)).toEqual([
       'Finance Portal',
+      'Builder Portal',
       'Solicitor Portal',
       'Client Portal',
     ]);

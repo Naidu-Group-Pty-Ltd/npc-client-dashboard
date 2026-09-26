@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
-import { requireModulePermission } from '../_shared/authz.ts';
+import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
 import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -8,6 +8,7 @@ import { internalError } from '../_shared/errorResponse.ts';
 import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
 import { healFinanceIdentity } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { refuseFailureStamp } from '../_shared/reports/investment/failureStamp.pure.ts';
+import { BULK_DELETE_BUDGET_MS, removeDeletedReportStorage } from '../_shared/reports/investment/reportStorageRemoval.ts';
 /**
  * CORS comes from `_shared/auth.ts`, like every other function's.
  *
@@ -328,10 +329,11 @@ Deno.serve(async (req) => {
           );
         }
 
-        const { error: deleteError } = await supabase
+        const { data: removedRows, error: deleteError } = await supabase
           .from('investment_reports')
           .delete()
-          .eq('id', reportId);
+          .eq('id', reportId)
+          .select('id');
 
         if (deleteError) {
           console.error('Error deleting investment report:', deleteError);
@@ -340,6 +342,12 @@ Deno.serve(async (req) => {
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+
+        // What the report kept in storage goes with it: its photographs, floor
+        // plans and kept document. Only for the row this statement removed, and
+        // never at the cost of the delete (`reportStorage.pure.ts`).
+        const storage = await removeDeletedReportStorage(supabase, removedRows);
+        if (storage.reports > 0) console.log('[manage-investment-reports] report storage removed', { reportId, ...storage });
 
         return new Response(
           JSON.stringify({ success: true, deleted: reportId }),
@@ -357,6 +365,17 @@ Deno.serve(async (req) => {
 
         // Also support status-based bulk delete
         const statusFilter = data?.statusFilter;
+
+        // A status filter deletes every report in that state on the deployment,
+        // whoever made it, so it is an administrator's act — the one
+        // `manage-automation-settings`' "Clear stuck reports" already requires.
+        // A list of ids is unchanged.
+        if (statusFilter && Array.isArray(statusFilter)) {
+          const admin = await requireAdmin(supabase, { userId, authMethod });
+          if (!admin.ok) {
+            return createForbiddenResponse(admin.error || 'Admin privilege required', corsHeaders);
+          }
+        }
         
         let query = supabase.from('investment_reports').delete();
         
@@ -375,6 +394,9 @@ Deno.serve(async (req) => {
             { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+
+        const bulkStorage = await removeDeletedReportStorage(supabase, deleted, BULK_DELETE_BUDGET_MS);
+        if (bulkStorage.reports > 0) console.log('[manage-investment-reports] report storage removed', bulkStorage);
 
         return new Response(
           JSON.stringify({ success: true, deletedCount: deleted?.length || 0, deleted }),

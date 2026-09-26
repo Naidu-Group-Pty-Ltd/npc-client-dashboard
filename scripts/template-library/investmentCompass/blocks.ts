@@ -2197,8 +2197,14 @@ export function definitions(
     ? 1
     : Math.max(1, Math.ceil(chars / Math.max(1, Math.floor(measure / (SIZE * 0.5)))));
   const rowHeight = 8 + Math.max(SIZE * 1.2, lines * SIZE * LEADING) + 8 + 1;
+  // The 30 is the title's line (14pt on 1.2, plus its 10pt margin). An
+  // untitled list draws no title at all (`title()` in `extras.html.ts` returns
+  // nothing for an empty string), so reserving it there puts a band of blank
+  // paper under the last row — which, on a page that seats the list at its
+  // foot, is a gap between the list and the running foot.
+  const titleLine = title.trim() ? 30 : 0;
   return {
-    height: Math.ceil(30 + items.length * rowHeight),
+    height: Math.ceil(titleLine + items.length * rowHeight),
     block: (y) => block('definition-list', {
       title, items, x: c.contentLeft, y, width: c.contentWidth,
     }),
@@ -2486,6 +2492,126 @@ function measuredPlateBlocks(opts: {
       height: PAGE.height - c.margin * 2,
     }, opts.brief),
   ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The floor plan
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The longest `property.address` a floor-plan sheet sets as its standfirst.
+ *
+ * Measured the way the cover's address is: a new build's street line with its
+ * lot, its suburb, its state and its postcode is ~60 characters
+ * ("Lot 1629 Hornsea Street, Armstrong Creek VIC 3217" is 49), and a unit with
+ * a long street name runs past 70. Sized for 90 so no address sets taller than
+ * its box.
+ */
+const FLOOR_PLAN_ADDRESS_CHARS = 90;
+
+/**
+ * What a plan on this sheet is, in the three facts a reader of a plan looks for
+ * first, and in the words a buyer's adviser would use.
+ *
+ * "Not to scale" because the plan is printed to fit the sheet, whatever it was
+ * drawn at. The source is named because the plan is the builder's or the
+ * agent's marketing, not a survey. The instruction is the one every contract
+ * plan carries in its own words: the areas and dimensions to rely on are the
+ * contract's.
+ */
+const FLOOR_PLAN_NOTES = [
+  { term: 'Scale', definition: 'Not to scale. Printed to fit the page.' },
+  { term: 'Source', definition: "The builder's or agent's marketing material." },
+  { term: 'Before relying on it', definition: 'Confirm dimensions and areas against the contract drawings.' },
+];
+
+/**
+ * The longest definition above, for the row depth. Every note is kept to one
+ * line at the narrowest measure in the catalogue (a railed family's, ~300pt
+ * after the 160pt term column), because a note that wraps leaves the sheet's
+ * title block deeper than the drawing above it can spare.
+ */
+const FLOOR_PLAN_NOTE_CHARS = Math.max(...FLOOR_PLAN_NOTES.map((n) => n.definition.length));
+
+/** Where a floor plan comes from: `property.floorPlans[n]`, bound apart from the photographs. */
+function floorPlanSrc(index: number): string {
+  return `{{property.floorPlans.${index}}}`;
+}
+
+/** The sheet renders only where the plan does; see `plateConditional` for the three cases. */
+function floorPlanConditional(index: number): string {
+  return `property && property.floorPlans && property.floorPlans[${index}]`;
+}
+
+/**
+ * The property's floor plan, on a sheet of its own.
+ *
+ * ## Why a sheet of its own, and never a photo slot
+ *
+ * Every photo slot in the catalogue fills its frame (`fit: 'cover'`) and crops
+ * what does not fit, which is right for a facade and wrong for a plan: a
+ * cropped plan is a plan with a room missing and nothing on the page to say
+ * so. A plan is drawn with `contain`, whole, whatever its proportions, centred
+ * in the room between the heading and the title block.
+ *
+ * ## Why it reads as a drawing sheet, and why it has no border
+ *
+ * A plan is a drawing, and the convention a buyer already knows for a drawing
+ * is the sheet it arrives on: a heading, the drawing, and a title block at the
+ * foot saying what scale it is at, where it came from and what to check it
+ * against. The heading is the family's own section opener and the title
+ * block's rules are its own line colour, so the sheet reads as part of the
+ * document it is bound into, in every one of the fifty families.
+ *
+ * The first render drew a ruled border round the drawing area, and the owner's
+ * own plan (1,199 × 751, wider than the area) sat in it with a third of the
+ * box empty above and below: a border is drawn to the box, and a plan's
+ * proportions are not known until it arrives. Unbordered, the same space reads
+ * as margin, which is what it is.
+ *
+ * ## Why it is conditional on the page
+ *
+ * Most reports have no plan. As with `platePage`, the `conditional` is on the
+ * PAGE, so a report without one loses the page rather than printing an empty
+ * sheet, and `visiblePages` drops it before anything is laid out. The contents
+ * block lists the pages that rendered, so it lists this one exactly when it
+ * prints.
+ */
+export function floorPlanPage(opts: { index: number; footerText: string }): PageDef {
+  const c = ctx();
+  const first = opts.index === 0;
+  const heading = sectionHeading({
+    eyebrow: 'The design',
+    heading: first ? 'Floor plan' : 'Floor plan, continued',
+    standfirst: '{{property.address}}',
+    standfirstChars: FLOOR_PLAN_ADDRESS_CHARS,
+  });
+  const notes = definitions('', FLOOR_PLAN_NOTES, FLOOR_PLAN_NOTE_CHARS);
+
+  const top = c.margin;
+  const drawingTop = top + heading.height + c.spacing.sectionGap;
+  const notesTop = c.contentBottom - notes.height;
+  const drawingBottom = notesTop - c.spacing.sectionGap;
+  const asBlocks = (b: BlockDef | BlockDef[]): BlockDef[] => (Array.isArray(b) ? b : [b]);
+
+  const blocks: BlockDef[] = [
+    ...asBlocks(heading.block(top)),
+    block('image', {
+      src: floorPlanSrc(opts.index),
+      // Whole, never cropped: see the header.
+      fit: 'contain',
+      // Never a grey "No image" rectangle on a client's report.
+      placeholder: false,
+      alt: first ? 'Floor plan of the property' : 'Floor plan of the property, continued',
+      x: c.contentLeft,
+      y: drawingTop,
+      width: c.contentWidth,
+      height: drawingBottom - drawingTop,
+    }, 'Floor plan'),
+    ...asBlocks(notes.block(notesTop)),
+  ];
+  const sheet = withFurniture(page(first ? 'Floor plan' : 'Floor plan, continued', blocks, 'token:surface'), opts.footerText);
+  return { ...sheet, conditional: floorPlanConditional(opts.index) };
 }
 
 /**

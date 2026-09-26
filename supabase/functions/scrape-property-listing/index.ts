@@ -9,7 +9,9 @@ import {
 } from '../_shared/pageRead/pageReadRoute.pure.ts';
 import { contradictionMessage, corroborateAddress } from './addressCorroboration.pure.ts';
 import {
+  floorPlanCandidatesFromPage,
   photographCandidatesFromPage,
+  type PageFloorPlanCandidate,
   type PagePhotographCandidate,
 } from '../_shared/listingPagePhotographs.pure.ts';
 
@@ -18,8 +20,8 @@ import {
  *
  * `photographEvidence` is what the page says about its own photographs: its
  * markup as served, kept only long enough for `photographCandidatesFromPage`
- * to name the photographs the page attributes to its listing. The markup is
- * never stored.
+ * and `floorPlanCandidatesFromPage` to name the photographs and floor plans
+ * the page attributes to its listing. The markup is never stored.
  */
 type ScrapedPage = {
   markdown: string;
@@ -676,17 +678,27 @@ async function extractListingWithModel(url: string, propertyCategory = 'auto', u
   // the extraction: a page that says nothing, or says it in a shape no rule
   // reads, leaves the listing with none named and the job exactly as it was.
   let photographCandidates: PagePhotographCandidate[] = [];
+  // The listing's own floor plans, from the list the page's data calls its
+  // floor plans, on the same attribution. Kept apart from the photographs:
+  // they are filed and drawn apart, whole, because a photo slot crops.
+  let floorPlanCandidates: PageFloorPlanCandidate[] = [];
   if (scraped?.photographEvidence) {
+    const evidence = { pageUrl: url, rawHtml: scraped.photographEvidence.rawHtml ?? null };
     try {
-      photographCandidates = photographCandidatesFromPage({
-        pageUrl: url,
-        rawHtml: scraped.photographEvidence.rawHtml ?? null,
-      });
+      photographCandidates = photographCandidatesFromPage(evidence);
     } catch (e) {
       console.warn('[scrape-property-listing] listing photographs could not be read', e);
     }
+    try {
+      floorPlanCandidates = floorPlanCandidatesFromPage(evidence);
+    } catch (e) {
+      console.warn('[scrape-property-listing] listing floor plans could not be read', e);
+    }
     const origins = [...new Set(photographCandidates.map((c) => c.origin))].join('+') || 'none';
-    console.log(`[scrape-property-listing] listing photographs named: ${photographCandidates.length} (${origins})`);
+    console.log(
+      `[scrape-property-listing] listing photographs named: ${photographCandidates.length} (${origins}); ` +
+        `floor plans named: ${floorPlanCandidates.length}`,
+    );
   }
 
   const system = [
@@ -1046,6 +1058,7 @@ Return JSON only.`;
     routeUsed: result.routeUsed,
     schemaEnforced,
     photographCandidates,
+    floorPlanCandidates,
   };
 }
 
@@ -1138,14 +1151,18 @@ async function runScrapeJob(
       status: 'succeeded',
       // `photographs.candidates`: the listing's own photographs this page
       // attributes to it, for the report made from this job to keep
-      // (`listing-images`, `op: 'capture_report'`). URLs only; nothing is
-      // fetched until a report asks.
+      // (`listing-images`, `op: 'capture_report'`); `photographs.floorPlans`:
+      // its own floor plans, kept by the same capture and filed apart. URLs
+      // only; nothing is fetched until a report asks.
       result: {
         markdown,
         metadata,
         extractedDetails,
         sourceUrl: formattedUrl,
-        photographs: { candidates: result.photographCandidates ?? [] },
+        photographs: {
+          candidates: result.photographCandidates ?? [],
+          floorPlans: result.floorPlanCandidates ?? [],
+        },
       },
       completed_at: new Date().toISOString(),
     }).eq('id', jobId);

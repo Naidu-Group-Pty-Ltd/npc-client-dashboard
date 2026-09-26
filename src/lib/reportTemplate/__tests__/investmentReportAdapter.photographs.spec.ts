@@ -76,6 +76,26 @@ describe('the Investment adapter binds them where the masters look', () => {
     expect(property.bedrooms).toBe(4);
   });
 
+  it('binds the floor plans apart, as `property.floorPlans`, and never among the photographs', async () => {
+    const photographs = [{ url: 'https://project.supabase.co/storage/v1/object/sign/listing-images/a.jpg?token=t', width: 2048, height: 1365 }];
+    const floorPlans = [{ url: 'https://project.supabase.co/storage/v1/object/sign/listing-images/plans/p.png?token=t', width: 1199, height: 751 }];
+    inlineSpy.mockImplementation(async (...args: unknown[]) =>
+      (args[0] === floorPlans ? ['data:image/png;base64,PLAN'] : ['data:image/jpeg;base64,LEAD']));
+    invokeSecureFunction.mockResolvedValue({ data: { report: row, photographs, floorPlans }, error: null });
+    const ctx = await investmentReportAdapter.buildBindingContext({ reportId: 'report-p' });
+    const property = (ctx?.data as { property?: Record<string, unknown> }).property ?? {};
+    expect(property.images).toEqual(['data:image/jpeg;base64,LEAD']);
+    expect(property.floorPlans).toEqual(['data:image/png;base64,PLAN']);
+    expect(property.bedrooms).toBe(4);
+  });
+
+  it('a report with no floor plan binds none, and a broker that sends none changes nothing', async () => {
+    invokeSecureFunction.mockResolvedValue({ data: { report: row, photographs: [] }, error: null });
+    const ctx = await investmentReportAdapter.buildBindingContext({ reportId: 'report-p' });
+    const property = (ctx?.data as { property?: Record<string, unknown> }).property ?? {};
+    expect(property.floorPlans).toBeUndefined();
+  });
+
   it('photographs that could not be inlined leave the property exactly as it was', async () => {
     invokeSecureFunction.mockResolvedValue({
       data: { report: row, photographs: [{ url: 'https://project.supabase.co/storage/v1/object/sign/x.jpg' }] },

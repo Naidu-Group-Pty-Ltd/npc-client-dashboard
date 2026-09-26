@@ -148,7 +148,16 @@ describe('the broker reads them for one report, behind the report permission, an
 
   it('every failure is an empty list, never a failed report', () => {
     const fn = broker.slice(broker.indexOf('async function readReportPhotographs('), broker.indexOf('Deno.serve('));
-    expect(fn).toMatch(/catch \(error\) \{[\s\S]*return \[\];/);
+    // Each reader answers an empty reading from its catch — no photographs and
+    // no plans — so the report read it rides on carries on without them.
+    const reader = (name: string) => {
+      const start = fn.indexOf(`async function ${name}(`);
+      return fn.slice(start, fn.indexOf('\n}\n', start));
+    };
+    expect(reader('readListingPhotographs')).toMatch(
+      /const none: PhotographReading = \{ photographs: \[\], floorPlans: \[\] \};[\s\S]*catch \(error\) \{[\s\S]*return none;/,
+    );
+    expect(reader('readCapturedPhotographs')).toMatch(/catch \(error\) \{[\s\S]*return \{ photographs: \[\] \};/);
     expect(fn).not.toMatch(/return failure\(/);
   });
 });

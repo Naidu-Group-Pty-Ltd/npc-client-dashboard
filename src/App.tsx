@@ -17,6 +17,7 @@ import { PaymentGateProvider } from "@/hooks/usePaymentGate";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
+import { InternalToolingGuard } from '@/components/auth/InternalToolingGuard';
 import { NotOnThisDeployment } from "@/components/auth/ClientFacingGate";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { BackgroundJobTracker } from "./components/BackgroundJobTracker";
@@ -775,7 +776,7 @@ const App = () => (
                 <Route path="qa/digests" element={<MarketQADigests />} />
 
                 <Route path="integrations" element={<ModuleGuard moduleKey="integrations"><Integrations /></ModuleGuard>} />
-                <Route path="integrations/ghl-migration" element={<GhlMigration />} />
+                <Route path="integrations/ghl-migration" element={<InternalToolingGuard><GhlMigration /></InternalToolingGuard>} />
                 <Route path="workflow-playground" element={<ModuleGuard moduleKey="integrations"><WorkflowPlayground /></ModuleGuard>} />
                 <Route path="cloudflare" element={<ModuleGuard moduleKey="cloudflare"><CloudflareManagement /></ModuleGuard>} />
                 <Route path="api-usage" element={<ModuleGuard moduleKey="api_usage"><ApiUsage /></ModuleGuard>} />

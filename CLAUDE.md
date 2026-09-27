@@ -2780,7 +2780,8 @@ go missing. The **Australian Capital Territory** did: its zone IS read, so it
 never looked unserved, while its overlay registers have no branch at all, so
 the page fell through to the generic sentence naming neither the territory nor
 the remedy. `OVERLAY_COVERAGE` declares all eight (`state_layers_read` for
-NSW/VIC/TAS, `partial` for QLD and WA, `not_read` for SA/NT/ACT) and the invariant
+NSW/VIC/TAS, `partial` for QLD, WA and — since its bushfire prone area is read —
+the ACT, `not_read` for SA/NT) and the invariant
 is asserted both ways — anything not read in full owes a note, and anything
 read in full must not carry one, because a false limitation teaches a reader to
 discount the true ones. It **decides something**: `overlayCoverage` rides
@@ -2814,6 +2815,31 @@ but a cached `c5` row at a South Australian coordinate withholds the zone the
 layer now answers — the shape did not widen, its content did. Whether the
 PRODUCTION egress reaches `dpti.geohub.sa.gov.au` is unmeasured until the first
 South Australian report after deploy; CI reached it.
+
+**Bushfire and flood read the hazard MAPS, and a map's silence is a finding
+only where the map is the designation.** Read §16 of
+[`PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `_shared/planning/hazardReadings.pure.ts`, `HAZARD_DESIGNATION`,
+the `Mapped`/`Not mapped` words in `RISK_EXPOSURE_LEVELS` or `climateStatBlocks`.
+The 37 Bolin Street suite printed both hazards "Not assessed" beside a
+planning register that had asked the NSW hazard maps at the lot and been told
+nothing was mapped. The Environment section read only `risk-assessment-service`,
+which is called without a coordinate and answers `Unknown` by construction.
+Three rules bite.
+
+- **A statewide statutory designation that shows nothing over a lot says the
+  lot is not designated** ("Not mapped", Verified). Measured from CI, that
+  holds for NSW's RFS-certified Bush Fire Prone Land, WA's OBRM-026, and — now
+  read — Victoria's gazetted bushfire prone area and the ACT's 2026 one.
+- **A partial map says nothing where it did not reach.** NSW's flood planning
+  map carries ten councils, so its silence stays "Not assessed", with the
+  reason in words.
+- **The designation counts only where ITS register answered.** Victoria's BMO
+  asks "bushfire" too, and its silence is not the gazetted map's.
+
+The Victorian axis order was settled against known points in three spellings,
+because a wrong axis reads "not designated" everywhere. `PLANNING_ANSWER_VERSION`
+is `c9`.
 
 **Every state has a reading now, and two of them come through the
 archive** (§10 of the same doc). Victoria's suburb series and South

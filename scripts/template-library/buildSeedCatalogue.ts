@@ -614,17 +614,80 @@ const REPO = resolve(__dirname, '../..');
  * `20261223100000` re-copies the ACTIVE masters from it, by the v15
  * mechanism, unchanged. Run the same one-query check before editing this
  * file: if `20261223090000` is already recorded, the next change needs a v23.
+ *
+ * ## v23 — the cover's tagline is the issuer's, never a literal
+ *
+ * v22 IS recorded: apply-migration runs #110 and #112 applied it and its
+ * refresh on 26 Sep 2026. So this change is a **v23**, and v22's file is not
+ * touched.
+ *
+ * Every one of the 500 family masters set the line under the cover's
+ * wordmark as a literal, "Your dedicated property partner" — the house's own
+ * tagline — so every clone's templated cover carried the house's words under
+ * the clone's name. The owner's rule (26 Sep 2026) is that the house's
+ * identity is a legacy the prime keeps and a clone never sees. The masters
+ * now bind `{{org.tagline}}`, which `organisationProjection.pure.ts`
+ * publishes on the prime alone, with exactly the words the literal carried:
+ * the prime's covers print what they always printed, and a clone's cover
+ * draws no tagline, because a bound text block that resolves to nothing is
+ * not drawn.
+ *
+ * ## What the release is, measured rather than claimed
+ *
+ * Parsed out of the v22 and v23 files and compared row by row, 543 in each:
+ *
+ *   * **500 of 543 differ**: every family master, all ten formats. The 43
+ *     voice templates are byte-identical.
+ *   * In each of the 500 **exactly one block changes**, in `schema` and in
+ *     `preview_schema` alike: the cover's "Tagline" text block, whose `body`
+ *     goes from the literal to `{{org.tagline}}`. Every other page and block,
+ *     their order and their ids are unchanged.
+ *   * Outside those two, one column changes: `required_bindings` gains
+ *     `org.tagline` on all 500.
+ *
+ * `20261225100000` re-copies the ACTIVE masters from it, by the v15
+ * mechanism, unchanged. Run the same one-query check before editing this
+ * file: if `20261225090000` is already recorded, the next change needs a v24.
+ *
+ * ## v24 — the cover photograph is shown whole
+ *
+ * v23 IS recorded (listed on the production ledger 27 Sep 2026, beside its
+ * refresh `20261225100000`), so this change is a **v24** and v23's file is not
+ * touched.
+ *
+ * The owner's report of 27 Sep 2026: the one photograph attached to 37 Bolin
+ * Street was "cut halfway" on the Compass cover. The field and band families
+ * drew the lead photograph as a full-bleed `cover` fill, which crops whatever
+ * does not share the ground's aspect ratio — a landscape listing photograph on
+ * a portrait field loses both sides. `coverPlates` now gives every field and
+ * band master one or more PLATES: a `contain` image block, the photograph
+ * shown whole, in the clear space the cover's own text leaves, each drawn only
+ * where the address is short enough for the title to leave that space
+ * (`plateChoice`). The old full-bleed layer stays as the fallback, drawn only
+ * where the address is longer than any plate allows. Paper covers are
+ * unchanged. A plate is a `layer`, so `closeDroppedBlocks` never lifts the
+ * title into a dropped plate's space. Measured: 34 masters draw a plate, and
+ * 694 covers across five address wordings each set with no collision
+ * (`npm run templates:compass:cover-qa`).
+ *
+ * Parsed out of the v23 and v24 files and compared row by row, 543 in each:
+ * **34 of 543 differ**, every one an Investment Compass master — the field
+ * and band covers that draw a plate. The other 509 are byte-identical.
+ *
+ * `20261227100000` re-copies the ACTIVE masters from it, by the v15
+ * mechanism, unchanged. Run the same one-query check before editing this
+ * file: if `20261227090000` is already recorded, the next change needs a v25.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261223090000_seed_template_library_v22_floor_plan';
+const RELEASE_ID = '20261227090000_seed_template_library_v24_whole_cover_photograph';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261223090000_seed_template_library_v22_floor_plan.sql',
+  'supabase/migrations/20261227090000_seed_template_library_v24_whole_cover_photograph.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

@@ -18,10 +18,16 @@ import {
   saveTemplateDocument,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
+import { isTemplateDeliveryHeld } from '../../supabase/functions/_shared/reports/templateParity.pure.ts';
 
 /**
- * The refresh action bypasses the template path by design; a person who chose
+ * The refresh action bypasses a template's PAGES by design; a person who chose
  * a template hears that, once, at the moment it happens.
+ *
+ * Only where there are pages to bypass. While this report type is held
+ * (`templateParity.pure.ts`) the refresh goes to the report's own route, which
+ * draws the chosen template's design exactly as every other render does
+ * (`standardDesign.ts`) — nothing is bypassed, so nothing is said.
  */
 async function notifySelectionBypassedForRefresh(): Promise<void> {
   try {
@@ -103,7 +109,7 @@ export function useCapacityReport(options: UseCapacityReportOptions = {}): UseCa
       // analysis would be answering a different question. A person who chose a
       // template is told so rather than left to notice the layout: the refresh
       // is the one action on this format that bypasses the choice by design.
-      if (options?.refreshAnalysis === true) {
+      if (options?.refreshAnalysis === true && !isTemplateDeliveryHeld('commercial_capacity')) {
         void notifySelectionBypassedForRefresh();
       }
       const templated = options?.refreshAnalysis === true

@@ -62,6 +62,7 @@ import { formatMeasure } from '../_shared/reportDesign/measure.pure.ts';
 
 import { buildCapacitySnapshot } from '../_shared/reports/commercialCapacity/normalise.pure.ts';
 import { renderCapacityFromBrand } from '../_shared/reports/commercialCapacity/render.pure.ts';
+import { resolveRequestedDesign } from '../_shared/reports/templateDesignRead.ts';
 import {
   ANALYSIS_SYSTEM_PROMPT,
   ANALYSIS_TOOL_SCHEMA,
@@ -654,6 +655,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // the pixels; reaching for it here is the defect this format avoids.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // The design the caller chose, if any. The words, figures and pages are
+    // the report's own whatever it names; a design that cannot be honoured is
+    // answered with the standard one and a sentence saying why, never with a
+    // failed document (`templateDesignRead.ts`).
+    const { design, echo: designEcho } = await resolveRequestedDesign(supabase, {
+      reference: request.design,
+      reportType: 'commercial_capacity',
+      actor: { userId, authMethod: auth.authMethod },
+      route: 'render-commercial-capacity-pdf',
+    });
+
     const { html, gaps } = renderCapacityFromBrand({
       payload,
       snapshot,
@@ -661,6 +673,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: String(assessment.reference ?? '').slice(0, 40) || null,
+      design,
     });
     learned.brand_gaps = gaps;
 
@@ -737,6 +750,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       hasAnalysis: Boolean(analysis),
       analysisNote,
       durationMs,
+      design: designEcho,
     };
     return json(response, 200, corsHeaders);
   } catch (e) {

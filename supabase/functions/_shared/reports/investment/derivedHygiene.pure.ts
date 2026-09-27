@@ -19,7 +19,7 @@
  *    declares; anything else the model volunteered is dropped and named.
  */
 
-import { dedupeDimensionBasisLists, dedupePropertyFactTables } from './propertyFactTables.pure.ts';
+import { dedupeDimensionBasisLists, dedupeIdenticalTables, dedupePropertyFactTables } from './propertyFactTables.pure.ts';
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
 import { tabulateMixedUnitCharts } from './chartUnits.pure.ts';
@@ -584,8 +584,11 @@ export function foldConstantTableColumns(markdown: string): ConstantColumnResult
     for (const row of body) out.push(`| ${keep(row).join(' | ')} |`);
     // The value, once, under the table it came out of. A run-in label, which
     // `limitEmphasis` keeps, because it is a heading sharing a line.
-    out.push('');
+    // Each note is its own paragraph: two on consecutive lines are one
+    // paragraph in Markdown, and printed as "Type: … Date recorded: …" run
+    // together on the 37 Bolin Street Compass (27 Sep 2026).
     for (const n of notes) {
+      out.push('');
       out.push(n.header ? `**${n.header}:** ${n.value}` : n.value);
     }
     tableIndex += 1;
@@ -951,7 +954,12 @@ export function presentStoredMarkdown(
    * See `propertyFactTables.pure.ts`.
    */
   const facts = dedupePropertyFactTables(registeredOnce);
-  const factsOnce = facts.replaced.length ? facts.markdown : registeredOnce;
+  const factsStated = facts.replaced.length ? facts.markdown : registeredOnce;
+  // And any other table the writer reproduced word for word — the population
+  // projection block, pinned into every section call, was the case that found
+  // it. Identity only; a table that merely looks alike is a different fact.
+  const identical = dedupeIdenticalTables(factsStated);
+  const factsOnce = identical.replaced.length ? identical.markdown : factsStated;
   // And the grade's per-dimension basis, which the Financial report printed
   // twice with a different number of dimensions in each copy.
   const printedOnce = dedupeDimensionBasisLists(factsOnce);

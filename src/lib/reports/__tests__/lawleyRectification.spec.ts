@@ -390,6 +390,9 @@ describe('the exit outlook describes only what it draws (page 19 introduced a pr
     const exit = composeExitOutlook(lawleyStrategy(), 'Resale Liquidity & Exit Outlook');
     expect(exit).not.toContain('What the position looks like at a future year');
     expect(exit).toContain('None of the sources checked for this report holds days on market, time to sell or buyer depth');
+    // One thing was introduced, so it is not "neither".
+    expect(exit).toContain('It does not answer *how easily this sells*');
+    expect(exit).not.toContain('Neither answers');
   });
 });
 
@@ -746,7 +749,7 @@ describe('the generator pins the evidence it used to trim away, and moves the sy
   it('pins the attributes on record, so a searched room count is never "the supplied property records" (pp.3-4)', () => {
     // One composition, drawn in the base prompt and in the pin.
     expect(generator).toContain('const recordedAttributesBlock = `| Property Characteristic | Value |');
-    expect(generator).toContain("'# The property — every physical attribute on record',\n      recordedAttributesBlock,");
+    expect(generator).toContain("pinGroup('attributes', '# The property — every physical attribute on record'),\n      recordedAttributesBlock,");
     expect(generator).toContain('${recordedAttributesBlock}');
     // The prohibition keeps its permitted form beside it.
     expect(generator).toContain('An attribute you find in a listing or any other search is not a record');
@@ -898,7 +901,8 @@ describe('Western Australia\'s bush fire prone areas are read (the page said "Bu
     expect(service).toContain("} else if (jurisdiction === 'WA') {");
     expect(service).toContain('buildWaBushfireIdentify(lng, lat)');
     expect(service).toContain("valueAttribute: 'Designation'");
-    expect(PLANNING_ANSWER_VERSION).toBe('c8');
+    // At least the version WA's register shipped in; later registers move it on.
+    expect(Number(PLANNING_ANSWER_VERSION.slice(1))).toBeGreaterThanOrEqual(7);
   });
 
   it('coverage says what is read and what is still not, in one sentence per jurisdiction', () => {

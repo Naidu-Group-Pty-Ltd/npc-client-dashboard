@@ -58,6 +58,11 @@ const RECORDED: ReadonlyArray<{ file: string; text: string; reason: string }> = 
     reason: 'GHL incident tooling, mounted only inside InternalToolingGuard, which renders nothing of it on a clone',
   },
   {
+    file: 'src/lib/ciAssessment/intakePack/packPresentation.ts',
+    text: 'Naidu Property Consulting Services',
+    reason: "the name the approved intake pack files carry, which a clone's copy replaces; it is what is searched for, never what a clone is shown",
+  },
+  {
     file: 'src/lib/ciAssessment/intakePack/workbook.ts',
     text: 'NPC-CI-INTAKE-PACK',
     reason: 'a machine marker parseWorkbook reads back; renaming it would refuse every intake pack already issued',

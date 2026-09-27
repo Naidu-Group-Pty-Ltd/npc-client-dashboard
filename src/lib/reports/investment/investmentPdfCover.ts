@@ -41,7 +41,7 @@ import { resolveBrandFamily, type BrandFamily } from '@/lib/reportDesign/brandFa
 import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 import {
   containFit,
-  coverFit,
+  coverPhotographPlacement,
   drawTracked,
   fitCoverAddress,
   winAnsiTypographic,
@@ -129,15 +129,26 @@ export interface IssuerCoverLayout {
 export function issuerCoverLayout(input: {
   mark: { width: number; height: number } | null;
   name: { lines: number; size: number };
+  /**
+   * The name face's cap height as a fraction of its size — Times unless a
+   * design sets the name in another face (`legacyIssuerCover.ts`).
+   */
+  nameCap?: number;
+  /**
+   * Where the lockup is centred, from the top. The whole upper field unless a
+   * design puts the lockup in a band across the head of the sheet.
+   */
+  lockupZone?: { top: number; bottom: number };
 }): IssuerCoverLayout {
   const { width: W, height: H } = ISSUER_COVER_SIZE;
   const fromTop = (d: number) => H - d;
-  const cap = input.name.size * TIMES_CAP;
+  const cap = input.name.size * (input.nameCap ?? TIMES_CAP);
   const pitch = input.name.size * NAME_PITCH;
   const markBlock = input.mark ? input.mark.height + MARK_GAP : 0;
   const groupHeight = markBlock + cap + (input.name.lines - 1) * pitch
     + RULE_GAP + TITLE_GAP + TITLE_SIZE * HELVETICA_CAP;
-  const groupTop = (LOCKUP_ZONE.top + LOCKUP_ZONE.bottom) / 2 - groupHeight / 2;
+  const zone = input.lockupZone ?? LOCKUP_ZONE;
+  const groupTop = (zone.top + zone.bottom) / 2 - groupHeight / 2;
 
   const mark = input.mark
     ? {
@@ -249,7 +260,7 @@ export async function drawIssuerCover(pdfDoc: PDFDocument, input: IssuerCoverInp
 
   const photo = await embedPhotograph(pdfDoc, input.photograph);
   if (photo) {
-    const placed = coverFit({ width: photo.width, height: photo.height }, layout.band);
+    const placed = coverPhotographPlacement({ width: photo.width, height: photo.height }, layout.band);
     page.pushOperators(
       pushGraphicsState(),
       rectangle(layout.band.x, layout.band.y, layout.band.width, layout.band.height),

@@ -32,6 +32,7 @@ const deployment = vi.hoisted(() => ({ prime: true }));
 vi.mock('../primeDeployment', () => ({ isPrimeDeployment: () => deployment.prime }));
 
 import { houseLabel } from '../houseLabel';
+import { isPrimeOnlyPath } from '../../../scripts/lib/primeOnlyFeatures.mjs';
 
 const ROOT = resolve(__dirname, '../../..');
 const SRC = join(ROOT, 'src');
@@ -47,16 +48,6 @@ const NEVER_ON_A_CLONE = /\bNPC\b|Naidu|npcservices|Property Consulting|Aurixa/i
  * literal's exact text so a NEW literal in one of these files is still caught.
  */
 const RECORDED: ReadonlyArray<{ file: string; text: string; reason: string }> = [
-  {
-    file: 'src/components/admin/GhlMarketingRawDump.tsx',
-    text: 'scale.npcservices.com.au',
-    reason: 'GHL incident tooling, mounted only inside InternalToolingGuard, which renders nothing of it on a clone',
-  },
-  {
-    file: 'src/components/admin/GhlMarketingRawDump.tsx',
-    text: 'Funnel published domain (e.g. npcservices.com.au)',
-    reason: 'GHL incident tooling, mounted only inside InternalToolingGuard, which renders nothing of it on a clone',
-  },
   {
     file: 'src/lib/ciAssessment/intakePack/packPresentation.ts',
     text: 'Naidu Property Consulting Services',
@@ -154,6 +145,10 @@ const scan = (() => {
 
   for (const path of shippedSources(SRC)) {
     const file = relative(ROOT, path).split('\\').join('/');
+    // What the prime keeps for itself (scripts/lib/primeOnlyFeatures.mjs) is
+    // never carried to a clone, so nothing in it can name the house to one.
+    // Its words are the house's own, on the one deployment that is the house.
+    if (isPrimeOnlyPath(file)) continue;
     const text = readFileSync(path, 'utf8');
     if (!HOUSE.test(text) && !text.includes('houseLabel(')) continue;
     const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /x$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);

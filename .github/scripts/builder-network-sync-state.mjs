@@ -28,9 +28,17 @@
  *
  *   node .github/scripts/builder-network-sync-state.mjs
  *
- * Needs SUPABASE_ACCESS_TOKEN; PROJECT_REF defaults to this project.
+ * Needs SUPABASE_ACCESS_TOKEN. The project is PROJECT_REF, else the one this
+ * checkout's own supabase/config.toml names (`scripts/lib/projectRef.mjs`).
+ * Never a literal: this file is on every clone's repository too.
  */
-const REF = process.env.PROJECT_REF || 'dduzbchuswwbefdunfct';
+import { projectRef } from '../../scripts/lib/projectRef.mjs';
+
+const REF = projectRef(process.env);
+if (!REF) {
+  console.error('::error::No Supabase project: set PROJECT_REF, or name one as project_id in supabase/config.toml.');
+  process.exit(1);
+}
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN || '';
 if (!TOKEN) {
   console.error('::error::SUPABASE_ACCESS_TOKEN is not set — nothing can be read.');

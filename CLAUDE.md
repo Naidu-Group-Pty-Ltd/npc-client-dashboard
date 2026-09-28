@@ -2918,6 +2918,30 @@ index, because it carried what survived attribution rather than what was
 searched. Nothing is loaded, no migration is requested, and a source scan
 asserts the probe names no table, client or credential.
 
+## Property Risk scores from a condition record (28 Sep 2026)
+Read §0 of [`RISK_METHOD_RECOMMENDATION.md`](./docs/reports/RISK_METHOD_RECOMMENDATION.md)
+before touching `conditionRecord*.ts`, `riskEvidenceConnection.pure.ts`,
+`CONVERSIONS`, `CONDITION_METHOD_ACTIVATION`, the `planning`/`condition` inputs
+of `scoreForProduction`, the condition ops on `manage-investment-reports` or
+`ConditionEvidencePanel`. Risk needs observations in two independent
+categories. The planning registers answer the SITE category on every
+generation (`siteConstraintSeverity`). Only a condition document can answer the
+BUILDING category, and it is recorded on the report page. The owner approved
+both conversions on 28 Sep 2026. Three rules bite.
+
+- **Either category alone scores nothing.** Absent a record, Risk is excluded
+  exactly as before, and a stored grade is never re-graded: a record moves the
+  grade on the next generation only.
+- **A held document is checked against the store, never taken on the caller's
+  word.** The upload is only ever a path issued for THIS report
+  (`isConditionDocumentPathFor`), in the private `listing-images` bucket under
+  `condition-documents/`. That folder is deliberately not one of
+  `reportStorageFolders`, because evidence about a property outlives the report
+  it was filed against. A transcription is evidence and never an observation.
+- **The panel and the grade choose the same record.** Both call
+  `bestReadingForSubject`, and the subject is read from the report row, never
+  from the request.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

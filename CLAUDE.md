@@ -4433,6 +4433,22 @@ is the one whose page budget is fitted block by block against real renders rathe
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
 
+## The Intelligence Hub exports an Intelligence Hub Summary
+Read §13 of [`QA.md`](./docs/reports/QA.md) before touching
+`MessageReportEditor`, `ConversationReportEditor`, `ChooseTemplateButton` or
+`_shared/reports/reportQa/documentIdentity.pure.ts`. The owner chose a template
+and received the legacy layout, because the dialog had two PDF buttons and only
+"Typeset PDF" read the choice. Three rules bite.
+
+- **The choice and the act are separate controls.** "Choose template" only
+  chooses. Export PDF is the typeset route in that choice, after the edits are
+  stored, and a failed store stops the export.
+- **One name, and the topic.** Every Hub download is an "Intelligence Hub
+  Summary". It is titled and named by what it covers: the answer's own heading,
+  else the conversation's title, else the question.
+- **An answer is a memo.** Its sections run on rather than each opening a page,
+  and its title is on the cover once, not also as the first section.
+
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission
 agreement. Read [`docs/agreements/TEMPLATES_ONLY.md`](./docs/agreements/TEMPLATES_ONLY.md)

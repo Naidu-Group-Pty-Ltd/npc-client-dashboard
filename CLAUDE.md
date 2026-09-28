@@ -4449,6 +4449,22 @@ and received the legacy layout, because the dialog had two PDF buttons and only
 - **An answer is a memo.** Its sections run on rather than each opening a page,
   and its title is on the cover once, not also as the first section.
 
+## Both comparisons export like the Hub
+Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
+touching `ComparisonDownloadButton`, the comparison surfaces in
+`CashFlowAnalysisModal`, `ChooseTemplateButton` or
+`_shared/reports/readableFileName.pure.ts`. Three rules bite.
+
+- **"Choose template" sits beside Export PDF.** The Cash Flow Comparison
+  borrows the Cash Flow's choice, and its button says so.
+- **A filename is readable, and a storage key is not the filename.** A file is
+  named `<Document> - <topic> - 28 Sep 2026.pdf`, where the topic is what the
+  document covers: the properties compared, or an answer's heading. The key is
+  `storageSafeFileName` of it.
+- **A memo runs on** (`RUN_ON_CHAPTER_CLASS`), and a comparison's short tables
+  are kept whole.
+
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission
 agreement. Read [`docs/agreements/TEMPLATES_ONLY.md`](./docs/agreements/TEMPLATES_ONLY.md)

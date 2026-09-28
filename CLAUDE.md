@@ -3679,6 +3679,24 @@ legitimate input — and are DERIVED from the declared budget, not measured
 against the corpus, because one 91,340-character observation is not a
 distribution.
 
+## The Borrowing Capacity Snapshot shows its working
+Read §16 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `buildLedger`, `basis.pure.ts`, `advice.pure.ts`, `incomeLabel`
+or the Snapshot's sections. Two production Snapshots were read page by page on
+28 Sep 2026. On one, the working did not reach its own surplus. On the other,
+$0, 0.0x and "pay down your debts" were printed to a client with no income and
+no debt. Three rules bite.
+
+- **The working foots.** Tax and negative property cash flow are the lines
+  that were missing. After-tax income is read from the engine's own string and
+  never recomputed. A record that cannot foot states its figures and does not
+  pretend they add up.
+- **No income is said, not assessed.** DTI and stress are null. A ratio over
+  zero income is undefined, not 0.0x.
+- **The engine's words are translated on the way out.** Every string it pushes
+  has a wording, and a test reads its source for new ones. Advice the record
+  contradicts is dropped. The engine's own strings and rules are unchanged.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

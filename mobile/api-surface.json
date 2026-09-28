@@ -5,9 +5,9 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 239,
+    "staff": 232,
     "public": 37,
-    "server-only": 79,
+    "server-only": 58,
     "portal": 59
   },
   "functions": [
@@ -313,12 +313,6 @@
     },
     {
       "name": "backfill-notes-to-ghl",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "backfill-opportunity-mappings",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
       "verify_jwt": false
@@ -1134,12 +1128,6 @@
       "verify_jwt": false
     },
     {
-      "name": "ghl-account-preview",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
       "name": "ghl-calendar",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
@@ -1164,135 +1152,9 @@
       "verify_jwt": false
     },
     {
-      "name": "ghl-legacy-backfill-gaps",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-legacy-wipe-orchestrator",
-      "exposure_class": "internal-service",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-legacy-wipe-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-marketing-dump-enqueue",
-      "exposure_class": "internal-service",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-marketing-dump-export",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-marketing-dump-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-marketing-raw-dump",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-bookings-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-calendar-groups-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-calendars-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-contacts-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-conversations-replay-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-conversations-reset-phantoms",
-      "exposure_class": "internal-service",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-conversations-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-notes-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-opportunities-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-workflow-enrollments-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-workflow-reenroll-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-migrate-workflows-snapshot-worker",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-test-credentials",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
       "name": "ghl-webhook-receiver",
       "exposure_class": "webhook-secret",
       "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "ghl-workflow-visualizer",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
       "verify_jwt": false
     },
     {
@@ -1708,36 +1570,6 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": true
-    },
-    {
-      "name": "migration-dispatcher",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "migration-job-control",
-      "exposure_class": "internal-service",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "migration-job-status",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
-      "name": "migration-orchestrator",
-      "exposure_class": "internal-service",
-      "mobileScope": "server-only",
-      "verify_jwt": false
-    },
-    {
-      "name": "migration-upload-source",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
     },
     {
       "name": "mission-control-announcements",

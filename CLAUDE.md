@@ -3761,6 +3761,21 @@ chat used to draw one spinning circle. Three rules bite.
   the model is weighing.
 - **Either end may be older**, and the stage never moves backwards.
 
+## The Calculator's living costs, and the advisor's DTI cap
+Read §20 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `_shared/borrowingCapacityExpenseMethod.pure.ts`,
+`_shared/advisorDtiOverride.pure.ts`, `rationaleReadingNote`, the advisor's
+options in `composeAdvisorSection`, or `src/lib/pdf/standardFontText.ts`.
+Three rules bite.
+
+- **Only a recorded expense-method choice is restored.** The column read
+  'declared' on every saved assessment, and restoring it assessed a client with
+  no declared expenses at $0 a month.
+- **The advisor may relax a DTI cap, never impose one.** A tightening proposal
+  is withheld before the engine measures it, and the card says why.
+- **jsPDF's built-in font prints WinAnsi only.** An arrow printed as `!’` on
+  every lever label.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

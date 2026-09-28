@@ -3,7 +3,9 @@
  *
  * On 28 Sep 2026 the advisor showed the broker's question and nothing else:
  * its request went to the app's own host, which answered with HTML and a 200,
- * and the stream reader found nothing in it and said nothing about that.
+ * and the stream reader found nothing in it and said nothing about that. Once
+ * the address was fixed, the function refused it 401 for want of the session
+ * cookie (`openSecureStream` now carries it).
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -34,9 +36,16 @@ describe('what the reader accepts as an answer', () => {
 });
 
 describe('the advisor', () => {
-  it('addresses the function through the one module that resolves the project', () => {
-    expect(AGENT).toContain("import { SUPABASE_URL } from '@/integrations/supabase/env';");
-    expect(AGENT).toContain('`${SUPABASE_URL}/functions/v1/bc-scenario-agent`');
+  // The address fix let the request reach the function, which then answered
+  // 401 to both of the owner's attempts: it was sent without the session
+  // cookie. The advisor now opens its stream through the one secure transport,
+  // which resolves the project URL and sends the cookie.
+  it('opens its stream through the one secure transport, never a fetch of its own', () => {
+    expect(AGENT).toContain("import { openSecureStream } from '@/lib/streamSecureFunction';");
+    expect(AGENT).toContain("await openSecureStream('bc-scenario-agent', {");
+    expect(AGENT).not.toMatch(/\bfetch\(/);
+    expect(AGENT).not.toContain("credentials: 'omit'");
+    expect(AGENT).not.toContain('import.meta.env');
   });
 
   it('checks what came back before reading it, and refuses an empty turn', () => {

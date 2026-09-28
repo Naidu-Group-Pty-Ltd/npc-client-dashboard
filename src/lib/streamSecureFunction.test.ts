@@ -15,7 +15,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { streamSecureFunction } from './streamSecureFunction';
+import { openSecureStream, streamSecureFunction } from './streamSecureFunction';
 
 const ANON_PREFIX = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
 
@@ -135,5 +135,41 @@ describe('streamSecureFunction auth', () => {
 
     await expect(drain('ai-dashboard-agent', {})).rejects.toThrow(/500 upstream exploded/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('openSecureStream — the transport a caller with its own reader uses', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  // The Strategy Advisor reads OpenAI-style deltas, so it opens the stream and
+  // reads it itself. It used to open its own fetch with `credentials: 'omit'`,
+  // and every request it sent was refused 401 for want of the session cookie.
+  it('sends the session cookie with the Bearer, and hands back the stream unread', async () => {
+    sessionStorage.setItem('supabase_access_token', 'held-token');
+    const fetchMock = vi.fn().mockResolvedValueOnce(sseResponse('data: {"choices":[]}\n\n'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await openSecureStream('bc-scenario-agent', { messages: [] });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/functions/v1/bc-scenario-agent');
+    expect(init.credentials).toBe('include');
+    expect(bearerOf(fetchMock.mock.calls[0])).toBe('Bearer held-token');
+    expect(await res.text()).toBe('data: {"choices":[]}\n\n');
+  });
+
+  it("names the function's own refusal where it is not about the session", async () => {
+    sessionStorage.setItem('supabase_access_token', 'held-token');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'Borrowing Capacity is not included in this workspace plan.' }), { status: 402 }),
+    ));
+
+    await expect(openSecureStream('bc-scenario-agent', {})).rejects.toThrow(
+      'Borrowing Capacity is not included in this workspace plan.',
+    );
   });
 });

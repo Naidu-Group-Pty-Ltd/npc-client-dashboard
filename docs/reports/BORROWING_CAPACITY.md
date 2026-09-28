@@ -1121,3 +1121,51 @@ three cases.
   it was typed into the record, most likely a transcription of "PAYG". It is
   data, and the document prints it as recorded; the remedy is to correct the
   income source.
+
+## 17. The Strategy Rationale Brief, typeset in the chosen template (28 Sep 2026)
+
+The What-If tab's **Download PDF** (Borrowing Capacity → What-If → Strategy
+Rationale) drew the brief in the browser with jsPDF
+(`StrategyRationalePDF.ts`). A chosen template could reach it only as a
+palette (`drawnDesignFor('strategy_rationale')`). The owner's instruction for
+moving it was exact: the content "is predominantly just a transition of that
+information into the new template structure". Nothing is added and nothing is
+reworded.
+
+- **One statement of what the brief prints.** `strategyRationale.pure.ts` turns
+  the engine's report and the panel's context into the strings the jsPDF brief
+  prints, string for string: the KPI boxes and their feet, the section titles
+  with their counts, the empty-scenario lines, the severity and capacity
+  labels, "Cash-flow:", the capital flow, the valuation lines and the
+  cross-collateral method. It runs in the browser, because the scenario is
+  being modelled there and is stored nowhere. `strategyRationale.spec.ts` reads
+  the generator's source for its literals, and reproduces the Samuel Lavis
+  baseline brief of 28 Sep 2026 line for line.
+- **The route is the Snapshot's.** `render-borrowing-capacity-pdf` draws a
+  second document when asked (`document: 'strategy_rationale'`):
+  - The brief's words arrive in the request. `readStrategyRationale` keeps only
+    the composer's shape, bounds every string, and refuses a brief with no
+    headline.
+  - Everything else is the Snapshot's: the same auth and client check, the
+    client's name read from the record, the same brand snapshot, the design
+    chosen for Borrowing Capacity, the same bucket and the same ledger. The
+    ledger row carries no assessment, and the brief's file name tells the two
+    apart.
+  - A body naming no document is the Snapshot, exactly as before. A document
+    the route does not draw is refused.
+- **It is one memo.** The brief is a single chapter whose parts are subheads,
+  each kept with its opening block. Drawn as chapters, a baseline scenario put
+  "No levers applied" under a 30pt heading and ran a page longer than the jsPDF
+  brief. Measured in WeasyPrint over the standard design and all 50 catalogue
+  designs, with no overflow and no stub page:
+  - the baseline brief is 3 pages in every design;
+  - a four-lever brief with capital flow, a valuation and a pool is 5 or 6.
+- **The echo is required.** The route answers `document`, and the browser
+  saves the typeset file only when it says `strategy_rationale`: a deployment
+  older than this ignores the field and draws a Snapshot. Either that answer or
+  an absent route falls back to the jsPDF brief, and the person is told.
+- **Both layouts stay.** "Download PDF" is the typeset brief. The caret beside
+  it offers "Download (legacy layout)", and "Choose template" sets the
+  Borrowing Capacity choice the brief is drawn in. The file keeps its name,
+  `Strategy_Rationale_<Name>_<yyyy-MM-dd>.pdf`, dated in the adviser's own time
+  zone, as is the "Generated" line.

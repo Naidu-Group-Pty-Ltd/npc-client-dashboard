@@ -3679,6 +3679,40 @@ legitimate input — and are DERIVED from the declared budget, not measured
 against the corpus, because one 91,340-character observation is not a
 distribution.
 
+## The Borrowing Capacity Snapshot shows its working
+Read §16 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `buildLedger`, `basis.pure.ts`, `advice.pure.ts`, `incomeLabel`
+or the Snapshot's sections. Two production Snapshots were read page by page on
+28 Sep 2026. On one, the working did not reach its own surplus. On the other,
+$0, 0.0x and "pay down your debts" were printed to a client with no income and
+no debt. Three rules bite.
+
+- **The working foots.** Tax and negative property cash flow are the lines
+  that were missing. After-tax income is read from the engine's own string and
+  never recomputed. A record that cannot foot states its figures and does not
+  pretend they add up.
+- **No income is said, not assessed.** DTI and stress are null. A ratio over
+  zero income is undefined, not 0.0x.
+- **The engine's words are translated on the way out.** Every string it pushes
+  has a wording, and a test reads its source for new ones. Advice the record
+  contradicts is dropped. The engine's own strings and rules are unchanged.
+
+## The Strategy Rationale Brief is the Snapshot route's second document
+Read §17 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `strategyRationale*.pure.ts`, `deliverStrategyRationale.ts` or
+the `document` field on `render-borrowing-capacity-pdf`. The What-If brief is
+typeset in the template chosen for Borrowing Capacity. Its words are the jsPDF
+brief's, unchanged. Three rules bite.
+
+- **The words are composed once, in the browser.** The scenario is stored
+  nowhere, so the server reads the brief back against the composer's shape and
+  draws it; it recomputes nothing. A test holds the composer to the jsPDF
+  generator's literals.
+- **No `document` means the Snapshot.** An unknown one is refused.
+- **The browser requires the echo.** An older deployment draws a Snapshot, so
+  without `document: 'strategy_rationale'` in the answer the brief falls back
+  to jsPDF and says so.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

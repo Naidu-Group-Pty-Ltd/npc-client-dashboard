@@ -2956,6 +2956,10 @@ derives the tables from them. Three rules bite.
 - **The projection is one landscape page.** That was measured over all 50
   designs and a 24-month build. A change to the matrix's rows or row height has
   to be re-measured in WeasyPrint, not assumed.
+- **Value, debt and equity is one portrait page** (§11). Both charts share one
+  year axis (`columnGeometry`), and the value axis steps on round figures. A
+  change to either chart's height, or to what the section holds, has to be
+  re-measured in WeasyPrint.
 
 ## A build planned on land-only is costed as the new build it becomes (28 Sep 2026)
 Read §10 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching

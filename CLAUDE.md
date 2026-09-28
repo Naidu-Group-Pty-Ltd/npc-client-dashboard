@@ -458,6 +458,28 @@ comment naming a catcher Mission Control never wrote. So before concluding a
 deployment is missing something, check whether the thing is present anywhere:
 a feature absent on every deployment is unbuilt, not unprovisioned.
 
+## What the prime keeps for itself
+Read [`docs/operations/PRIME_ONLY_FEATURES.md`](./docs/operations/PRIME_ONLY_FEATURES.md)
+before touching `scripts/lib/primeOnlyFeatures.mjs`, the GoHighLevel account
+migration (its 28 functions, three `_shared/` modules, page and components),
+the `integrations/ghl-migration` route in `src/App.tsx`, or a clone's copy of
+`App.tsx`. The migration was built here after a security breach, to move the
+house's own data between two GoHighLevel accounts, and the owner decided on
+27 Sep 2026 that **no clone receives it**. Mission Control withholds it by
+class (`src/server/primeOnlyFeatures.pure.ts` there, a literal at each end like
+`BACKEND_DEPLOYED_BY`), while its schema, its migrations and the empty
+`ghl-marketing-dump` bucket travel, because a withheld migration is a ledger
+hole. Three rules bite. **Nothing a clone receives reaches into it**: no import
+of any of its files and no invocation of its functions by name, both refused
+by `primeOnlyFeatures.spec.ts`, because a clone's build breaks or its call
+answers 404 while the prime, which holds the feature, sees neither. **The one
+permitted reference is `import.meta.glob`**, which answers an empty record for
+a missing file, so `App.tsx` finds the page that way and draws the route only
+where it exists. And **a clone's `App.tsx` is reconciled by hand**: Mission
+Control cascades it as `manual_reconcile`, so a clone keeps the earlier static
+import until its removal pull request, and the spec is lenient on a clone about
+anything the clone still holds.
+
 ## A migration that has already run must not change here
 Read [`docs/security/APPLIED_MIGRATION_BODIES.md`](./docs/security/APPLIED_MIGRATION_BODIES.md)
 before touching `scripts/security/appliedBodyIdentity.mjs`,

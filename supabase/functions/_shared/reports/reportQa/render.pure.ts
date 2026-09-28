@@ -62,6 +62,7 @@ import type { BrandLockupProps } from '../../reportDesign/primitives.pure.ts';
 import {
   closeChapter,
   escapeHtml,
+  KEEP_TOGETHER_CLASS,
   openChapter,
   renderCallout,
   renderChapterHeader,
@@ -97,6 +98,7 @@ import { renderMarkdown, type MarkdownResult } from './markdown.pure.ts';
 import { narrativeFor } from './normalise.pure.ts';
 import { fitTranscript, planFromMarkdown, sourcesChapter, type SectionPlan } from './sections.pure.ts';
 import { formatReportDate } from '../reportDate.pure.ts';
+import { firstHeadingOf } from './documentIdentity.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['report-qa'];
 
@@ -310,7 +312,10 @@ export function planReportQa(document: ReportQaDocument): {
     return { plan, chapters, degraded: false, turnsShown: turnsKept, charsOmitted };
   }
 
-  const parsed: MarkdownResult = renderMarkdown(document.body, { idPrefix });
+  const parsed: MarkdownResult = renderMarkdown(
+    withoutLeadingTitle(document.body, document.meta.title),
+    { idPrefix },
+  );
   const plan = planFromMarkdown(parsed, document.meta.title || 'The report', idPrefix);
   const chapters = plan.chapters.map((c, idx) => {
     const from = plan.starts[idx];
@@ -323,7 +328,15 @@ export function planReportQa(document: ReportQaDocument): {
     // dropping that one would delete a section title from the page.
     const opener = parsed.headings.find((h) => h.blockIndex === from);
     const start = opener && opener.text === c.title ? from + 1 : from;
-    const body = parsed.blocks.slice(start, to).map((b) => b.html).join('');
+    const blocks = parsed.blocks.slice(start, to).map((b) => b.html);
+    // The document's last words never turn a page alone (`KEEP_TOGETHER_CLASS`): a
+    // short closing block — the disclaimer an answer so often ends on — is
+    // bound to the block before it. Only when it IS short: binding two long
+    // blocks would move a half-page table to leave a hole instead.
+    const last = blocks[blocks.length - 1] ?? '';
+    const body = idx === plan.chapters.length - 1 && blocks.length >= 2 && visibleLength(last) <= SHORT_TAIL_CHARS
+      ? blocks.slice(0, -2).join('') + `<div class="${KEEP_TOGETHER_CLASS}">${blocks.slice(-2).join('')}</div>`
+      : blocks.join('');
     // The single-answer document prints the question that produced it. The
     // legacy exports it with a title hardcoded at the call site —
     // 'Property Comparison Summary' / 'Investment Report Summary' by report
@@ -341,6 +354,42 @@ export function planReportQa(document: ReportQaDocument): {
     charsOmitted: 0,
   };
 }
+
+/**
+ * The answer's own title, once — on the cover.
+ *
+ * A model that writes a report titles it (`# Investment Property Suburb
+ * Shortlist Report`), and that heading is now what the cover names the
+ * document (`documentIdentity.pure.ts`). Left in the body it also became the
+ * first SECTION: a chapter opener repeating the cover, holding nothing but the
+ * "Asked" callout, on a page of its own. It is dropped only when it is the
+ * first thing in the body and says exactly what the cover says, so a body that
+ * opens on prose, or on a heading the cover does not carry, is untouched.
+ */
+export function withoutLeadingTitle(body: string, title: string): string {
+  const match = /^\s*#{1,3}[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n|$)/.exec(body);
+  if (!match || !title) return body;
+  return firstHeadingOf(match[0]) === title ? body.slice(match[0].length) : body;
+}
+
+/**
+ * Sections that run on rather than each opening a page (`RUN_ON_CHAPTER_CLASS`).
+ *
+ * A single answer or a write-up is a memo — the owner's shortlist is nine
+ * sections of one to two thousand characters — and drawn a page a section it
+ * was eleven sheets, three of them a heading and a callout, against the ten
+ * continuous pages of the in-browser export it replaces. A transcript keeps a
+ * page per exchange: there the break is where one question ends and the next
+ * begins.
+ */
+const runsOn = (subject: ReportQaDocument['meta']['subject'], index: number): boolean =>
+  index > 0 && subject !== 'transcript';
+
+/** A closing block this short is a tail, not a section of its own. */
+const SHORT_TAIL_CHARS = 600;
+
+const visibleLength = (html: string): number =>
+  html.replace(/<[^>]*>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim().length;
 
 export function renderReportQaBody(input: RenderReportQaInput): ReportQaRenderPlan {
   const doc = input.document;
@@ -424,7 +473,9 @@ export function renderReportQaBody(input: RenderReportQaInput): ReportQaRenderPl
     const opening = index === 0
       ? renderLede(narrative) + grounded + cut
       : '';
-    return openChapter(DOCUMENT_NAME, number, chapter.title)
+    return openChapter(DOCUMENT_NAME, number, chapter.title, 'body', {
+      runOn: runsOn(doc.meta.subject, index),
+    })
       + renderChapterHeader({
         number,
         title: chapter.title,
@@ -454,7 +505,11 @@ export function renderReportQaDocument(input: RenderReportQaInput): ReportQaRend
   return {
     ...plan,
     html: renderDocument({
-      title: `${DOCUMENT_NAME} — ${input.document.meta.title}`,
+      // The product's name, then what this one is about — once, where the
+      // cover had nothing more specific to say than the name itself.
+      title: input.document.meta.title && input.document.meta.title !== DOCUMENT_NAME
+        ? `${DOCUMENT_NAME} — ${input.document.meta.title}`
+        : DOCUMENT_NAME,
       author: input.masthead,
       subject: DOCUMENT_NAME,
       css: buildReportCss({

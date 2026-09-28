@@ -3697,6 +3697,22 @@ no debt. Three rules bite.
   has a wording, and a test reads its source for new ones. Advice the record
   contradicts is dropped. The engine's own strings and rules are unchanged.
 
+## The Strategy Rationale Brief is the Snapshot route's second document
+Read §17 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `strategyRationale*.pure.ts`, `deliverStrategyRationale.ts` or
+the `document` field on `render-borrowing-capacity-pdf`. The What-If brief is
+typeset in the template chosen for Borrowing Capacity. Its words are the jsPDF
+brief's, unchanged. Three rules bite.
+
+- **The words are composed once, in the browser.** The scenario is stored
+  nowhere, so the server reads the brief back against the composer's shape and
+  draws it; it recomputes nothing. A test holds the composer to the jsPDF
+  generator's literals.
+- **No `document` means the Snapshot.** An unknown one is refused.
+- **The browser requires the echo.** An older deployment draws a Snapshot, so
+  without `document: 'strategy_rationale'` in the answer the brief falls back
+  to jsPDF and says so.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

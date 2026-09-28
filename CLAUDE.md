@@ -2957,6 +2957,22 @@ derives the tables from them. Three rules bite.
   designs and a 24-month build. A change to the matrix's rows or row height has
   to be re-measured in WeasyPrint, not assumed.
 
+## A build planned on land-only is costed as the new build it becomes (28 Sep 2026)
+Read §10 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/plannedBuild.pure.ts`, `CashFlowPlannedBuildPanel` or
+the land-only branch of `CashFlowAnalysisModal`. A land-only report carries one
+switch in the Cash Flow Analysis: "going ahead with a build". `withPlannedBuild`
+re-reads the case as the new build it becomes and adds no second method.
+Three rules bite.
+
+- **No build price, no build.** Every other report is returned as the same
+  object.
+- **Its figures live under their own keys (`plannedBuild*`), never
+  `buildPrice`.** The investment report prints a stored build price whatever
+  the build type.
+- **The loan is re-sized to land plus build at the case's LVR, and duty stays
+  the land's.**
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

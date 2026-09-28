@@ -4465,6 +4465,18 @@ touching `ComparisonDownloadButton`, the comparison surfaces in
 - **A memo runs on** (`RUN_ON_CHAPTER_CLASS`), and a comparison's short tables
   are kept whole.
 
+**Market timing and competitive advantages are stored now** (§14 of
+`COMPARISON.md`, migration `20261228100000`). Read it before touching
+`supplementaryColumnsFor`, `SUPPLEMENTARY_COLUMNS` or the comparison insert.
+The model was always asked for both, and the writer dropped them from every
+intact comparison. Two rules bite.
+
+- **The AI is not touched.** The prompt, the schema and `STORABLE_SECTIONS` are
+  unchanged. The producer stores the answer it already had.
+- **They are written by a separate update, never the insert.** A deployment
+  the migration has not reached refuses the update and still saves the
+  comparison.
+
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission
 agreement. Read [`docs/agreements/TEMPLATES_ONLY.md`](./docs/agreements/TEMPLATES_ONLY.md)

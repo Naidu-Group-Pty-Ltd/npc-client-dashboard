@@ -3735,6 +3735,21 @@ brief's, unchanged. Three rules bite.
   without `document: 'strategy_rationale'` in the answer the brief falls back
   to jsPDF and says so.
 
+## The Strategy Advisor's reasoning travels with its scenario
+Read §18 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `composeAdvisorSection`, `advisorRationale.pure.ts` or
+`advisorRationale` on a scenario preset. Applying an advisor card used to move
+its levers and leave its client-specific reasoning on the card. Three rules
+bite.
+
+- **One composer.** Every surface that prints the reasoning (panel, both
+  briefs, both Snapshots) takes the words `composeAdvisorSection` returns.
+- **The engine's figures only.** The card's `estimatedImpact` is not carried,
+  and every copy says the advisor (AI) wrote the reasoning. The server restores
+  that line whatever the request sent.
+- **It follows the levers.** A lever moved after the apply has settled marks
+  the reasoning as describing the scenario as proposed. Reset clears it.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

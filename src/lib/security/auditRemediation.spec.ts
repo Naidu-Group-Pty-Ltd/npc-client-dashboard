@@ -102,7 +102,11 @@ describe('F-02 — the operator backfills require a JWT', () => {
     // functions with their config blocks (436 before). The count is a ratchet
     // against a function slipping in undeclared; check-verify-jwt-declared.mjs
     // enforces the rule itself.
-    expect(declared.length).toBe(414);
+    // Reconciled by the cascade. This deployment does not declare the GoHighLevel
+    // account migration (all 28 functions), which the prime keeps for itself, so the
+    // prime's number counts a different repository. The count below is this one's, taken
+    // from the config this same pass composed.
+    expect(declared.length).toBe(386);
   });
 });
 

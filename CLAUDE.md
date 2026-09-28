@@ -2942,6 +2942,21 @@ both conversions on 28 Sep 2026. Three rules bite.
   `bestReadingForSubject`, and the subject is read from the report row, never
   from the request.
 
+## The 10 Year Cash Flow follows the legacy process, on one page (28 Sep 2026)
+Read §9 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`_shared/reports/cashFlow/{constructionSchedule,expenditure,inputSummary}.pure.ts`,
+the projection matrix in `render.pure.ts`, `toWireInputs` or the construction
+schedule in `CashFlowAnalysisModal`. The schedule, the upfront/overall tables and
+the Input Summary are ONE implementation that the screen, the jsPDF export and
+the typeset document all read. The browser sends the inputs, and the server
+derives the tables from them. Three rules bite.
+
+- **Only a new build with a stated build contract is staged.**
+- **A total is the sum of its printed rows.**
+- **The projection is one landscape page.** That was measured over all 50
+  designs and a 24-month build. A change to the matrix's rows or row height has
+  to be re-measured in WeasyPrint, not assumed.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section

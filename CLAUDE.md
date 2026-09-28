@@ -3750,6 +3750,17 @@ bite.
 - **It follows the levers.** A lever moved after the apply has settled marks
   the reasoning as describing the scenario as proposed. Reset clears it.
 
+## The Strategy Advisor says what it is doing
+Read §19 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `_shared/advisorProgress.pure.ts`, `AdvisorProgressBubble` or
+the `progress` events in `bc-scenario-agent`. A request takes 20–90 s, and the
+chat used to draw one spinning circle. Three rules bite.
+
+- **A stage is reported only when it is reached.** Only the clock ticks.
+- **The rotating line is a fact from the brief, never a thought** about what
+  the model is weighing.
+- **Either end may be older**, and the stage never moves backwards.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,

@@ -4574,6 +4574,53 @@ intact comparison. Two rules bite.
   the migration has not reached refuses the update and still saves the
   comparison.
 
+## The Intelligence Hub export is the adviser's report
+Read §14 of [`docs/reports/QA.md`](./docs/reports/QA.md) before touching
+`readTitleBlock`, `isGenericSectionHeading`, `planFromMarkdown`'s `continuous`
+option, `presentedBlock` / `groupTableRows` / `estimatedTableLines`, the `.memo`
+rules in `css.pure.ts` or `footerMastheadTracking`. The owner's export of
+30 Sep 2026 carried everything the answer said and set it like a chat log:
+
+- the firm's name as the cover title;
+- "Document: Single answer" as the first fact, and "Answers came from
+  report_qa." as the first sentence;
+- the instructions typed to the Hub, in an "Asked" box;
+- two numberings, and 31pt section titles over 12.8pt subheads;
+- tables split to a single row, and the masthead wrapping at every foot.
+
+Three rules bite.
+
+- **A finished answer carries nothing about the chat** — no framing sentence,
+  no question, no system name. A transcript prints each question once.
+- **The title block is read, never guessed.** A letterhead is recognised only
+  from the issuer's names the route passes. A slot is omitted rather than
+  printed. A generic section name ("Executive summary") never outranks the
+  conversation's title.
+- **A table is kept whole by its estimated HEIGHT, never its row count.** Six
+  rows and 1,200 characters admitted a table 47% of a page tall. Anything
+  taller than seven estimated lines is set as lead, middle and tail row groups,
+  so no page holds a single row of it.
+
+**The export dialog's Preview is the document, not a rendering of the text.**
+Read §15 of the same doc before touching `useHubDocumentPreview`,
+`HubDocumentPreview`, `PdfPageStack`, `findSectionHeading` or the `preview` /
+`draft` fields of `render-report-qa-pdf`. The Preview draws every page of the
+export, in whichever design is chosen. It does so by asking the export's own
+route, with the same design resolution, to draw without keeping anything.
+
+Three rules bite.
+
+- **A preview writes nothing.** No ledger row, file, signed link, attachment,
+  brand snapshot or model call. `preview.spec.ts` pins that the preview returns
+  before every one of them.
+- **A draft needs the same rights as the edit it shows.** The editors send
+  their text only when it differs from what is STORED. "Stored" is learnt from a
+  write that answered, never assumed. A draft from a reader without edit rights
+  is refused with 403.
+- **A second renderer in the browser is never the answer.** An older route that
+  ignores `preview` has drawn the stored record, and the client refuses to show
+  that as the preview. So the edge function ships before the frontend.
+
 ## Partner agreements — TEMPLATES ONLY
 The platform no longer runs the formation of a partner referral/commission
 agreement. Read [`docs/agreements/TEMPLATES_ONLY.md`](./docs/agreements/TEMPLATES_ONLY.md)

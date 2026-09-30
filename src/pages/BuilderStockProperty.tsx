@@ -15,11 +15,14 @@ import { BuilderStockConversations } from '@/components/listings/BuilderStockCon
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import {
-  homeSizeDisplay, primaryStockImage, SELECTABLE_AVAILABILITY, stockItemLocality,
-  stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
-  STOCK_SELECTION_STATUS_LABELS,
+  describesConfigurationOnly, homeSizeDisplay, primaryStockImage, SELECTABLE_AVAILABILITY,
+  stockItemLocality, stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES,
+  STOCK_AVAILABILITY_LABELS, STOCK_SELECTION_STATUS_LABELS,
   type StockAvailability, type StockSelectionStatus,
 } from '@/lib/builderStock';
+import {
+  parseBuilderAddressLine, splitAddressFields,
+} from '../../supabase/functions/_shared/builderStockAddress.pure';
 import {
   useMarketplaceStockItem, type MarketplaceStockDocument,
 } from '@/lib/marketplaceBuilderStock';
@@ -154,13 +157,27 @@ export default function BuilderStockProperty() {
   const figure = (value: number | null | undefined) =>
     value === null || value === undefined ? null : String(value);
 
+  /*
+   * WHAT THE LINE STATES, WHERE THE COLUMNS ARE EMPTY. A Notion list writes
+   * `Lot 52 Tweed Heads · Bravo 217 · Best Price` into the address and fills
+   * no lot or design column, so this page printed that whole line as the
+   * address — tag and all — and left Lot and Design blank. The same parse
+   * the card title and the Builder Portal read, so the three cannot disagree.
+   */
+  const parsedLine = parseBuilderAddressLine(item.address_line);
+  const addressField = splitAddressFields(item.address_line).address;
+  const statedDesign = item.house_design
+    || (parsedLine.designName && !describesConfigurationOnly(parsedLine.designName)
+      ? parsedLine.designName : null);
+
   const facts: Array<[string, ReactNode | null]> = [
     ['Price', price],
-    ['Lot', item.lot_number ? String(item.lot_number) : null],
-    ['Address', item.address_line || null],
+    ['Lot', item.lot_number ? String(item.lot_number) : parsedLine.lotNumber],
+    ['Unit', item.unit_number ? String(item.unit_number) : parsedLine.unitNumber],
+    ['Address', addressField || null],
     ['Suburb', locality || null],
     ['Estate', estate || null],
-    ['Design', item.house_design || null],
+    ['Design', statedDesign || null],
     ['Bedrooms', figure(item.bedrooms)],
     ['Bathrooms', figure(item.bathrooms)],
     ['Car spaces', figure(item.car_spaces)],

@@ -56,3 +56,30 @@ describe('a mirror row reads the plan by fingerprint, never by path', () => {
     expect(read('src/components/listings/BuilderStockGallery.tsx')).not.toMatch(/presentation="card"/);
   });
 });
+
+describe('planner v3 crosses to the Command Centre', () => {
+  const sha = 'a'.repeat(64);
+  const row = (plan: unknown) => ({
+    id: 'img', position: 0, source_stage: 'uploaded_document', verification_status: 'source_supplied',
+    processing_status: 'ready', storage_path: null, external_url: 'https://network.invalid/x',
+    source_detail: { stored_sha256: sha, [HERO_PLAN_KEY]: { plan, object: 'original', sha256: sha, planned_at: 'x' } },
+  });
+  const scene = drawScene({ width: 400, height: 110, horizon: 80, seed: 3,
+    houses: [{ x: 20, w: 360, roofTop: 30, base: 86, garage: true }] });
+
+  it('a v3 fit, with its reason, is drawn here exactly as the network stored it', () => {
+    const v3 = planHero(scene.thumbnail, undefined, { rescue: true })!;
+    expect(v3.version).toBe(3);
+    expect(v3.mode).toBe('fit');
+    expect(v3.fitReason).toBe('building_too_wide');
+    // The payload composer strips nulls in transit; the plan must still read.
+    const stripped = JSON.parse(JSON.stringify(v3, (_k, v) => (v === null ? undefined : v)));
+    expect(heroPlanOfImage(row(stripped) as never)).not.toBeNull();
+  });
+
+  it('a stale v2 plan still draws here until the network re-plans it', () => {
+    const v2 = planHero(scene.thumbnail, undefined, { rescue: false })!;
+    expect(v2.version).toBe(2);
+    expect(heroPlanOfImage(row(v2) as never)).not.toBeNull();
+  });
+});

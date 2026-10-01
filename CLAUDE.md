@@ -4688,6 +4688,32 @@ bite.
   chart, the holdings are renumbered, and one note says why. Only an action
   repeated in the same words merges, never two sentences that merely agree.
 
+## The Portfolio Analysis dialog exports in the chosen template
+Read §11 of [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md) before touching
+`src/lib/reports/portfolio/saveAnalysis.ts`, the save block or the dialog
+header of `PortfolioAnalysisPDFGenerator`, or the `storagePath` on
+`deliverPortfolioReview`. The owner chose a template and received the
+legacy document: the dialog's one button, "Download & Save PDF", drew the
+analysis with pdf-lib and never read the choice. It is "Choose template" beside
+"Export PDF" now, and the legacy layout is the menu's named second choice. The
+analysis itself is unchanged. Three rules bite.
+
+- **Save first, then render.** The typeset route reads a saved row, so Export
+  PDF saves the analysis once, draws it through `render-portfolio-review-pdf`
+  in the chosen design, with `includeReview: false` because the analysis is
+  what the dialog shows, and records that document as `pdf_file_path`. One
+  analysis is one row, however many times or ways it is exported.
+- **The saved file is what the person chose.** "Send Portfolio to Client", the
+  portal and the Reports tab all read `pdf_file_path`, so they serve the
+  template document. The legacy layout records its file only where none is
+  recorded, and once one is, it downloads and changes nothing. Only a
+  `client-files` object is recorded, because that is the only bucket the
+  publish operation signs.
+- **A failure says what is saved, and never falls back.** A render that fails
+  leaves the analysis saved without a file, the same state a failed legacy
+  upload always left. The dialog says so and names the legacy layout rather
+  than taking it.
+
 ## Both comparisons export like the Hub
 Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
 [`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before

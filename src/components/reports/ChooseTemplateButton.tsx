@@ -16,10 +16,12 @@
  * which is how every report type but Investment honours a template.
  *
  * Used beside every report's Export PDF: the Intelligence Hub's two editors,
- * the Portfolio Performance Review, the Borrowing Capacity Snapshot and the
- * Strategy Rationale Brief, the Client Details Form, the five Investment
+ * the Portfolio Performance Review (its saved-report control and the dialog
+ * that shows a freshly generated analysis), the Borrowing Capacity Snapshot and
+ * the Strategy Rationale Brief, the Client Details Form, the five Investment
  * documents, the 10 Year Cash Flow (in its header, beside the export menu) and
- * both comparisons. `templateRouteEnforcement.spec.ts` holds the list.
+ * both comparisons. `templateRouteEnforcement.spec.ts` holds the list, and
+ * `legacyPathStays.spec.ts` the analysis dialog.
  */
 import { useState } from 'react';
 import { FileStack, TriangleAlert } from 'lucide-react';

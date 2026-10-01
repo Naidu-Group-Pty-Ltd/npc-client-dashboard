@@ -249,6 +249,7 @@ function ActivationPhoto({ imageId, alt }: { imageId: string | null; alt: string
       <StockPicture
         image={image}
         resolveUrl={marketplaceStockImageUrl}
+        presentation="card"
         alt={alt}
         emptyLabel="No photograph from the builder"
       />

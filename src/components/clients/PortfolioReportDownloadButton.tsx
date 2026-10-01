@@ -10,10 +10,11 @@
  * That control's second item *runs* the in-browser generator. This one cannot —
  * `PortfolioAnalysisPDFGenerator` is a 3,878-line component with no importable
  * entry point, and the only way to reach it is to mount it and click through
- * *Generate* then *Download & Save*. So the second item here is the **stored**
- * file at `portfolio_analysis_reports.pdf_file_path`, and where a report has
- * none it says so and points at the generator rather than pretending it can
- * produce one.
+ * *Portfolio Analysis* then its dialog's menu. So the second item here is the
+ * **stored** file at `portfolio_analysis_reports.pdf_file_path` — since
+ * 1 Oct 2026 usually the typeset document in the template chosen when the
+ * analysis was saved (`saveAnalysis.ts`) — and where a report has none it says
+ * so and points at the generator rather than pretending it can produce one.
  *
  * That difference is why the typeset item is the primary action rather than the
  * polite alternative: it reads `report_data`, so it works for the seven of

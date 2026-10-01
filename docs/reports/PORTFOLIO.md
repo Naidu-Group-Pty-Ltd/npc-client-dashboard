@@ -271,7 +271,9 @@ tokens and asks a model. Typesetting a row that already exists asks nothing of
 any model, so re-rendering a saved report is free and the new menu items carry no
 cost estimate.
 
-**It does not write `portfolio_analysis_reports.pdf_file_path`.** That column is
+**It does not write `portfolio_analysis_reports.pdf_file_path`** — the analysis
+dialog does, since 1 Oct 2026, when it saves an analysis it has just exported in
+the chosen template (§11). The route itself still never touches the row. That column is
 what *publish to client portal* reads (`manage-client-data/index.ts:540–609`,
 uniqueness-guarded by `20260724000000_prevent_duplicate_portfolio_publications.sql`).
 Pointing it at a document from a different renderer would silently change what
@@ -332,12 +334,13 @@ first time.
 | `ClientReportsTab.tsx` portfolio rows | the shared control, compact appearance |
 | `review-wizard/GenerateReportStep.tsx` | a sibling card for the latest saved report |
 
-It is deliberately **not** added inside the generator's own preview dialog
+It was deliberately **not** added inside the generator's own preview dialog
 (`PortfolioAnalysisPDFGenerator.tsx:3222`), even though that is where the two
 renderers would sit most naturally side by side. At that moment the analysis
 exists only in component state — the `portfolio_analysis_reports` row is not
 inserted until `downloadPDF` runs (`:3113`) — so a server route that reads the
-persisted row would have nothing to read.
+persisted row would have nothing to read. **§11 is how it got there anyway:**
+the dialog now saves the row first, then renders it.
 
 ---
 
@@ -636,3 +639,86 @@ and ledger row, which no client sees until someone sends it.
 re-export is the same implementation. `reportPrimitives.spec.ts` and
 `reportCharts.spec.ts` pin the cover lockup, the contents note and the
 quadrant height.
+
+---
+
+## 11. The analysis dialog exports in the chosen template (1 Oct 2026)
+
+The owner opened a client and chose a template. They pressed *Portfolio Analysis*
+and received the legacy 20-page document. The dialog that shows a finished
+analysis had one button, "Download & Save PDF". It drew the analysis in the
+browser with pdf-lib and saved that file as the report, without reading the
+template choice. "Choose template" and "Export PDF" on the client header belong
+to the Client Details Form, so nothing on that screen chose this report's
+template.
+
+The typeset route was never offered in that dialog (§6). It reads a saved row,
+and the dialog's analysis was not saved until the legacy file had been drawn.
+The dialog now saves first.
+
+| Control | What it does |
+| --- | --- |
+| **Choose template** | The portfolio choice (`ChooseTemplateButton reportType="portfolio"`), the same one the Reports tab reads. The line under the buttons says which template Export PDF will use. |
+| **Export PDF** | Saves the analysis as its `portfolio_analysis_reports` row, once. Draws that row through `render-portfolio-review-pdf` in the chosen design. Records the stored document as the row's `pdf_file_path` and lists it among the client's documents (`saveAnalysis.ts`). |
+| **Export PDF (legacy layout)** | In the menu beside it. The previous in-browser document, drawn exactly as before. |
+
+### Five rules
+
+1. **One analysis, one row.** The dialog keeps the row it saved. A retry, a
+   second template or the legacy layout afterwards reuses the row. The legacy
+   generator used to insert a new row on every click. A new analysis starts with
+   nothing saved. Either export claims the dialog synchronously before its first
+   await, so a double-click that lands before the busy state renders cannot
+   start a second save. There is one claim for both exports, because both can
+   save the row.
+2. **The saved file is the document the person chose.** `pdf_file_path` is what
+   "Send Portfolio to Client", the portal publish, the Reports tab's saved-PDF
+   download and the reports list all read. Since the dialog leads with the
+   chosen template, those all serve the typeset document. The legacy layout
+   records its file only where nothing else has: as the first export, or after
+   the template export saved the row and could not draw it. Once a file is
+   recorded, the legacy layout downloads and changes nothing.
+3. **The analysis is the analysis.** The dialog asks for `includeReview: false`.
+   The legacy document never carried a review, and a review is a separate
+   assessment nobody asked for there. The wizard's Typeset Review card and the
+   Reports tab still fold the latest review in, as they always have. Nothing in
+   the analysis is regenerated or rewritten: the row stores the model's answer
+   as it arrived, through one row builder both exports share.
+4. **A failure says what is saved.** If the render fails after the row is saved,
+   the analysis stays in Reports with no file. That is the state a failed legacy
+   upload has always left, and every reader handles it: the portal publish
+   renders on publish, and the Reports tab's Export PDF reads `report_data`. The
+   dialog says the analysis is saved, offers Export PDF again, and names the
+   legacy layout. It never falls back to it by itself.
+5. **Only a `client-files` object is recorded.** The publish operation signs
+   `pdf_file_path` in `client-files` alone. A document stored anywhere else
+   (a templated final would be in `investment-reports`) is downloaded but never
+   recorded.
+
+The route itself is unchanged and still never writes the row
+(`legacyPathStays.spec.ts`). The writes go through `manage-client-data`. A
+create and an update on `portfolio_analysis_reports` both need `portfolio_reports`
+edit access, so whoever could save an analysis before can record its file now.
+
+### What the typeset document carries that the legacy one did and did not
+
+The typeset document is the one §3 describes, so the dialog's export prints the
+analysis as the Reports tab's export always has. One difference is deliberate
+and predates this change: the legacy document redraws the client's full
+Borrowing Capacity Assessment in the middle of the analysis. The typeset
+document prints the capacity figures that belong to a portfolio view and says
+the assessment itself is the Borrowing Capacity Snapshot (§3). The legacy
+layout still draws the full assessment, from the menu.
+
+### Tests
+
+`saveAnalysis.spec.ts` pins the sequence and every place it can stop.
+`PortfolioAnalysisDialogExport.spec.tsx` drives the real dialog: Choose template
+beside Export PDF, no Download & Save, one row across exports, a failed render
+that keeps the analysis saved, a new analysis as a new report, the legacy layout
+by name, and a double-click and both exports at once each saving one row. With
+the claim removed, the Export PDF double-click and the both-at-once test failed.
+The legacy item's double-click test passes either way, because Radix flushes a
+menu item's click synchronously. It pins the outcome rather than the claim.
+`legacyPathStays.spec.ts` pins the structure, and it was checked by wiring
+Export PDF back to the legacy generator: seven assertions failed.

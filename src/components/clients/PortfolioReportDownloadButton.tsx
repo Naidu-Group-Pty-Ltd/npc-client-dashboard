@@ -19,6 +19,15 @@
  * polite alternative: it reads `report_data`, so it works for the seven of
  * twenty-one stored reports that have no file at all and are un-downloadable
  * today.
+ *
+ * ## The choice beside the act (30 Sep 2026)
+ *
+ * The split appearance draws "Choose template" as a button of its own before
+ * "Export PDF" (`ChooseTemplateButton`), as the Intelligence Hub's export and
+ * both comparisons do (PORTFOLIO.md §10): the template is the one decision a
+ * person makes before exporting, so it is on the surface rather than at the
+ * foot of a menu, and the act is named the way every other format names it.
+ * The menu appearance — a row with room for one icon — keeps it in its menu.
  */
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -27,6 +36,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
+import { ChooseTemplateButton } from '@/components/reports/ChooseTemplateButton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,7 +87,7 @@ export function PortfolioReportDownloadButton({
   storedPath,
   storedFileName,
   includeReview = true,
-  label = 'Download review (typeset)',
+  label = 'Export PDF',
   variant = 'outline',
   size = 'sm',
   className,
@@ -139,7 +149,7 @@ export function PortfolioReportDownloadButton({
         <div className="flex flex-col">
           <span>{label}</span>
           <span className="text-xs text-muted-foreground">
-            Typeset from the stored analysis, on your branding
+            In your chosen template, from the saved analysis
           </span>
         </div>
       </DropdownMenuItem>
@@ -161,7 +171,7 @@ export function PortfolioReportDownloadButton({
           </span>
         </div>
       </DropdownMenuItem>
-      {template.section}
+      {appearance === 'menu' && template.section}
     </DropdownMenuContent>
   );
 
@@ -191,7 +201,15 @@ export function PortfolioReportDownloadButton({
   }
 
   return (
-    <div className={cn('inline-flex items-stretch', className)}>
+    <div className={cn('inline-flex flex-wrap items-stretch gap-2', className)}>
+      <ChooseTemplateButton
+        reportType="portfolio"
+        formatLabel={PORTFOLIO_REPORT_LABEL}
+        size={size}
+        variant={variant}
+        disabled={disabled || busy}
+      />
+      <div className="inline-flex items-stretch">
       <Button
         variant={variant}
         size={size}
@@ -221,7 +239,7 @@ export function PortfolioReportDownloadButton({
         </DropdownMenuTrigger>
         {choices}
       </DropdownMenu>
-      {template.dialog}
+      </div>
     </div>
   );
 }

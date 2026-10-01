@@ -201,7 +201,13 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
     ? '' : (outlineLevel >= 2 && outlineLevel <= 4 ? `h${outlineLevel}` : '');
   const outline = (tag: string) => (tag === outlineTag ? 'bookmark-level:2;' : '');
 
-  const html = styleTags(page.map((b) => b.html).join(''), [
+  // A record that opens a page needs no rule over it: the page's own head
+  // rule is twenty points above, and a second one under it reads as a
+  // doubled border rather than as the start of the next risk.
+  const opening = page.map((b, i) => (i === 0 && b.html.startsWith('<p class="record-title">')
+    ? b.html.replace('<p class="record-title">', '<p class="record-title record-opens">')
+    : b.html));
+  const html = styleTags(opening.join(''), [
     { tag: 'h2', style: `${headingFont}color:${headingColor};${heading(2)}font-weight:600;${outline('h2')}` },
     { tag: 'h3', style: `${headingFont}color:${headingColor};${heading(3)}font-weight:600;${outline('h3')}` },
     { tag: 'h4', style: `${headingFont}color:${color};${heading(4)}font-weight:700;${outline('h4')}` },
@@ -260,6 +266,18 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
     { tag: 'span', cls: 'stat-sub', style: `display:block;margin-top:${pt(T.stat.gapPt)};`
       + `font-size:${(bodySize * T.stat.subScale).toFixed(1)}pt;line-height:${lineHeight};color:${mutedColor};` },
     { tag: 'p', cls: 'stat-headline', style: `margin:${pt(T.stat.gapPt)} 0 0;` },
+    // A register row set as a record (`MarkdownOptions.recordTables`): its
+    // name on a hairline with its short cells after it, and each field led by
+    // its column's label in the callout label's capitals. The short cells
+    // print in the body's own ink: a muted grey at this size is below the
+    // print floor, and the label's capitals already set them apart.
+    // Every dimension is `MARKDOWN_TYPE.record`'s, which `recordTitleCharge`
+    // and `recordFieldCharge` read.
+    { tag: 'p', cls: 'record-opens', style: `margin:0 0 ${pt(T.paragraph.marginBottomPt)};` },
+    { tag: 'p', cls: 'record-title', style: `margin:${pt(T.record.marginTopPt)} 0 ${pt(T.paragraph.marginBottomPt)};`
+      + `padding-top:${pt(T.record.paddingTopPt)};border-top:${pt(T.record.rulePt)} solid ${ruleColor};` },
+    { tag: 'strong', cls: 'record-label', style: `font-size:${(bodySize * T.record.labelScale).toFixed(1)}pt;font-weight:700;`
+      + `letter-spacing:${T.record.labelTracking}em;text-transform:uppercase;color:${headingColor};margin-right:3pt;` },
   ]);
 
   const box = absBoxStyle(p, { x: 40, y: 120, w: 515 });

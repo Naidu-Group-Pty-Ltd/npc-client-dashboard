@@ -16,13 +16,23 @@
  * `FormaraPDFGenerator` keeps both its buttons and both its paths. This is an
  * additional control, and where the route is not deployed yet it says so and
  * names the ones that work.
+ *
+ * ## The choice beside the act (1 Oct 2026)
+ *
+ * "Choose template" is a button of its own before "Export PDF"
+ * (`ChooseTemplateButton`), as on the Intelligence Hub, the Portfolio
+ * Performance Review, the Borrowing Capacity Snapshot and both comparisons
+ * (CLIENT_DETAILS.md §12): the template is the one decision a person makes
+ * before exporting, so it sits on the surface rather than at the foot of the
+ * destinations menu, and the act is named the way every other format names it —
+ * the button said "Typeset details". The caret keeps the three destinations.
  */
 import { useState } from 'react';
 import { ChevronDown, Download, Loader2, Mail, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
-import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
+import { ChooseTemplateButton } from '@/components/reports/ChooseTemplateButton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,9 +81,6 @@ export function ClientDetailsDownloadButton({
 }: ClientDetailsDownloadButtonProps) {
   const [running, setRunning] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // Which template this comes out in, answered here rather than on the
-  // Template Library page a person would have to know to visit.
-  const template = useReportTemplateMenu('client_details');
 
   /**
    * Produce the document once, then do whatever was asked with it.
@@ -137,86 +144,93 @@ export function ClientDetailsDownloadButton({
   };
 
   return (
-    <div className={cn('inline-flex items-stretch', className)}>
-      <Button
-        variant={variant}
+    <div className={cn('inline-flex flex-wrap items-stretch gap-2', className)}>
+      {/* Which template this comes out in, beside the button that uses it,
+          rather than on the Template Library page a person would have to know
+          to visit. */}
+      <ChooseTemplateButton
+        reportType="client_details"
+        formatLabel="Client Details"
         size={size}
+        variant={variant}
         disabled={running}
-        onClick={() => run('download')}
-        className="gap-2 rounded-r-none"
-        title={`Typeset client details for ${clientName}`}
-      >
-        {running
-          ? <Loader2 className="h-4 w-4 animate-spin" />
-          : <Sparkles className="h-4 w-4 text-primary" />}
-        {running ? 'Rendering…' : 'Typeset details'}
-      </Button>
+      />
+      <div className="inline-flex items-stretch">
+        <Button
+          variant={variant}
+          size={size}
+          disabled={running}
+          onClick={() => run('download')}
+          className="gap-2 rounded-r-none"
+          title={`Export the client details for ${clientName}`}
+        >
+          {running
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : <Sparkles className="h-4 w-4 text-primary" />}
+          {running ? 'Rendering…' : 'Export PDF'}
+        </Button>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={variant}
-            size={size}
-            disabled={running}
-            aria-label="Other destinations for the typeset report"
-            className="rounded-l-none border-l-0 px-2"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-80">
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            Where the typeset report should go
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={(e) => { e.preventDefault(); run('download'); }}
-            className="cursor-pointer"
-          >
-            <Download className="mr-2 h-4 w-4 text-muted-foreground" />
-            <div className="flex flex-col">
-              <span>Download</span>
-              <span className="text-xs text-muted-foreground">Save it to this device.</span>
-            </div>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={(e) => { e.preventDefault(); run('email'); }}
-            disabled={!onAttachToEmail}
-            className="cursor-pointer"
-          >
-            <Mail className="mr-2 h-4 w-4 text-muted-foreground" />
-            <div className="flex flex-col">
-              <span>Attach to an email</span>
-              <span className="text-xs text-muted-foreground">
-                {onAttachToEmail
-                  ? 'Opens the composer with the report attached.'
-                  : 'Not available from this screen.'}
-              </span>
-            </div>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={(e) => { e.preventDefault(); setPickerOpen(true); }}
-            className="cursor-pointer"
-          >
-            <Send className="mr-2 h-4 w-4 text-info" />
-            <div className="flex flex-col">
-              {/* Never a person's name. Who receives it is asked in the picker,
-                  against this client's own partners, and the picker's empty
-                  state names the screens that fix an organisation with none. */}
-              <span>Send to Finance</span>
-              {/* The sentence this migration exists for. */}
-              <span className="text-xs text-muted-foreground">
-                Through the Finance Portal, as selectable text a broker can copy from.
-              </span>
-            </div>
-          </DropdownMenuItem>
-          {template.section}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {/* Outside the menu: Radix unmounts the menu's content when it closes,
-          and a dialog rendered inside would go with it. */}
-      {template.dialog}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={variant}
+              size={size}
+              disabled={running}
+              aria-label="Other destinations for the typeset report"
+              className="rounded-l-none border-l-0 px-2"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Where the typeset report should go
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); run('download'); }}
+              className="cursor-pointer"
+            >
+              <Download className="mr-2 h-4 w-4 text-muted-foreground" />
+              <div className="flex flex-col">
+                <span>Download</span>
+                <span className="text-xs text-muted-foreground">Save it to this device.</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); run('email'); }}
+              disabled={!onAttachToEmail}
+              className="cursor-pointer"
+            >
+              <Mail className="mr-2 h-4 w-4 text-muted-foreground" />
+              <div className="flex flex-col">
+                <span>Attach to an email</span>
+                <span className="text-xs text-muted-foreground">
+                  {onAttachToEmail
+                    ? 'Opens the composer with the report attached.'
+                    : 'Not available from this screen.'}
+                </span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); setPickerOpen(true); }}
+              className="cursor-pointer"
+            >
+              <Send className="mr-2 h-4 w-4 text-info" />
+              <div className="flex flex-col">
+                {/* Never a person's name. Who receives it is asked in the picker,
+                    against this client's own partners, and the picker's empty
+                    state names the screens that fix an organisation with none. */}
+                <span>Send to Finance</span>
+                {/* The sentence this migration exists for. */}
+                <span className="text-xs text-muted-foreground">
+                  Through the Finance Portal, as selectable text a broker can copy from.
+                </span>
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
       <FinanceRecipientPicker
         open={pickerOpen}

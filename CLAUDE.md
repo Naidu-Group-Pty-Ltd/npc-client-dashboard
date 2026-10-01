@@ -2999,6 +2999,31 @@ Three rules bite.
 - **The loan is re-sized to land plus build at the case's LVR, and duty stays
   the land's.**
 
+## The 10 Year Cash Flow's notes reach the page whole (Audit 7, 1 Oct 2026)
+Read §12 of [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) before touching
+`MAX_NOTE_CHARS` or the notes read in `normalise.pure.ts`, `evidenceBasisNotes`,
+`toAssumptions`, the `onePage` sections in `sections.pure.ts`, the subhead in
+`cashFlow/render.pure.ts` or the template choice in `CashFlowCommandHeader`. The
+document was drawn in all 51 designs for four cases, and the layout was already
+sound. What was wrong was what it said. Three rules bite.
+
+- **A note is never cut mid-sentence.** Notes shared the 240-character `slice`
+  of every text field, and the tax caveat lost "with an accountant" the moment
+  its wording grew. `MAX_NOTE_CHARS` is 600, more than twice the longest note
+  the browser composes, and a spec holds every variant to that. A note past it
+  is cut at a word and ends in an ellipsis.
+- **"What this assumes" is a one-page section.** At the full opener, a fourth
+  note (depreciation excluded) put the caution alone on an extra page in 37 of
+  51 designs. Opened as "Value, debt and equity" is, four notes at their
+  longest fit in all 51.
+- **One figure, one name, in the client's words.** The assumptions table uses
+  the Input Summary's labels. A note says what "was not provided for this
+  analysis", never "not held", which reads as "the owner holds no other land".
+
+"Choose template" is a button beside the export menu, never an item inside it.
+The menu's chart switches say they reach the legacy layout, which is all they
+reach. The file is `10 Year Cash Flow Analysis - <address> - <date>.pdf`.
+
 ## The 291 Stone Mason Drive audit (QA-291SM)
 Read [`docs/reports/QA_291SM_REMEDIATION_TRACKER.md`](./docs/reports/QA_291SM_REMEDIATION_TRACKER.md)
 before touching the standard (pdf-lib) presentation, the fork's section
@@ -3776,6 +3801,100 @@ Three rules bite.
 - **jsPDF's built-in font prints WinAnsi only.** An arrow printed as `!’` on
   every lever label.
 
+## The Borrowing Capacity Snapshot's tables foot, and its pages are used
+Read §21 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching the Snapshot's sections, its audit labels and polarities
+(`AUDIT_LABEL`, `auditRule`, `POLARITY`), `incomeItemsTotal`,
+`commitmentItemsTotal`, `proposedRentRow`, `capitalisedLmiRepayment`, the
+income donut or `donutFigurePt`. The calculator sends its own income and
+commitment totals, and the engine stores them beside a breakdown it reads from
+the client's records, so a Total row could print a figure its rows did not
+reach. Three rules bite.
+
+- **A total its rows do not reach is never printed as theirs.** A proposed
+  rent and a capitalised premium's repayment are lines, because the record
+  says what they were. Anything still between the lines and the totals prints
+  both, "Total of the lines above" and "Used in this assessment", with no
+  balancing line and no cause asserted.
+- **A shortfall is a cost.** `negative_cf_layered` stores it with `Math.abs`,
+  so a larger value is less capacity. Read as +1, every negatively geared
+  client was told the shortfall raised what they could borrow.
+- **A donut prints at its compact width, and its figure fits its hole.** The
+  hole is fixed in drawing units and the figure in points.
+  `donutFigurePt` steps a long figure down. A percentage is set as before.
+
+## The Strategy Rationale Brief opens on its finding
+Read §22 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `strategyRationaleRender.pure.ts`, the brief's constants in
+`strategyRationale.pure.ts` (`RECONCILE_TITLE`, `BASIS_LABEL`, `RISK_LABEL`,
+`OWNER_LABEL`, `POOL_OVERCOMMITTED_NOTE`, `CAPITAL_FLOW_LABELS`) or the jsPDF
+brief. Its first page repeated the cover under a "SECTION 01" that numbered
+the only section, and a baseline brief said "no levers applied" four times.
+Three rules bite.
+
+- **The headline leads.** It is the memo's title, the header draws no number
+  line (`renderChapterHeader({ unnumbered })`), and the running head names the
+  client.
+- **A part with nothing in it is left out, in both briefs.** `proposeEmpty`
+  and `sequenceEmpty` are still composed, because an older server draws them.
+- **The two briefs say the same words because they share them.** The jsPDF
+  brief imports the composer's constants rather than restating them, and the
+  server reads an older browser's capitals as the word.
+
+## The Client Details record runs on, in the record's own words
+Read §12 of [`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md) before
+touching `_shared/reports/clientDetails/*`, `reportDesign/portraitMatrix.pure.ts`,
+`recordHoldsFinancials`, `liabilityBasis`, `addressLine` or
+`ClientDetailsDownloadButton`. Every section opened a page, so a client with
+nothing financial recorded (742 of the 775) took five pages to give a name, and
+the record printed the database's words: `1984-03-17`, "Nab", "Internet phone", and the finance
+engine's own note `Est. P&I @ 9% / 5yr` as the basis of a figure. Three rules
+bite.
+
+- **One rule says whether a record holds any finances.** The summary, the
+  closing section and the template projection's `hasFinancials` all read
+  `recordHoldsFinancials`. An empty record has no summary, because the closing
+  section already says so, and a record without property draws no property
+  rows.
+- **Up to five holdings sit side by side on the section's own page.**
+  `portraitMatrix.pure.ts` is the Portfolio review's matrix, moved rather than
+  copied, and that review still renders byte for byte as before. Its heads are
+  the whole street (`streetLine`), because they wrap, and the matrix is kept
+  whole (`wholeUpToRows`).
+- **The choice sits beside the act.** "Choose template" comes before "Export
+  PDF", and the file is `Client Details - <client> - <date>.pdf` under a
+  URL-safe storage key.
+
+## The five Investment documents, through all fifty masters (Audit 6)
+Read §21 of [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md)
+and §9 of [`NARRATIVE_PACKING.md`](./docs/reports/NARRATIVE_PACKING.md)
+before touching `recordTables` / `recordLayout` in `markdown.pure.ts`,
+`openingShared` in the packer or the geometry, `donutReading`, `sparkRange`,
+`renderTimelineRibbon`'s axis, `presentableName.pure.ts`, `statFigure` or the
+fork branch of `stripBakedCover`. All five tiers for two production rows were
+drawn through all fifty masters (500 documents) and read from WeasyPrint's own
+box tree. A quarter-width risk register cell ran ten to thirteen lines, so 805
+rows stood taller than 150pt and 174 pages ended early before a table. Three
+rules bite.
+
+- **A register whose cells are sentences is set as records, not a grid.** Only
+  the template narrative asks for it, and only a table of four or more
+  labelled columns averaging 100 printed characters a cell qualifies. That
+  threshold is measured (the registers carry 136–396, the planning Evidence
+  column 99 and stays a grid).
+- **A figure prints what its source wrote.** A donut keeps a percentage's sign
+  and never turns a share of a workforce into a share of the ring. A spark is
+  scaled against a tenth of its own magnitude. A timeline draws only the
+  horizons its items reach, and a single stop is tabulated.
+- **A shared opening box that cannot take the first block stands empty.** The
+  body opens overleaf rather than setting ten lines in six through the running
+  foot. A first box on a page of its own is never emptied.
+
+The report page's export button is "Export PDF", with "Choose template" beside
+it, and the file is `Investment Compass - <address> - <date>.pdf`. The stored
+fixtures predate the 25 Sep generation rules, so a content review of a newer
+row is still BLOCKED on a stored report this work could not read.
+
 ## A template dresses nine report types, and never pages them
 Read [`TEMPLATE_PARITY.md`](./docs/reports/TEMPLATE_PARITY.md) before touching
 `templateParity.pure.ts`, `templateDesign*.pure.ts`, `templateDesignRead.ts`,
@@ -4546,6 +4665,29 @@ and received the legacy layout, because the dialog had two PDF buttons and only
 - **An answer is a memo.** Its sections run on rather than each opening a page,
   and its title is on the cover once, not also as the first section.
 
+## The Portfolio Performance Review reads as one review
+Read §10 of [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md) before touching
+`_shared/reports/portfolio/*`, `reportDesign/tableKeeping.pure.ts`,
+`SECTION_SUBHEAD_CLASS` or `PortfolioReportDownloadButton`. The audit found
+nine sections each opening a page (24 sheets for four properties, one page 92%
+blank), a rented home printed as a fifth holding, cash lines that did not add
+up beside a home, and several figures the analysis had calculated but the
+document never printed. The sections now run on as memo sections. Three rules
+bite.
+
+- **Keeping a table is one module.** The Hub and the Portfolio both call
+  `tableKeeping.pure.ts`, and the Hub's defaults must not move. WeasyPrint 69
+  honours "no break after" a row group and not "no break inside" one, so each
+  lead row is a group of its own.
+- **A figure is printed only where it foots or is proven.** The expenses line
+  is printed only where rent less expenses is the net. "Today" appears beside
+  the projection only where the stored projection starts from the printed
+  totals, to the dollar. The rate-rise table is read only from the
+  calculator's stamped block.
+- **A rented home is not a holding.** It is out of every table, ranking and
+  chart, the holdings are renumbered, and one note says why. Only an action
+  repeated in the same words merges, never two sentences that merely agree.
+
 ## Both comparisons export like the Hub
 Read §13 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and of
 [`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
@@ -4573,6 +4715,31 @@ intact comparison. Two rules bite.
 - **They are written by a separate update, never the insert.** A deployment
   the migration has not reached refuses the update and still saves the
   comparison.
+
+## The comparisons say what each figure is, and nothing runs off the sheet
+Read §15 of [`COMPARISON.md`](./docs/reports/COMPARISON.md) and §14 of
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) before
+touching either comparison's `render.pure.ts` or `charts.pure.ts`, `winnerOf`,
+`PHRASE_CELL_CLASS` / `wrapPhrases`, `renderPortraitMatrix`, `truncateAtWord`
+or `withFlattenedSuffix`. Audit 8 (1 Oct 2026) measured both comparisons at
+two, three and five properties over all 51 designs, and found two things. At
+five properties the Cash Flow Comparison's fifth column ran past the sheet's
+edge on 49 pages. Both donuts counted different things from the tables beside
+them. Three rules bite.
+
+- **A phrase in a figure column may wrap, and a figure never does.**
+  `wrapPhrases` marks a right-aligned cell that holds words and no digit. A
+  table opts in, and without it the markup is byte-identical.
+- **An absence says which absence it is.** A tie, a payback year no property
+  reaches, and a measure fewer than two properties have are three different
+  words (`undecided`). A chart counts exactly the measures its table counts, in
+  counts, never shares.
+- **A flattened copy is named by the flatten button.** A caller names the
+  document it flattens and never passes "flattened" itself. The helper also
+  refuses to say the word twice.
+
+The AI generation is untouched, and nothing the producer numbered by
+`propertyNumber` is newly attributed (F4).
 
 ## The Intelligence Hub export is the adviser's report
 Read §14 of [`docs/reports/QA.md`](./docs/reports/QA.md) before touching

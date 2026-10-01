@@ -254,6 +254,10 @@ export function narrativeBuckets(
      * table on the next sheet.
      */
     landscapeWideTables: false,
+    // A register whose cells are paragraphs is set as records here: a grid
+    // of five narrow columns cannot break a row, and every row that missed
+    // the room left a third of a page white (`MarkdownOptions.recordTables`).
+    recordTables: true,
     geometry,
     renderDirective: vizDirectiveRenderer(chart, geometry),
     renderInlineSpark: inlineSparkRenderer(chart),
@@ -273,7 +277,9 @@ export function forgetNarrativeBuckets(): void {
 
 /** The chart context a block draws its figures in: the template's palette at the block's own measure. */
 export function narrativeChartContext(ctx: ResolveContext, geometry: NarrativeGeometry): ChartContext {
-  return templateChartContext(ctx, geometry.widthPt * MM_PER_PT);
+  // A figure's title at the body's size: under the section's subhead, never
+  // above it (`ChartContext.titlePt`).
+  return { ...templateChartContext(ctx, geometry.widthPt * MM_PER_PT), titlePt: geometry.bodyPt };
 }
 
 /** Resolve the packed bucket this block instance is responsible for. */
@@ -315,8 +321,9 @@ export function resolveMarkdownBlockContent(
 
   const result = renderMarkdown(cleanSource, {
     ...REPORT_BODY_RENDER,
-    // Same rule, the non-geometry path: see the note above.
+    // Same rules, the non-geometry path: see the notes above.
     landscapeWideTables: false,
+    recordTables: true,
     charging: profile?.charging,
     renderDirective: vizDirectiveRenderer(templateChartContext(ctx)),
     renderInlineSpark: inlineSparkRenderer(templateChartContext(ctx)),

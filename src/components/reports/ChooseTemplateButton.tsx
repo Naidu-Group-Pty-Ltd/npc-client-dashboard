@@ -15,8 +15,11 @@
  * dresses these documents rather than re-paging them (`TEMPLATE_DESIGN_NOTICE`),
  * which is how every report type but Investment honours a template.
  *
- * Used by the Intelligence Hub's two editors, the Property Comparison and the
- * Cash Flow Comparison.
+ * Used beside every report's Export PDF: the Intelligence Hub's two editors,
+ * the Portfolio Performance Review, the Borrowing Capacity Snapshot and the
+ * Strategy Rationale Brief, the Client Details Form, the five Investment
+ * documents, the 10 Year Cash Flow (in its header, beside the export menu) and
+ * both comparisons. `templateRouteEnforcement.spec.ts` holds the list.
  */
 import { useState } from 'react';
 import { FileStack, TriangleAlert } from 'lucide-react';

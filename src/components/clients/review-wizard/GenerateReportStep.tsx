@@ -434,8 +434,8 @@ function TypesetReviewCard({ clientId }: { clientId: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          The same analysis, typeset server-side on your branding — a generated
-          contents page, the full holdings matrix in landscape, and every figure
+          The same analysis, typeset server-side in your chosen template — a
+          generated contents page, every property side by side, and every figure
           the record holds. Reads the most recently saved report, so generate one
           above first if there is none.
         </p>

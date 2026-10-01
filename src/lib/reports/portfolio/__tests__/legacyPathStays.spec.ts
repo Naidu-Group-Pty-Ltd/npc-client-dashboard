@@ -180,10 +180,12 @@ describe('every surface that hands over a saved report offers the typeset one', 
    */
   it('offers the typeset review on reports that have no saved PDF', () => {
     const list = read('src/components/clients/PortfolioAnalysisReportsList.tsx');
-    const item = list.slice(
-      list.indexOf('Download review (typeset)') - 900,
-      list.indexOf('Download review (typeset)'),
-    );
+    // The item's label on a line of its own — the JSX text, not a comment
+    // that names it — so the slice before it is the item's own props.
+    const at = /^\s*Export PDF\s*$/m.exec(list)?.index ?? -1;
+    expect(at, 'the reports list names its typeset item "Export PDF"').toBeGreaterThan(-1);
+    const item = list.slice(at - 900, at);
+    expect(item, 'the slice reaches the item it is meant to check').toContain('handleTypesetDownload(report)');
     expect(
       item,
       'the typeset menu item is gated on pdf_file_path, which is the gate it exists to avoid',

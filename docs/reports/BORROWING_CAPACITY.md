@@ -1695,3 +1695,67 @@ in any of them, nothing runs past its measure, and no running foot wraps.
   They sit in a callout's label slot, which every design sets in capitals.
 - **The baseline brief's one body page is mostly white.** It holds what a
   baseline has to say, and the next page is the closing page.
+
+## 23. The Strategy Advisor draws its cards again (2 Oct 2026)
+
+The owner reported that the What-If tab's Strategy Advisor no longer offered
+cards: a brief came back as prose, with nothing to apply. The cards, each with
+an **Apply Scenario** button that loads its levers into the strategy
+modelling, arrive only when the model calls the `generate_scenarios` tool, and
+three things stood between a brief and that call.
+
+**What was wrong.**
+
+- **Almost every brief was read as a clarification.** An April rule withheld
+  the tool from any message containing "?" and none of nine action verbs, or
+  containing a cue such as "is it" or "what is" anywhere. All three of the
+  advisor's own suggested prompts end in "?" and use none of the verbs, so the
+  built-in examples could never produce a card; "is it possible" and "what is
+  the best way" tripped the cue list; and the rule ran with no cards on screen,
+  when there is nothing to clarify. Measured on production on 2 Oct 2026: a
+  dictated brief for a $750,000 new build logged `clarificationMode: true`.
+- **The tool was offered, never required**, and the system prompt told the
+  model to "ask clarifying questions if the request is vague", so a vague
+  brief was answered with a question in place of cards.
+- **The native Anthropic route dropped tools.** `callAnthropicNative` was
+  handed neither `tools` nor `tool_choice` and kept only the answer's text, so
+  an agent assigned a Claude model on the native route could never call a tool.
+
+**What it does now.**
+
+- **One rule decides the mode** (`_shared/advisorRequestMode.pure.ts`):
+  - with no cards on screen, every message is a brief and gets cards;
+  - a request to produce or rework options, a budget, or a strategy question
+    gets cards even when cards are showing;
+  - a prose answer is owed only to a message about the cards on screen — one
+    that names a card, or a short follow-up question. A long message carrying a
+    brief is a new brief even where it mentions the cards.
+
+  The edge function reads it with the names of the cards on screen
+  (`priorScenarios`); the browser no longer second-guesses it.
+- **In scenario mode the tool is required.** `tool_choice` names
+  `generate_scenarios`, and the router's `requiredToolName` and
+  `requireValidToolArguments` treat an answer without a readable call as a
+  failed attempt and ask the next model in the chain. When every model answered
+  without cards, the broker is told that, not "AI service error". The prompt
+  now says to state an assumption in `reasoning` and still call the tool.
+- **The reply names each card with the engine's figures** when the model wrote
+  no prose of its own (`scenarioSummaryProse`), instead of a fixed paragraph
+  promising "3 scenarios" whatever arrived. A scenario call that cannot be read
+  is said out loud.
+- **The native Anthropic route carries tools** (`_shared/anthropicToolUse.pure.ts`),
+  both ways: function tools and `tool_choice` in, `tool_use` blocks out as
+  `tool_calls`, and a revision turn's call and result as `tool_use` and
+  `tool_result`. It engages only when a call carries tools or a tool turn, so
+  every other call is built exactly as before.
+
+**Three rules bite.**
+
+- **There is nothing to clarify with no cards on screen.**
+- **When cards are owed, the call is required, not offered.** A model left to
+  choose answered briefs in prose.
+- **The browser and the server read one rule.** Two rules for one decision is
+  how the April one came to be applied where it made no sense.
+
+The fix reaches the advisor when `bc-scenario-agent` is deployed; the browser
+change alone cannot restore the cards.

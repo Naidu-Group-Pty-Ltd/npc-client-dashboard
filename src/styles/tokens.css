@@ -140,6 +140,9 @@ Clean, modern admin dashboard with confidence-based color coding
     --aurixa-glass-border: 36 30% 78%;
     --aurixa-glow: 43 74% 55%;
     --aurixa-hairline: 43 40% 70%;
+    /* The presence's eyes and highlights: a warm light that reads on the
+       dark orb in both themes, so it is the same value in each. */
+    --aurixa-ivory: 44 70% 95%;
   }
 
   .dark {
@@ -239,6 +242,7 @@ Clean, modern admin dashboard with confidence-based color coding
     --aurixa-glass-border: 43 30% 24%;
     --aurixa-glow: 43 74% 49%;
     --aurixa-hairline: 43 40% 30%;
+    --aurixa-ivory: 44 70% 95%;
   }
 
   /* ── Phase 1 — Motion, radius, elevation, aurora scale ────────────────

@@ -4,7 +4,7 @@
  * Kept apart from the inlining spec: the adapter's other readers (the brand
  * assets, the structure guide) use the network too, so the photograph step is
  * replaced at its own module boundary rather than by stubbing `fetch` for the
- * whole adapter.
+ * whole adapter, and those readers are answered at theirs.
  */
 import { readFileSync } from 'node:fs';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,23 @@ const { invokeSecureFunction, inlineSpy } = vi.hoisted(() => ({
   inlineSpy: vi.fn(async () => [] as string[]),
 }));
 vi.mock('@/lib/secureInvoke', () => ({ invokeSecureFunction }));
+/**
+ * The two reads this spec does not assert on — the structure guide and the
+ * organisation's letterhead — answer empty here, as they do in
+ * `adapterListings.spec.ts`. Left live, every call reached the production
+ * project twice (~420 ms each, measured), so a test's time was a property of
+ * the network between the runner and Supabase, and one slow round-trip timed
+ * a CI run out with nothing wrong in the adapter.
+ */
+vi.mock('@/hooks/useAuthenticatedSupabase', () => {
+  const empty = { data: null, error: null };
+  const query: Record<string, unknown> = {};
+  for (const step of ['select', 'eq', 'in', 'order', 'limit']) query[step] = () => query;
+  query.maybeSingle = async () => empty;
+  query.single = async () => empty;
+  query.then = (resolve: (value: typeof empty) => unknown) => Promise.resolve(empty).then(resolve);
+  return { getAuthenticatedSupabaseClient: () => ({ from: () => query }) };
+});
 vi.mock('../adapters/reportPhotographs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../adapters/reportPhotographs')>()),
   inlineReportPhotographs: (...args: unknown[]) => inlineSpy(...(args as [])),

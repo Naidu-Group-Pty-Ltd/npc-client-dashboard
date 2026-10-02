@@ -3786,6 +3786,21 @@ chat used to draw one spinning circle. Three rules bite.
   the model is weighing.
 - **Either end may be older**, and the stage never moves backwards.
 
+## The Strategy Advisor draws cards, and decides when not to in one place
+Read §23 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
+before touching `_shared/advisorRequestMode.pure.ts`,
+`_shared/anthropicToolUse.pure.ts`, the `callAI` options in
+`bc-scenario-agent` or `scenarioSummaryProse`. The advisor's cards stopped
+appearing because a rule read almost every brief as a clarification and
+withheld the scenario tool. Three rules bite.
+
+- **With no cards on screen there is nothing to clarify.** Every message is a
+  brief and gets cards; only a message about the cards showing gets prose.
+- **When cards are owed, the tool call is required, not offered.** An answer
+  without a readable call is a failed attempt, and the next model is asked.
+- **A tool reaches every route.** The native Anthropic route translates tools
+  both ways, and only when a call carries them.
+
 ## The Calculator's living costs, and the advisor's DTI cap
 Read §20 of [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md)
 before touching `_shared/borrowingCapacityExpenseMethod.pure.ts`,

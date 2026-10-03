@@ -509,12 +509,15 @@ export default function Conversations() {
   const sendMutation = useMutation({
     mutationFn: async ({
       conversationId,
+      conversationRowId,
       message,
       channel,
       subject,
       idempotencyKey,
     }: {
       conversationId: string;
+      /** The thread's row id. `conversationId` is its provider key, which is text. */
+      conversationRowId: string;
       message: string;
       channel: "sms" | "whatsapp" | "email";
       subject?: string;
@@ -549,7 +552,10 @@ export default function Conversations() {
             operation: "create",
             table: "ghl_conversation_messages",
             data: {
-              conversation_id: conversationId,
+              // The column is the thread's uuid row id. The provider key in
+              // `conversationId` is text, so passing it here failed the
+              // foreign key and every sent email vanished from the history.
+              conversation_id: conversationRowId,
               ghl_message_id: `local-email-${idempotencyKey}`,
               direction: "outbound",
               channel_type: "email",
@@ -1001,6 +1007,7 @@ export default function Conversations() {
     requestKeysRef.current[selectedConversation.id] = idempotencyKey;
     sendMutation.mutate({
       conversationId: selectedConversation.ghl_conversation_id,
+      conversationRowId: selectedConversation.id,
       message: replyText.trim(),
       channel: replyChannel as "sms" | "whatsapp" | "email",
       idempotencyKey,
@@ -1017,6 +1024,7 @@ export default function Conversations() {
     requestKeysRef.current[selectedConversation.id] = idempotencyKey;
     sendMutation.mutate({
       conversationId: selectedConversation.ghl_conversation_id,
+      conversationRowId: selectedConversation.id,
       message: message.body,
       channel,
       idempotencyKey,

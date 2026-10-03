@@ -316,8 +316,8 @@ export function ClientCommsInboxTab({
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
               {composeChannel === 'email' && 'Email opens are tracked via embedded pixel.'}
-              {composeChannel === 'sms' && 'SMS sent through GoHighLevel.'}
-              {composeChannel === 'whatsapp' && 'WhatsApp sent through GoHighLevel.'}
+              {composeChannel === 'sms' && "Sent as a text message to the client's mobile."}
+              {composeChannel === 'whatsapp' && "Sent as a WhatsApp message to the client's mobile."}
               {composeChannel === 'portal' && 'Posts to the client portal inbox.'}
             </span>
             <div className="flex items-center gap-2">

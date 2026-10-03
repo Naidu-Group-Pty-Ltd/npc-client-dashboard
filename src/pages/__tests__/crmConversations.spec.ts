@@ -207,6 +207,19 @@ describe('Audit 3 item 14 — an emailed reply is recorded in the conversation',
     expect(page).toMatch(/catch \(persistError\)/);
     expect(page).toMatch(/could not be added to the conversation history/);
   });
+
+  it("files it under the thread's row id, which is what the column holds", () => {
+    // `ghl_conversation_messages.conversation_id` is a uuid foreign key to
+    // `ghl_conversations.id`. The record used to be written against
+    // `ghl_conversation_id` — the provider's text key — so every insert was
+    // refused, the catch above swallowed it, and the email vanished from the
+    // thread on the next refetch. Item 14 was closed in code and never in data.
+    expect(page).toMatch(/conversation_id: conversationRowId,/);
+    expect(page).not.toMatch(/conversation_id: conversationId,/);
+    const calls = page.match(/conversationRowId: selectedConversation\.id,/g) ?? [];
+    // Both callers: the reply and the retry.
+    expect(calls).toHaveLength(2);
+  });
 });
 
 describe('the scheduled conversation sync stops sleeping too', () => {

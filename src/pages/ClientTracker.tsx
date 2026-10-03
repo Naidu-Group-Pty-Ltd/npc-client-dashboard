@@ -726,7 +726,7 @@ export default function ClientTracker() {
   }, [draggedClient, moveClientMutation]);
 
   // Check if drag and drop should be enabled (only for specific pipeline, not "All Pipelines")
-  const isDragDropEnabled = selectedPipelineId !== 'all';
+  const isDragDropEnabled = selectedPipelineId !== 'all' && canEditTracker;
 
   // Get stages for selected pipeline
   const stagesForPipeline = useMemo(() => {

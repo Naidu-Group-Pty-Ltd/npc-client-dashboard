@@ -410,6 +410,7 @@
       "listing-enrichment/index.ts",
       "listing-images/index.ts",
       "listings-cache/index.ts",
+      "manage-automation-settings/index.ts",
       "manage-bc-scenarios/index.ts",
       "manage-branding/index.ts",
       "manage-call-settings/index.ts",
